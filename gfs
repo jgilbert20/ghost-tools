@@ -20,6 +20,15 @@ sub main()
 		doverb_info();
 	}
 
+
+	# LS tells us what we can find out about the current directory tree
+	# nothing is force read, only stat'ed
+
+	if( $verb eq "ls" )
+	{
+		doverb_ls();
+	}
+
 	if( $verb eq "copyDescriptor" )
 	{
 		my $src = shift @ARGV;
@@ -38,6 +47,26 @@ sub main()
 	print "Full reads: $main::run_files_fullread\n"
 
 }
+
+
+sub doverb_ls()
+{
+	foreach my $lfn (@ARGV)
+	{
+		# First look for a ghost from the descriptor file
+		# call getGhostDescriptorFileForLFN()
+		# if there is a desccriptor, load it
+
+		# we have a ghostStore gs
+		# slurp all of the descriptors into the gs object
+		# the interate over the the files and print out what we know
+
+		# slurping means we need to de-duplicate
+
+	}
+
+}
+
 
 sub doverb_info()
 {
@@ -72,7 +101,7 @@ sub getFullHash($)
 	$sha->addfile( $lfn );
 	my $hexdigest = $sha->hexdigest();
 
-$main::run_files_fullread++;
+	$main::run_files_fullread++;
 
 	return( "SHA1/FULL/$hexdigest");
 
@@ -130,7 +159,6 @@ sub writeAsDescriptor($)
 
 	my $ghosts = $self->ghosts();
 
-
 	open( FILE, ">$fn") or die "Cannot open $fn to write descriptor";
 
 	foreach my $g ( @$ghosts )
@@ -141,10 +169,6 @@ sub writeAsDescriptor($)
 	}
 
 	close( FILE );
-
-
-
-
 }
 
 
@@ -214,7 +238,6 @@ sub getFullHash
 
 
 ###
-
 
 main::main();
 exit();
