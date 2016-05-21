@@ -58,6 +58,8 @@ sub makeOrFindGhostFromFS()
 
 	my $fullhash = main::getFullHash( $lfn );
 
-	print "Got fullhash = $fullhash\n"
-
+	print "Got fullhash = $fullhash\n";
 }
+
+
+
