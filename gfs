@@ -4,6 +4,9 @@ use Digest::SHA;
 
 use strict;
 
+local $main::run_files_fullread = 0;
+local $main::run_descriptors_read = 0;
+
 sub main()
 {
 	print "Welcome to Ghost.\n";
@@ -12,16 +15,35 @@ sub main()
 
 	print " Verb = [$verb]\n";
 
-	if( $verb = "info" )
+	if( $verb eq "info" )
 	{
 		doverb_info();
 	}
+
+	if( $verb eq "copyDescriptor" )
+	{
+		my $src = shift @ARGV;
+		my $d = shift @ARGV;
+
+
+	my $store = GhostStore->new();
+	$store->slurpDescriptor( $src);
+	$store->writeAsDescriptor( $d );
+
+
+
+	}
+
+
+	print "Full reads: $main::run_files_fullread\n"
+
 }
 
 sub doverb_info()
 {
 
 	my $store = GhostStore->new();
+	$store->slurpDescriptor( "GhostDescriptors" );
 
 	foreach my $lfn (@ARGV)
 	{
@@ -33,7 +55,7 @@ sub doverb_info()
 		$store->addGhost( $g );
 	}	
 
-	$store->writeAsDescriptor( "File" );
+	$store->writeAsDescriptor( "GhostDescriptors" );
 
 
 }
@@ -50,6 +72,8 @@ sub getFullHash($)
 	$sha->addfile( $lfn );
 	my $hexdigest = $sha->hexdigest();
 
+$main::run_files_fullread++;
+
 	return( "SHA1/FULL/$hexdigest");
 
 }
@@ -65,6 +89,7 @@ sub new
 	my $class = shift;
 	my $self = $class->SUPER::new();
 	$self->ghosts( [] );
+
 	return $self;
 }
 
@@ -77,11 +102,48 @@ sub addGhost($)
 	push @$ghosts, $g;
 }
 
+sub slurpDescriptor($)
+{
+	my $self = shift;
+	my $fn = shift;
+
+	my $ghosts = $self->ghosts();
+
+	open( FILE, "<$fn") or die "Cannot open $fn to read descriptor";
+
+	while( <FILE> )
+	{
+		chomp;
+		print "Slurping: $_\n";
+		my $g = Ghost->newFromSerialized( $_ );
+		push @$ghosts, $g;
+	}
+
+	close( FILE );
+}
+
+
 sub writeAsDescriptor($)
 {
 	my $self = shift;
 	my $fn = shift;
+
+	my $ghosts = $self->ghosts();
+
+
+	open( FILE, ">$fn") or die "Cannot open $fn to write descriptor";
+
+	foreach my $g ( @$ghosts )
+	{
 	
+		print FILE $g->serialize();
+		print FILE "\n";
+	}
+
+	close( FILE );
+
+
+
 
 }
 
@@ -90,6 +152,37 @@ package Ghost;
 
 use base qw(Class::Accessor);
 Ghost->mk_accessors( qw(lfn lastFullHash fullHash ) );
+
+sub newFromSerialized($)
+{
+	my $class = shift;
+	my $str = shift;
+
+	my $self = Ghost->new();
+
+	my @a = split ':', $str;
+
+	$self->lfn( shift @a );
+	$self->lastFullHash( shift @a );
+	$self->fullHash( shift @a );
+
+	return $self;
+
+}
+
+sub serialize()
+{
+	my $self = shift;
+
+	my @s = ( $self->lfn(), 
+			  $self->lastFullHash(),
+			  $self->fullHash()
+			  );
+
+	my $s = join ':', @s;
+
+	return $s;
+}
 
 sub make($)
 {
