@@ -1,8 +1,12 @@
 #!/usr/bin/perl
 
 use Digest::SHA;
+use File::Basename;
+use File::Spec;
 
 use strict;
+
+my $DESCRIPTOR_FILENAME = "00descriptor.gfs";
 
 local $main::run_files_fullread = 0;
 local $main::run_descriptors_read = 0;
@@ -29,30 +33,46 @@ sub main()
 		doverb_ls();
 	}
 
+	# Basically a test verb used to prove that serialization and deserialization are identical
+
 	if( $verb eq "copyDescriptor" )
 	{
 		my $src = shift @ARGV;
 		my $d = shift @ARGV;
 
-
-	my $store = GhostStore->new();
-	$store->slurpDescriptor( $src);
-	$store->writeAsDescriptor( $d );
-
-
-
+		my $store = GhostStore->new();
+		$store->slurpDescriptor( $src);
+		$store->writeAsDescriptor( $d );
 	}
-
 
 	print "Full reads: $main::run_files_fullread\n"
 
 }
 
 
+sub getGhostDescriptorFileForLFN($)
+{
+	my $filename = shift;
+
+	my( $fn, $dir ) = fileparse( $filename );
+
+ 	my $dfn = File::Spec->catfile($dir, $DESCRIPTOR_FILENAME);
+
+	return $dfn;
+}
+
 sub doverb_ls()
 {
+	my $store = GhostStore->new();
+
 	foreach my $lfn (@ARGV)
 	{
+		my $dfn = getGhostDescriptorFileForLFN($lfn);
+
+		print "Pulling in any descriptor for [$lfn] -> [$dfn]\n";
+
+
+
 		# First look for a ghost from the descriptor file
 		# call getGhostDescriptorFileForLFN()
 		# if there is a desccriptor, load it
@@ -117,7 +137,7 @@ sub new
 {
 	my $class = shift;
 	my $self = $class->SUPER::new();
-	$self->ghosts( [] );
+	$self->ghosts( +[] );
 
 	return $self;
 }
@@ -128,6 +148,10 @@ sub addGhost($)
 	my $g = shift;
 
 	my $ghosts = $self->ghosts();
+
+	# Do the incorporation here
+
+
 	push @$ghosts, $g;
 }
 
@@ -145,7 +169,7 @@ sub slurpDescriptor($)
 		chomp;
 		print "Slurping: $_\n";
 		my $g = Ghost->newFromSerialized( $_ );
-		push @$ghosts, $g;
+		$self->addGhost( $g );
 	}
 
 	close( FILE );
