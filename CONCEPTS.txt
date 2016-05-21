@@ -1,0 +1,34 @@
+
+The basic object is a ghost. A ghost is a description of some object discovered "for real" in the filesystem somewhere. 
+
+Things we track for ghosts:
+
+FULLHASH - SHA of the bytestream (aka ghosthash)
+FASTHAD - fast SHA of bytestream (empty if not present)
+LASTMOD - last modified date from FS
+DT_FULLHASH - last full verify
+DT_FASTHASH - last fast verify
+DT_DISC_OLD - oldest date of discovery
+DT_DISC_NEW - newest date of discovery
+LFN - one or more pathnames for ghosthash
+
+
+my $ghost = makeOrFindGhost( LFN );
+
+$GHOST->[FULLHASH];
+
+writeGhostDescriptor( path, GHOST );
+
+A .ghostdesc file is a list of the above entities of information.
+
+The ghosttree is an abstraction around a collection of ghosts
+there can be different implementations
+the most basic one is just a hashing container that is as lazy as possible
+
+$GhostTree = getAllGhostsUnderPath();
+
+my @ghosts = GhostTree->ghostsForHash();
+
+
+
+

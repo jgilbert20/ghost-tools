@@ -1,0 +1,63 @@
+#!/usr/bin/perl
+
+use Digest::SHA;
+
+use strict;
+
+main();
+exit();
+
+
+sub main()
+{
+	print "Welcome to Ghost.\n";
+
+	my $verb = shift @ARGV;
+
+	print " Verb = [$verb]\n";
+
+	if( $verb = "info" )
+	{
+		doverb_info();
+	}
+}
+
+sub doverb_info()
+{
+	foreach my $lfn (@ARGV)
+	{
+		print( "Info request for: $lfn\n");
+		Ghost->makeOrFindGhostFromFS( $lfn );
+	}	
+}
+
+
+
+sub getFullHash($)
+{
+	## TODO - implement without full slurp
+
+	my $lfn = shift;
+
+	my $sha = Digest::SHA->new(1);
+	$sha->addfile( $lfn );
+	my $hexdigest = $sha->hexdigest();
+
+	return( "SHA1/F/$hexdigest");
+
+}
+
+package Ghost;
+
+sub makeOrFindGhostFromFS()
+{
+	my $class = shift;
+	my $lfn = shift;
+
+	print "Making Ghost for lfn=[$lfn]\n";
+
+	my $fullhash = main::getFullHash( $lfn );
+
+	print "Got fullhash = $fullhash\n"
+
+}
