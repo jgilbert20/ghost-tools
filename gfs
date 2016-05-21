@@ -4,10 +4,6 @@ use Digest::SHA;
 
 use strict;
 
-main();
-exit();
-
-
 sub main()
 {
 	print "Welcome to Ghost.\n";
@@ -24,11 +20,22 @@ sub main()
 
 sub doverb_info()
 {
+
+	my $store = GhostStore->new();
+
 	foreach my $lfn (@ARGV)
 	{
 		print( "Info request for: $lfn\n");
-		Ghost->makeOrFindGhostFromFS( $lfn );
+		my $g = Ghost->make( $lfn );
+		my $h = $g->getFullHash();
+		print("    $h\n");
+
+		$store->addGhost( $g );
 	}	
+
+	$store->writeAsDescriptor( "File" );
+
+
 }
 
 
@@ -43,23 +50,81 @@ sub getFullHash($)
 	$sha->addfile( $lfn );
 	my $hexdigest = $sha->hexdigest();
 
-	return( "SHA1/F/$hexdigest");
+	return( "SHA1/FULL/$hexdigest");
 
 }
 
+
+package GhostStore;
+
+use base qw(Class::Accessor);
+GhostStore->mk_accessors( qw(ghosts) );
+
+sub new
+{
+	my $class = shift;
+	my $self = $class->SUPER::new();
+	$self->ghosts( [] );
+	return $self;
+}
+
+sub addGhost($)
+{
+	my $self= shift;
+	my $g = shift;
+
+	my $ghosts = $self->ghosts();
+	push @$ghosts, $g;
+}
+
+sub writeAsDescriptor($)
+{
+	my $self = shift;
+	my $fn = shift;
+	
+
+}
+
+
 package Ghost;
 
-sub makeOrFindGhostFromFS()
+use base qw(Class::Accessor);
+Ghost->mk_accessors( qw(lfn lastFullHash fullHash ) );
+
+sub make($)
 {
 	my $class = shift;
 	my $lfn = shift;
 
+	my $self = $class->new();
+
 	print "Making Ghost for lfn=[$lfn]\n";
-
-	my $fullhash = main::getFullHash( $lfn );
-
-	print "Got fullhash = $fullhash\n";
+	$self->lfn( $lfn );
+	return $self;
 }
+
+
+sub getFullHash
+{
+	my $self = shift;
+	my $lfn = $self->lfn();
+
+	$self->lastFullHash( time() );
+
+
+ 	my $fullhash = main::getFullHash( $lfn );
+
+	$self->fullHash( $fullhash );
+
+	return $fullhash;
+}
+
+
+###
+
+
+main::main();
+exit();
 
 
 
