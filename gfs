@@ -33,6 +33,14 @@ sub main()
 		doverb_ls();
 	}
 
+	# Writes a permanent file of this entire tree
+
+	if( $verb eq "write-snapshot")
+	{
+		doverb_writeSnapshot();
+	}
+
+
 
 	# Takes the listed things and writes a single descriptor file
 
@@ -58,8 +66,6 @@ sub main()
 	print "Desc wrtes: $main::run_descriptors_write\n";
 
 	flushGhostDescriptorCache();
-
-
 }
 
 
@@ -75,6 +81,8 @@ sub getGhostDescriptorFileForLFN($)
 
 	return $dfn;
 }
+
+# not really implemented
 
 sub doverb_ls()
 {
@@ -102,6 +110,7 @@ sub doverb_ls()
 
 }
 
+# Write the in place descriptors in each directory named
 
 sub doverb_writeDescriptor()
 {
@@ -110,12 +119,20 @@ sub doverb_writeDescriptor()
 	my $fse = new FilesystemExplorer();
 	$fse->setRoots( @ARGV );
 
+	# sort of a lazy way to do it -- forces
+	# a checksum computation, which should
+	# populate the in place descriptors
+
+	# a better way would be to enter each directory
+	# and call some specific "build for x" function
+
 	while( defined( my $file = $fse->next() ) )
 	{
 		print "Verb WD - Scanning: [$file]\n";
 
 		if( -f $file )
 		{
+			$fse->forceGhostCharacterization( $file );
 			my $fullHash = $fse->getFullHash( $file );
 			print "Verb WD: fullhash = $fullHash\n";
 		}
@@ -248,9 +265,40 @@ sub new
 	return $self;
 }
 
+# Forces all data about the ghost to be calculated present
+# from a scan (e.g. hash, size, etc). Does not necessarily
+# mean anything is read from disk unless some recovation rule
+# is available
+
+sub forceGhostCharacterization
+{
+	my $self = shift;
+	my $lfn = shift;
+
+	# TODO: see notes for getFullHash
+
+	# TODO error check that this path actual existing in the FSE!
+
+	my $gs = main::getGhostStoreForDescriptorFileCoveringFN($lfn);
+
+	print "FSE - Searching for a fullhash for [$lfn]\n";
+
+	my $g = $gs->findOrMakeGhostByLFN($lfn);
+
+	my $h = $g->forceCharacterization();
+
+	return $h;
+
+
+}
+
 # Caller wants the full hash
 # Best place to get it is a descriptor file
 # next best place to get it is to hit the disk
+
+# TODO: This may need to be reimplemented - better way to handle
+# could be to use a FSE specific ghost store and let some other
+# mechanism actually trigger writing the in place files
 
 sub getFullHash()
 {
@@ -624,6 +672,21 @@ sub make($)
 	return $self;
 }
 
+# Forces the key fields to be loaded if they aren't already known
+# Does not recheck them against the disk unless the standard
+
+# TODO: implement size and fasthash
+
+sub forceCharacterization
+{
+	my $self = shift;
+
+	$self->getFullHash();
+	# $self->getSize();
+	# $self->getFastHash();	
+}
+
+# returns an acceptable fullHash for the ghost
 # Normally, the latest cached data is trusted, but
 # this function can be set to take a out of data criteria in future TODO
 
