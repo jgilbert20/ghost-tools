@@ -38,8 +38,6 @@ sub main()
 	if( $verb eq "write-descriptor")
 	{
 		doverb_writeDescriptor();
-
-
 	}
 
 	# Basically a test verb used to prove that serialization and deserialization are identical
@@ -156,6 +154,10 @@ sub getFullHash($)
 }
 
 
+
+
+
+
 package FilesystemExplorer;
 
 use base qw(Class::Accessor);
@@ -188,8 +190,8 @@ sub scanDir
 	#print "Scanning into $dir\n";
 
 	opendir DIR, $dir;
-	# drop . and .., sort directory
 
+	# drop . and .., sort directory
 	my @files = map { $dir.'/'.$_ } grep { !/^\.{1,2}$/ } sort { $a cmp $b } readdir DIR;
 
 	# print( "Got: ", (join ':', @files ), "\n" );
@@ -197,8 +199,7 @@ sub scanDir
 	close DIR;
 
 	unshift @$q, @files;
-
-
+	unshift @$q, \"Thunk";
 }
 
 
@@ -207,7 +208,16 @@ sub scanDir
 sub next
 {
 	my $self = shift;
-	return $self->nextRaw();
+
+	my $n = $self->nextRaw();
+
+	if( ref $n )
+	{
+		print "THUNK received...";
+		return $self->next();
+	}
+
+	return $n;
 }
 
 
