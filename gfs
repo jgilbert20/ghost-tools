@@ -52,7 +52,9 @@ sub main()
 		$store->writeAsDescriptor( $d );
 	}
 
-	print "Full reads: $main::run_files_fullread\n"
+	print "Full reads: $main::run_files_fullread\n";
+	flushGhostDescriptorCache();
+
 
 }
 
@@ -98,46 +100,41 @@ sub doverb_ls()
 sub doverb_writeDescriptor()
 {
 	my $store = GhostStore->new();
-#	$store->slurpDescriptor( "GhostDescriptors.out" );
-
 
 	my $fse = new FilesystemExplorer();
 	$fse->setRoots( @ARGV );
 
-	while( defined(  my $file = $fse->next() ) )
+	while( defined( my $file = $fse->next() ) )
 	{
 		print "Scanned $file\n";
 
+		my $fullHash = $fse->getFullHash( $file );
 
+		print "WriteDescriptor: fullhash = $fullHash\n";
 	}
-
-
 }
 
 sub doverb_info()
 {
-
 	my $store = GhostStore->new();
-	$store->slurpDescriptor( "GhostDescriptors" );
+	$store->slurpDescriptor( $DESCRIPTOR_FILENAME  );
 
 	foreach my $lfn (@ARGV)
 	{
 		print( "Info request for: $lfn\n");
 		my $g = Ghost->make( $lfn );
-		my $h = $g->getFullHash();
+		my $h = $g->getFullHashForceHitDisk();
 		print("    $h\n");
 
 		$store->addGhost( $g );
 	}	
 
-	$store->writeAsDescriptor( "GhostDescriptors" );
-
-
+	$store->writeAsDescriptor( $DESCRIPTOR_FILENAME );
 }
 
 
 
-sub getFullHash($)
+sub getFullHashForceHitDisk($)
 {
 	## TODO - implement without full slurp
 
@@ -153,9 +150,74 @@ sub getFullHash($)
 
 }
 
+my %ghostStoreForDescriptorLFN;
 
+sub flushGhostStoreLFNCacheEntry
+{
+	my $lfn = shift;
 
+	print "Flushing ghoststore [$lfn] to disk\n";
 
+	if( not exists $ghostStoreForDescriptorLFN{$lfn} )
+	{
+		die "Internal assert - $lfn not found";
+	}
+
+	my $gs = $ghostStoreForDescriptorLFN{$lfn};
+
+	if( $gs->clean() )
+	{
+		print "   -- clean flag set\n";
+	}
+	else
+	{
+		print "   -- clean flag not set, write needed\n";
+		$gs->writeAsDescriptor( $DESCRIPTOR_FILENAME );
+
+	}	
+
+	delete $ghostStoreForDescriptorLFN{$lfn};
+
+	return undef; 
+}
+
+sub flushGhostDescriptorCache
+{
+	foreach my $lfn (keys %ghostStoreForDescriptorLFN )
+	{
+		flushGhostStoreLFNCacheEntry( $lfn );
+
+	}
+}
+
+sub getGhostStoreForDescriptorFileCoveringFN
+{
+	my $lfn = shift;
+
+	my $gsfn = getGhostDescriptorFileForLFN( $lfn );
+
+	if( exists $ghostStoreForDescriptorLFN{$gsfn} )
+	{
+		return( $ghostStoreForDescriptorLFN{$gsfn} );
+	}
+	else
+	{
+		die "Overflow!" if ((keys %ghostStoreForDescriptorLFN) > 10);
+
+		my $gs = GhostStore->new();
+
+		if( -e $gsfn )
+		{
+			$gs->slurpDescriptor( $DESCRIPTOR_FILENAME );
+		}
+
+		$ghostStoreForDescriptorLFN{$gsfn} = $gs;
+
+		return $gs;
+
+	}
+
+}
 
 
 package FilesystemExplorer;
@@ -171,6 +233,27 @@ sub new
 	return $self;
 }
 
+# Caller wants the full hash
+# Best place to get it is a descriptor file
+# next best place to get it is to hit the disk
+
+sub getFullHash()
+{
+	my $self = shift;
+	my $lfn = shift;
+
+	# TODO error check that this path actual existing in the FSE!
+
+	my $gs = main::getGhostStoreForDescriptorFileCoveringFN($lfn);
+
+	print "Searching hash for [$lfn]\n";
+
+	my $g = $gs->findOrMakeGhostByLFN($lfn);
+
+	my $h = $g->getFullHash();
+
+	return $h;
+}
 
 sub setRoots()
 {
@@ -198,8 +281,9 @@ sub scanDir
 
 	close DIR;
 
+	unshift @$q, \$dir;
 	unshift @$q, @files;
-	unshift @$q, \"Thunk";
+	
 }
 
 
@@ -213,7 +297,12 @@ sub next
 
 	if( ref $n )
 	{
-		print "THUNK received...";
+		print "THUNK received --> $$n\n";
+
+		# TODO case: 
+		# in this case, we have just exited a directory -- may want
+		# to purge any contents of descriptors that weren't found
+
 		return $self->next();
 	}
 
@@ -250,15 +339,45 @@ sub nextRaw
 package GhostStore;
 
 use base qw(Class::Accessor);
-GhostStore->mk_accessors( qw(lfnToGhost) );
+GhostStore->mk_accessors( qw(lfnToGhost clean) );
 
 sub new
 {
 	my $class = shift;
 	my $self = $class->SUPER::new();
 	$self->lfnToGhost( +{} );
+	$self->clean(1);
 
 	return $self;
+}
+
+sub findOrMakeGhostByLFN
+{
+	my $self = shift;
+	my $lfn = shift;
+
+	my $lfnToGhost = $self->lfnToGhost();
+
+
+	print "Looking for ghost [$lfn]\n";
+
+	if( exists $lfnToGhost->{$lfn} )
+	{
+		print "   Found inside ghoststore\n";
+		return  $lfnToGhost->{$lfn};
+	}
+	else
+	{
+
+		print( "   Making new ghost for $lfn\n");
+		my $g = Ghost->make( $lfn );
+
+		$self->addGhost( $g );
+		return $g;
+	}
+
+
+
 }
 
 sub addGhost($)
@@ -297,6 +416,10 @@ sub addGhost($)
 	{
 		$lfnToGhost->{$g->lfn()} = $g; 
 	}
+
+	$self->clean(0);
+
+	return;
 }
 
 sub slurpDescriptor($)
@@ -315,6 +438,8 @@ sub slurpDescriptor($)
 	}
 
 	close( FILE );
+
+	$self->clean(1);
 }
 
 
@@ -337,6 +462,8 @@ sub writeAsDescriptor($)
 	}
 
 	close( FILE );
+
+	$self->clean(1);
 }
 
 
@@ -366,7 +493,7 @@ sub serialize()
 {
 	my $self = shift;
 
-	# TODO: Add proper escapes
+	# TODO: Add proper escapes (String::Escape has nice examples)
 
 	my @s = ( $self->lfn(), 
 			  $self->lastFullHash(),
@@ -385,21 +512,37 @@ sub make($)
 
 	my $self = $class->new();
 
-	print "Making Ghost for lfn=[$lfn]\n";
+	print "Making ghost for lfn=[$lfn]\n";
 	$self->lfn( $lfn );
 	return $self;
 }
 
+# Normally, the latest cached data is trusted, but
+# this function can be set to take a out of data criteria in future TODO
 
 sub getFullHash
+{
+	my $self = shift;
+
+	if( defined $self->fullHash() )
+	{
+		return $self->fullHash();
+	}
+	else
+	{
+		return $self->getFullHashForceHitDisk();
+	}
+}
+
+
+sub getFullHashForceHitDisk
 {
 	my $self = shift;
 	my $lfn = $self->lfn();
 
 	$self->lastFullHash( time() );
 
-
- 	my $fullhash = main::getFullHash( $lfn );
+ 	my $fullhash = main::getFullHashForceHitDisk( $lfn );
 
 	$self->fullHash( $fullhash );
 
