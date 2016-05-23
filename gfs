@@ -24,13 +24,22 @@ sub main()
 		doverb_info();
 	}
 
-
 	# LS tells us what we can find out about the current directory tree
 	# nothing is force read, only stat'ed
 
 	if( $verb eq "ls" )
 	{
 		doverb_ls();
+	}
+
+
+	# Takes the listed things and writes a single descriptor file
+
+	if( $verb eq "write-descriptor")
+	{
+		doverb_writeDescriptor();
+
+
 	}
 
 	# Basically a test verb used to prove that serialization and deserialization are identical
@@ -71,7 +80,7 @@ sub doverb_ls()
 
 		print "Pulling in any descriptor for [$lfn] -> [$dfn]\n";
 
-
+		$store->slurpDescriptor( $lfn );
 
 		# First look for a ghost from the descriptor file
 		# call getGhostDescriptorFileForLFN()
@@ -87,6 +96,25 @@ sub doverb_ls()
 
 }
 
+
+sub doverb_writeDescriptor()
+{
+	my $store = GhostStore->new();
+#	$store->slurpDescriptor( "GhostDescriptors.out" );
+
+
+	my $fse = new FilesystemExplorer();
+	$fse->setRoots( @ARGV );
+
+	while( defined(  my $file = $fse->next() ) )
+	{
+		print "Scanned $file\n";
+
+
+	}
+
+
+}
 
 sub doverb_info()
 {
@@ -128,16 +156,97 @@ sub getFullHash($)
 }
 
 
-package GhostStore;
+package FilesystemExplorer;
 
 use base qw(Class::Accessor);
-GhostStore->mk_accessors( qw(ghosts) );
+FilesystemExplorer->mk_accessors( qw(topLevelLFNs queue) );
 
 sub new
 {
 	my $class = shift;
 	my $self = $class->SUPER::new();
-	$self->ghosts( +[] );
+
+	return $self;
+}
+
+
+sub setRoots()
+{
+	my $self = shift;
+
+	$self->topLevelLFNs( [@_] );
+	$self->queue( [@_] );
+}
+
+sub scanDir
+{
+	my $self = shift;
+	my $dir = shift;
+
+	my $q = $self->queue();	
+
+	#print "Scanning into $dir\n";
+
+	opendir DIR, $dir;
+	# drop . and .., sort directory
+
+	my @files = map { $dir.'/'.$_ } grep { !/^\.{1,2}$/ } sort { $a cmp $b } readdir DIR;
+
+	# print( "Got: ", (join ':', @files ), "\n" );
+
+	close DIR;
+
+	unshift @$q, @files;
+
+
+}
+
+
+# returns the next directory
+
+sub next
+{
+	my $self = shift;
+	return $self->nextRaw();
+}
+
+
+sub nextRaw
+{
+	my $self = shift;
+
+	my $q = $self->queue();
+
+	my $c = shift @$q;
+
+	if( not defined $c )
+	{
+		return undef; 
+	}
+
+	# print "Got[$c]\n";
+
+	# if the next thing is a directory, scan into the directory
+	if( -d $c )
+	{
+		$self->scanDir( $c );
+	}
+
+	return $c;
+}
+
+
+
+package GhostStore;
+
+use base qw(Class::Accessor);
+GhostStore->mk_accessors( qw(lfnToGhost) );
+
+sub new
+{
+	my $class = shift;
+	my $self = $class->SUPER::new();
+	$self->lfnToGhost( +{} );
 
 	return $self;
 }
@@ -147,20 +256,43 @@ sub addGhost($)
 	my $self= shift;
 	my $g = shift;
 
-	my $ghosts = $self->ghosts();
+	my $lfnToGhost = $self->lfnToGhost();
 
 	# Do the incorporation here
+	# the major caching form is by localname which is assumed to be unique
+	# there should only be one ghost per LFN
 
+	if( exists $lfnToGhost->{$g->lfn()} )
+	{
+		# merge case
+		# take the best of both
+		# prefer checksum from the newer one
+		# use that for the date of the hash
 
-	push @$ghosts, $g;
+		my $base = $lfnToGhost->{$g->lfn()};
+
+		if( $base->lastFullHash() < $g->lastFullHash() )
+		{
+			$base->lastFullHash( $g->lastFullHash() );
+			$base->fullHash( $g->fullHash() );
+
+			print "  -  Merger case - old wins";
+		}
+		else
+		{
+			print "  -  Merger case - new wins";
+		}
+	}
+	else
+	{
+		$lfnToGhost->{$g->lfn()} = $g; 
+	}
 }
 
 sub slurpDescriptor($)
 {
 	my $self = shift;
 	my $fn = shift;
-
-	my $ghosts = $self->ghosts();
 
 	open( FILE, "<$fn") or die "Cannot open $fn to read descriptor";
 
@@ -181,11 +313,13 @@ sub writeAsDescriptor($)
 	my $self = shift;
 	my $fn = shift;
 
-	my $ghosts = $self->ghosts();
+
+	my $lfnToGhost = $self->lfnToGhost();
+
 
 	open( FILE, ">$fn") or die "Cannot open $fn to write descriptor";
 
-	foreach my $g ( @$ghosts )
+	foreach my $g ( values %$lfnToGhost )
 	{
 	
 		print FILE $g->serialize();
@@ -221,6 +355,8 @@ sub newFromSerialized($)
 sub serialize()
 {
 	my $self = shift;
+
+	# TODO: Add proper escapes
 
 	my @s = ( $self->lfn(), 
 			  $self->lastFullHash(),

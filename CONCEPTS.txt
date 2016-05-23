@@ -30,5 +30,41 @@ $GhostTree = getAllGhostsUnderPath();
 my @ghosts = GhostTree->ghostsForHash();
 
 
++++++++++++
+
+
+# gfs snapshot .
+# generates a snapshot file
+
+# gfs condense /etc /var snap:barf.gs
+# gfs condense snap:barf.gs snap:arf.gs snap:new.gs
+
+# will reconstruct using known afns, keeps orphans
+# gfs reconstruct --test snap:barf.gs foo/
+# 150 files reconstructed, 4 not located (see gfsrun.3234.orphaned.txt for details)
+
+# make symlinks rather than copy files
+# gfs reconstruct --symlink 
+
+# uses xxx and yyy as hash sources
+# gfs reconstruct --test snap:barf.gs foo/ --source=xxx --source=yyyy
+
+# verify all descriptors in /etc
+# gfs verify /etc
+
+# creates a GFS entity that can be pushed to
+# gfs gfs create /etc gfs:foo.gfs
+
+# gfs gfs push /etc gfs:foo.gfs
+# makes sure that /etc can be reconstructed by gfs:foo.gfs
+
+# gfs gfs add gfs:goo.
+# a .gfs file can contain storage and 
+
+
+
+++++++++++++++
+
+
 
 
