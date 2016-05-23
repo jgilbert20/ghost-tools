@@ -10,6 +10,7 @@ my $DESCRIPTOR_FILENAME = "00descriptor.gfs";
 
 local $main::run_files_fullread = 0;
 local $main::run_descriptors_read = 0;
+local $main::run_descriptors_write = 0;
 
 sub main()
 {
@@ -53,6 +54,9 @@ sub main()
 	}
 
 	print "Full reads: $main::run_files_fullread\n";
+	print "Desc reads: $main::run_descriptors_read\n";
+	print "Desc wrtes: $main::run_descriptors_write\n";
+
 	flushGhostDescriptorCache();
 
 
@@ -66,6 +70,8 @@ sub getGhostDescriptorFileForLFN($)
 	my( $fn, $dir ) = fileparse( $filename );
 
  	my $dfn = File::Spec->catfile($dir, $DESCRIPTOR_FILENAME);
+
+ 	print "GDF [$dfn] for $filename\n";
 
 	return $dfn;
 }
@@ -106,11 +112,19 @@ sub doverb_writeDescriptor()
 
 	while( defined( my $file = $fse->next() ) )
 	{
-		print "Scanned $file\n";
+		print "Verb WD - Scanning: [$file]\n";
 
-		my $fullHash = $fse->getFullHash( $file );
+		if( -f $file )
+		{
+			my $fullHash = $fse->getFullHash( $file );
+			print "Verb WD: fullhash = $fullHash\n";
+		}
+		else
+		{
+			print "Verb WD - Not a regular file: [$file]\n";
+		}
 
-		print "WriteDescriptor: fullhash = $fullHash\n";
+	
 	}
 }
 
@@ -172,7 +186,7 @@ sub flushGhostStoreLFNCacheEntry
 	else
 	{
 		print "   -- clean flag not set, write needed\n";
-		$gs->writeAsDescriptor( $DESCRIPTOR_FILENAME );
+		$gs->writeAsDescriptor( $lfn );
 
 	}	
 
@@ -208,7 +222,7 @@ sub getGhostStoreForDescriptorFileCoveringFN
 
 		if( -e $gsfn )
 		{
-			$gs->slurpDescriptor( $DESCRIPTOR_FILENAME );
+			$gs->slurpDescriptor( $gsfn );
 		}
 
 		$ghostStoreForDescriptorLFN{$gsfn} = $gs;
@@ -222,6 +236,7 @@ sub getGhostStoreForDescriptorFileCoveringFN
 
 package FilesystemExplorer;
 
+use File::Basename;
 use base qw(Class::Accessor);
 FilesystemExplorer->mk_accessors( qw(topLevelLFNs queue) );
 
@@ -261,6 +276,16 @@ sub setRoots()
 
 	$self->topLevelLFNs( [@_] );
 	$self->queue( [@_] );
+
+
+	foreach my $f ( @_ )
+	{
+		if( not -r $f )
+		{		
+			die "File [$f] is not a readable file or directory"
+		}
+	}
+
 }
 
 sub scanDir
@@ -305,6 +330,27 @@ sub next
 
 		return $self->next();
 	}
+
+	# Check for the end-of-queue case
+
+	if( not defined $n )
+	{
+		return undef;
+	}
+
+	# Now make sure that this isn't something we need to ignore
+
+	print " FSE checking $n\n";
+
+	my( $fn, $dir ) = fileparse( $n );
+ 	
+	if( $fn eq $DESCRIPTOR_FILENAME )
+	{
+		print " FSE/next -> skipping descriptor [$fn]\n";
+
+		return $self->next();
+	}
+
 
 	return $n;
 }
@@ -440,6 +486,8 @@ sub slurpDescriptor($)
 	close( FILE );
 
 	$self->clean(1);
+
+	$main::run_descriptors_read++;
 }
 
 
@@ -448,22 +496,23 @@ sub writeAsDescriptor($)
 	my $self = shift;
 	my $fn = shift;
 
-
 	my $lfnToGhost = $self->lfnToGhost();
-
 
 	open( FILE, ">$fn") or die "Cannot open $fn to write descriptor";
 
 	foreach my $g ( values %$lfnToGhost )
 	{
-	
-		print FILE $g->serialize();
+		print FILE $g->serialize( -pathMode => "basename");
 		print FILE "\n";
 	}
 
 	close( FILE );
 
 	$self->clean(1);
+
+	print "Wrote descriptor -> $fn\n";
+
+	$main::run_descriptors_write++;
 }
 
 
