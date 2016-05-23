@@ -261,7 +261,7 @@ sub getFullHash()
 
 	my $gs = main::getGhostStoreForDescriptorFileCoveringFN($lfn);
 
-	print "Searching hash for [$lfn]\n";
+	print "FSE - Searching for a fullhash for [$lfn]\n";
 
 	my $g = $gs->findOrMakeGhostByLFN($lfn);
 
@@ -295,14 +295,16 @@ sub scanDir
 
 	my $q = $self->queue();	
 
-	#print "Scanning into $dir\n";
+	print "FSE:ScanDIR into $dir\n";
+
+	#$dir =~ s/\/+$//;
 
 	opendir DIR, $dir;
 
 	# drop . and .., sort directory
-	my @files = map { $dir.'/'.$_ } grep { !/^\.{1,2}$/ } sort { $a cmp $b } readdir DIR;
+	my @files = map { File::Spec->catfile( $dir, $_ ) } grep { !/^\.{1,2}$/ } sort { $a cmp $b } readdir DIR;
 
-	# print( "Got: ", (join ':', @files ), "\n" );
+	print( "FSE:ScanDIR Returned: ", (join ':', @files ), "\n" );
 
 	close DIR;
 
@@ -340,7 +342,7 @@ sub next
 
 	# Now make sure that this isn't something we need to ignore
 
-	print " FSE checking $n\n";
+	print " FSE::getNext() checking [$n]\n";
 
 	my( $fn, $dir ) = fileparse( $n );
  	
@@ -384,6 +386,7 @@ sub nextRaw
 
 package GhostStore;
 
+use File::Basename;
 use base qw(Class::Accessor);
 GhostStore->mk_accessors( qw(lfnToGhost clean) );
 
@@ -473,14 +476,24 @@ sub slurpDescriptor($)
 	my $self = shift;
 	my $fn = shift;
 
+	print "Slurping descriptor [$fn]";
+
+	my( $parsedFn, $dir ) = fileparse( $fn );
+
+	my $treebase = $dir; 
+
+	my %seen;
+
 	open( FILE, "<$fn") or die "Cannot open $fn to read descriptor";
 
 	while( <FILE> )
 	{
 		chomp;
 		print "Slurping: $_\n";
-		my $g = Ghost->newFromSerialized( $_ );
+		my $g = Ghost->newFromSerialized( $_, treeRoot => $treebase );
 		$self->addGhost( $g );
+
+		die "Ghost descriptor contains duplicates - some logic problem!" if( $seen{$g->lfn()}++ > 0 );
 	}
 
 	close( FILE );
@@ -502,7 +515,7 @@ sub writeAsDescriptor($)
 
 	foreach my $g ( values %$lfnToGhost )
 	{
-		print FILE $g->serialize( -pathMode => "basename");
+		print FILE $g->serialize( pathMode => "basename");
 		print FILE "\n";
 	}
 
@@ -518,6 +531,8 @@ sub writeAsDescriptor($)
 
 package Ghost;
 
+use File::Basename;
+
 use base qw(Class::Accessor);
 Ghost->mk_accessors( qw(lfn lastFullHash fullHash ) );
 
@@ -525,26 +540,69 @@ sub newFromSerialized($)
 {
 	my $class = shift;
 	my $str = shift;
+	my %options = @_;
 
 	my $self = Ghost->new();
 
+	# TODO: Add proper escapes (String::Escape has nice examples)
+
 	my @a = split ':', $str;
 
-	$self->lfn( shift @a );
+	my $serialLFN = shift @a;
+
+	if( defined $options{'treeRoot'} )
+	{
+		my $root = $options{'treeRoot'};
+		# $root =~ s/\/+$//;
+
+		$serialLFN = File::Spec->catfile( $root , $serialLFN );
+	}
+
+	$self->lfn( $serialLFN );
 	$self->lastFullHash( shift @a );
 	$self->fullHash( shift @a );
 
+
+	print "Just deserialized: ";
+	print $self->printDebug();
+	print "\n";
+
 	return $self;
+
+}
+
+sub printDebug
+{
+	my $self = shift;
+
+	my $lfn = $self->lfn();
+	my $lastFullHash = $self->lastFullHash();
+	my $fullHash = $self->fullHash();
+
+	print "A Ghost: lfn:[$lfn] lFH:[$lastFullHash] full:[$fullHash]";
 
 }
 
 sub serialize()
 {
 	my $self = shift;
+	my %options = @_;
+
+	my $lfn = $self->lfn();
+
+	print "Serialize $self\n";
+
+	if( $options{'pathMode'} eq 'basename' )
+	{
+			my( $fn, $dir ) = fileparse( $lfn );
+			print "    Serialization has truncated $lfn -> $fn (pathMode)\n";
+			$lfn = $fn;
+
+	}
 
 	# TODO: Add proper escapes (String::Escape has nice examples)
 
-	my @s = ( $self->lfn(), 
+	my @s = ( $lfn, 
 			  $self->lastFullHash(),
 			  $self->fullHash()
 			  );
