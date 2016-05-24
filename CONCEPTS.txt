@@ -68,3 +68,36 @@ my @ghosts = GhostTree->ghostsForHash();
 
 
 
+
+now we have a bit of an issue
+the FSE implementation is pretty tied to the descriptor logic
+also, ghosts can be part of many different ghost stores
+and there is no clean way for updated truth to be spontaneosly discovered and written back out to 
+those files
+
+maybe ghoststore is really just a good convienence method for a collection of ghosts
+don't think of it as a first class object
+
+maybe the FSE is really the management concept around a filesystem and its state
+its handles the details of its "backing store".
+we don't worry about Ghosts being in more than one GS, because FSE is really controlling the end-to-end behavior
+
+fse->writeSnapshot()
+
+$gs2 = fse->gs()->merge( fse2->gs() );
+
+the GS of an FSE is only for files in its tree (although maybe we don't have to take this
+as a super strict rule?)
+
+i = fse->findAllDuplicates(); # starts stat scan, returns first match;
+i->next();
+
+fse->removeFile( $i );
+fse->copyFile( $i , $destFSE, $xfn )
+
+i = fse->findOverlap( fse2 ) -- returns a hit for everything in FSE that is matched in fse2
+f = i->getNext
+
+fse2->findDuplicateOfGhost( f );
+
+the FSE syntax shpuld be implmeneted for real filesystes, remote filesystems and snapshots
