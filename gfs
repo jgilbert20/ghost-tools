@@ -69,6 +69,32 @@ sub main()
 }
 
 
+sub doverb_writeSnapshot()
+{
+	my $store = GhostStore->new();
+
+	my $fse = new FilesystemExplorer();
+	$fse->setRoots( @ARGV );
+
+	while( defined( my $file = $fse->next() ) )
+	{
+		print "SnapshotGen - Scanning: [$file]\n";
+
+		if( -f $file )
+		{
+			$fse->forceGhostCharacterization( $file );
+			my $g = $fse->getGhost( $file );
+			$store->addGhost( $g );
+		}
+		else
+		{
+			print "SnapshotGen - Skipping non-file [$file]\n";
+		}
+	}	
+
+	$store->writeSnapshotToDisk( "snapshot-$$.out");
+}
+
 sub getGhostDescriptorFileForLFN($)
 {
 	my $filename = shift;
@@ -162,8 +188,6 @@ sub doverb_info()
 
 	$store->writeAsDescriptor( $DESCRIPTOR_FILENAME );
 }
-
-
 
 sub getFullHashForceHitDisk($)
 {
@@ -289,6 +313,21 @@ sub forceGhostCharacterization
 
 	return $h;
 
+
+}
+
+sub getGhost()
+{
+	my $self = shift;
+	my $lfn = shift;
+
+	# TODO the primary ghost should probably not be the descriptors ghost, right?
+	# Probably have to refactor this somehow
+
+	my $gs = main::getGhostStoreForDescriptorFileCoveringFN($lfn);
+	my $g = $gs->findOrMakeGhostByLFN($lfn);
+
+	return $g;
 
 }
 
@@ -569,12 +608,49 @@ sub writeAsDescriptor($)
 
 	close( FILE );
 
+	# TODO: Idea of clean should be kept on the ghost level, not at the descriptor
+	# level. Until this is fixed, files that change checksum and are recognized
+	# may not get captured at the inplace tool
+
 	$self->clean(1);
 
 	print "Wrote descriptor -> $fn\n";
 
 	$main::run_descriptors_write++;
 }
+
+
+sub writeSnapshotToDisk
+{
+	my $self = shift;
+	my $fn = shift;
+
+	$self->writeSerializedToDisk( $fn, pathMode => 'localized' );
+}
+
+#  TODO combine codebase with descriptors
+
+sub writeSerializedToDisk($)
+{
+	my $self = shift;
+	my $fn = shift;
+	my %options = shift;
+
+	my $lfnToGhost = $self->lfnToGhost();
+
+	open( FILE, ">$fn") or die "Cannot open $fn to write snapshot or descriptor";
+
+	foreach my $g ( values %$lfnToGhost )
+	{
+		print FILE $g->serialize( %options );
+		print FILE "\n";
+	}
+
+	close( FILE );
+
+	print "Wrote snapshots -> $fn\n";
+}
+
 
 
 package Ghost;
