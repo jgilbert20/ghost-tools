@@ -16,6 +16,8 @@ sub main()
 {
 	print "Welcome to Ghost.\n";
 
+	my $tk = TruthKeeper::get();
+
 	my $verb = shift @ARGV;
 
 	print " Verb = [$verb]\n";
@@ -40,8 +42,6 @@ sub main()
 		doverb_writeSnapshot();
 	}
 
-
-
 	# Takes the listed things and writes a single descriptor file
 
 	if( $verb eq "write-descriptor")
@@ -61,11 +61,15 @@ sub main()
 		$store->writeAsDescriptor( $d );
 	}
 
+	$tk->flush();
+
+	print "----- DONE -----\n";
+
 	print "Full reads: $main::run_files_fullread\n";
 	print "Desc reads: $main::run_descriptors_read\n";
 	print "Desc wrtes: $main::run_descriptors_write\n";
 
-	flushGhostDescriptorCache();
+	
 }
 
 
@@ -95,18 +99,6 @@ sub doverb_writeSnapshot()
 	$store->writeSnapshotToDisk( "snapshot-$$.out");
 }
 
-sub getGhostDescriptorFileForLFN($)
-{
-	my $filename = shift;
-
-	my( $fn, $dir ) = fileparse( $filename );
-
- 	my $dfn = File::Spec->catfile($dir, $DESCRIPTOR_FILENAME);
-
- 	print "GDF [$dfn] for $filename\n";
-
-	return $dfn;
-}
 
 # not really implemented
 
@@ -116,6 +108,7 @@ sub doverb_ls()
 
 	foreach my $lfn (@ARGV)
 	{
+			die "";
 		my $dfn = getGhostDescriptorFileForLFN($lfn);
 
 		print "Pulling in any descriptor for [$lfn] -> [$dfn]\n";
@@ -202,78 +195,7 @@ sub getFullHashForceHitDisk($)
 	$main::run_files_fullread++;
 
 	return( "SHA1/FULL/$hexdigest");
-
 }
-
-my %ghostStoreForDescriptorLFN;
-
-sub flushGhostStoreLFNCacheEntry
-{
-	my $lfn = shift;
-
-	print "Flushing ghoststore [$lfn] to disk\n";
-
-	if( not exists $ghostStoreForDescriptorLFN{$lfn} )
-	{
-		die "Internal assert - $lfn not found";
-	}
-
-	my $gs = $ghostStoreForDescriptorLFN{$lfn};
-
-	if( $gs->clean() )
-	{
-		print "   -- clean flag set\n";
-	}
-	else
-	{
-		print "   -- clean flag not set, write needed\n";
-		$gs->writeAsDescriptor( $lfn );
-
-	}	
-
-	delete $ghostStoreForDescriptorLFN{$lfn};
-
-	return undef; 
-}
-
-sub flushGhostDescriptorCache
-{
-	foreach my $lfn (keys %ghostStoreForDescriptorLFN )
-	{
-		flushGhostStoreLFNCacheEntry( $lfn );
-
-	}
-}
-
-sub getGhostStoreForDescriptorFileCoveringFN
-{
-	my $lfn = shift;
-
-	my $gsfn = getGhostDescriptorFileForLFN( $lfn );
-
-	if( exists $ghostStoreForDescriptorLFN{$gsfn} )
-	{
-		return( $ghostStoreForDescriptorLFN{$gsfn} );
-	}
-	else
-	{
-		die "Overflow!" if ((keys %ghostStoreForDescriptorLFN) > 10);
-
-		my $gs = GhostStore->new();
-
-		if( -e $gsfn )
-		{
-			$gs->slurpDescriptor( $gsfn );
-		}
-
-		$ghostStoreForDescriptorLFN{$gsfn} = $gs;
-
-		return $gs;
-
-	}
-
-}
-
 
 package FilesystemExplorer;
 
@@ -289,6 +211,29 @@ sub new
 	return $self;
 }
 
+sub getGhost()
+{
+	my $self = shift;
+	my $lfn = shift;
+
+	# TODO the primary ghost should probably not be the descriptors ghost, right?
+	# Probably have to refactor this somehow
+
+	my $tk = TruthKeeper::get();
+
+	my $g = $tk->obtainGhostForLFN( $lfn );
+
+	return $g;
+
+}
+
+sub tk
+{
+	my $self = shift;
+	return TruthKeeper::get();
+
+}
+
 # Forces all data about the ghost to be calculated present
 # from a scan (e.g. hash, size, etc). Does not necessarily
 # mean anything is read from disk unless some recovation rule
@@ -299,62 +244,16 @@ sub forceGhostCharacterization
 	my $self = shift;
 	my $lfn = shift;
 
-	# TODO: see notes for getFullHash
-
-	# TODO error check that this path actual existing in the FSE!
-
-	my $gs = main::getGhostStoreForDescriptorFileCoveringFN($lfn);
-
-	print "FSE - Searching for a fullhash for [$lfn]\n";
-
-	my $g = $gs->findOrMakeGhostByLFN($lfn);
-
-	my $h = $g->forceCharacterization();
-
-	return $h;
-
-
+	$self->tk->obtainGhostForLFN( $lfn )->forceCharacterization();
 }
-
-sub getGhost()
-{
-	my $self = shift;
-	my $lfn = shift;
-
-	# TODO the primary ghost should probably not be the descriptors ghost, right?
-	# Probably have to refactor this somehow
-
-	my $gs = main::getGhostStoreForDescriptorFileCoveringFN($lfn);
-	my $g = $gs->findOrMakeGhostByLFN($lfn);
-
-	return $g;
-
-}
-
-# Caller wants the full hash
-# Best place to get it is a descriptor file
-# next best place to get it is to hit the disk
-
-# TODO: This may need to be reimplemented - better way to handle
-# could be to use a FSE specific ghost store and let some other
-# mechanism actually trigger writing the in place files
 
 sub getFullHash()
 {
 	my $self = shift;
 	my $lfn = shift;
 
-	# TODO error check that this path actual existing in the FSE!
+	$self->tk->obtainGhostForLFN( $lfn )->getFullHash();
 
-	my $gs = main::getGhostStoreForDescriptorFileCoveringFN($lfn);
-
-	print "FSE - Searching for a fullhash for [$lfn]\n";
-
-	my $g = $gs->findOrMakeGhostByLFN($lfn);
-
-	my $h = $g->getFullHash();
-
-	return $h;
 }
 
 sub setRoots()
@@ -364,7 +263,6 @@ sub setRoots()
 	$self->topLevelLFNs( [@_] );
 	$self->queue( [@_] );
 
-
 	foreach my $f ( @_ )
 	{
 		if( not -r $f )
@@ -372,7 +270,6 @@ sub setRoots()
 			die "File [$f] is not a readable file or directory"
 		}
 	}
-
 }
 
 sub scanDir
@@ -436,11 +333,8 @@ sub next
 	if( $fn eq $DESCRIPTOR_FILENAME )
 	{
 		print " FSE/next -> skipping descriptor [$fn]\n";
-
 		return $self->next();
 	}
-
-
 	return $n;
 }
 
@@ -450,7 +344,6 @@ sub nextRaw
 	my $self = shift;
 
 	my $q = $self->queue();
-
 	my $c = shift @$q;
 
 	if( not defined $c )
@@ -467,6 +360,347 @@ sub nextRaw
 	}
 
 	return $c;
+}
+
+package TruthKeeper;
+
+use Data::Dumper;
+use File::Basename;
+use base qw(Class::Accessor);
+
+# TruthKeeper->mk_accessors( qw(ghostForLFN) );
+
+my $global_tk;
+
+my %ghostForLFN_private;
+
+
+sub ghostForLFN
+{
+	my $self = shift;
+	return \%ghostForLFN_private;
+}
+
+sub new
+{
+	my $class = shift;
+	my $self = $class->SUPER::new();
+	# $self->ghostForLFN( +{} );
+	return $self;
+}
+
+sub printInternallyTracked
+{
+	my $self = shift;
+	my $ghostForLFN = $self->ghostForLFN();
+	foreach my $g (values %$ghostForLFN )
+	{
+		print "   TKGhostDebug: ";
+		print $g->printDebug();
+		print "  ";
+		print $g->dirty() ? "YES" : "NO";
+		print "\n";
+
+	}
+	return;
+}
+
+sub flush
+{
+	my $self = shift;
+
+#	print Dumper( $self );
+
+	print "TK: Beginning flush ---\n";
+
+	$self->printInternallyTracked();
+
+	print "TK: Ghost Cache Writes ---\n";
+
+	$self->flushGhostDescriptorCache();
+
+	print "TK: Verify ---\n";
+
+
+	$self->verifyNoDirtyGhostsRemain();
+}
+
+sub get
+{
+	my $class = shift;
+
+	return $global_tk if defined $global_tk;
+
+	$global_tk = new TruthKeeper();
+
+	return $global_tk;
+}
+
+sub verifyNoDirtyGhostsRemain
+{
+	my $self = shift;
+	my $ghostForLFN = $self->ghostForLFN();
+
+	my $error = 0;
+
+	foreach my $g (values %$ghostForLFN )
+	{
+		print "   Verifying TK Ghost: ";
+		print $g->printDebug();
+		print "  ";
+		print $g->dirty() ? "YES" : "NO";
+		print "\n";
+
+		$error++ if $g->dirty();
+	}
+
+	die "Dirty ghosts remain unflushed!! assert" if $error > 0;
+}
+
+
+
+my %ghostStoreForDescriptorLFN;
+
+
+sub flushGhostDescriptorCache
+{
+	my $self = shift;
+
+	foreach my $gslfn ( keys %ghostStoreForDescriptorLFN )
+	{
+		
+		## my $gs = getGhostStoreForDescriptorFileCoveringFN( $k );
+
+		$self->flushDescriptorToDisk( $gslfn );
+	}
+}
+
+sub flushDescriptorToDisk
+{
+	my $self = shift;
+	my $lfn = shift; # LFN of the ghoststore
+
+	print "Flushing ghoststore [$lfn] to disk\n";
+
+	if( not exists $ghostStoreForDescriptorLFN{$lfn} )
+	{
+		die "Internal assert - $lfn not found";
+	}
+
+	my $gs = $ghostStoreForDescriptorLFN{$lfn};
+
+	$gs->purifyAllGhostsToTK();
+
+	if( $gs->countDirty() > 0 )
+	{
+		$gs->writeAsDescriptor( $lfn );
+	}
+	else
+	{
+		print "   - Not needed, no dirty records\n";
+	}
+
+	map { $_->dirty(0) } $gs->getAllGhosts();
+
+	delete $ghostStoreForDescriptorLFN{$lfn};
+
+	return undef; 
+}
+
+
+
+sub getGhostDescriptorFileForLFN($)
+{
+	my $self = shift;
+	my $filename = shift;
+
+	my( $fn, $dir ) = fileparse( $filename );
+
+ 	my $dfn = File::Spec->catfile($dir, $DESCRIPTOR_FILENAME);
+
+ 	# print "GDF [$dfn] for $filename\n";
+
+	return $dfn;
+}
+
+
+sub getGhostStoreForDescriptorFileCoveringFN
+{
+	my $self = shift;
+	my $lfn = shift;
+
+	my $gsfn = $self->getGhostDescriptorFileForLFN( $lfn );
+
+	if( exists $ghostStoreForDescriptorLFN{$gsfn} )
+	{
+		return( $ghostStoreForDescriptorLFN{$gsfn} );
+	}
+	else
+	{
+		die "Overflow!" if ((keys %ghostStoreForDescriptorLFN) > 10);
+
+		my $gs = GhostStore->new();
+
+		if( -e $gsfn )
+		{
+			$gs->slurpDescriptor( $gsfn );
+			$self->incorporateGhostStore( $gs );
+		}
+
+		$ghostStoreForDescriptorLFN{$gsfn} = $gs;
+
+		return $gs;
+	}
+}
+
+
+# Forces all data about the ghost to be calculated present
+# from a scan (e.g. hash, size, etc). Does not necessarily
+# mean anything is read from disk unless some recovation rule
+# is available
+
+sub forceGhostCharacterization
+{
+	my $self = shift;
+	my $lfn = shift;
+
+	# TODO: see notes for getFullHash
+
+	# TODO error check that this path actual existing in the FSE!
+
+	my $gs = $self->getGhostStoreForDescriptorFileCoveringFN($lfn);
+	print "TK - Searching for a fullhash for [$lfn]\n";
+	my $g = $gs->findOrMakeGhostByLFN($lfn);
+	my $h = $g->forceCharacterization();
+
+	return $h;
+}
+
+# Caller wants the full hash
+# Best place to get it is a descriptor file
+# next best place to get it is to hit the disk
+
+# TODO: This may need to be reimplemented - better way to handle
+# could be to use a FSE specific ghost store and let some other
+# mechanism actually trigger writing the in place files
+
+sub getFullHash()
+{
+	my $self = shift;
+	my $lfn = shift;
+
+	# TODO error check that this path actual existing in the FSE!
+
+	my $gs = $self->getGhostStoreForDescriptorFileCoveringFN($lfn);
+	print "FSE - Searching for a fullhash for [$lfn]\n";
+	my $g = $gs->findOrMakeGhostByLFN($lfn);
+	my $h = $g->getFullHash();
+
+	return $h;
+}
+
+
+sub incorporateGhostStore
+{
+	my $self = shift;
+	my $gs = shift;
+
+
+
+  # print Dumper( $self );
+
+	my @g = $gs->getAllGhosts();
+	foreach my $g (@g)
+	{
+		$self->incorporateGhostData( $g );
+	}
+
+  # print Dumper( $self );
+}
+
+
+sub incorporateGhostData
+{
+	my $self = shift;
+	my $g = shift;
+
+	my $ghostForLFN = $self->ghostForLFN();
+
+
+	print "Incorporating ghost data $g (self=$self, glfn=$ghostForLFN)\n";
+
+
+	if( exists $ghostForLFN->{$g->lfn()} )
+	{
+		# merge case
+		# take the best of both
+		# prefer checksum from the newer one
+		# use that for the date of the hash
+
+		my $base = $ghostForLFN->{$g->lfn()};
+
+		if( $base->lastFullHash() < $g->lastFullHash() )
+		{
+			$base->lastFullHash( $g->lastFullHash() );
+			$base->fullHash( $g->fullHash() );
+			$base->dirty(1);
+			print "  -  Merger case - old wins";
+		}
+		else
+		{
+			print "  -  Merger case - new wins";
+		}
+
+		$g->isTKversion(0);
+
+		return $base; 
+	}
+	else
+	{
+		print "case2\n";
+		$ghostForLFN->{$g->lfn()} = $g;
+		$g->isTKversion(1);
+		return $g;
+	}
+}
+
+# Normal logic to get a ghost -- first check if we have it already
+
+sub obtainGhostForLFN
+{
+	my $self = shift;
+	my $lfn = shift;
+	my $ghostForLFN = $self->ghostForLFN();
+
+	if( exists $ghostForLFN->{$lfn} )
+	{
+		return $ghostForLFN->{$lfn};		
+	}
+
+	# Next look for in global cache (if present)
+
+	# TODO when time comes, implement global cache
+
+	# Next look in local descriptor
+
+	my $gs = $self->getGhostStoreForDescriptorFileCoveringFN($lfn);
+	my $g = $gs->findGhostForLFN($lfn);
+	print " obtain [$lfn] pulled [$g] from ghost descriptor\n";
+	return $g if( defined $g );
+
+	# Wow, we've totally stuck out here - make a new thing
+
+	print( "   Making new ghost for $lfn\n");
+	my $g = Ghost->make( $lfn );
+	$self->incorporateGhostData( $g );
+	$g->dirty(1);
+	$g->isTKversion(1);
+	my $gs = $self->getGhostStoreForDescriptorFileCoveringFN( $lfn );
+	$gs->addGhost( $g );
+
+	print "   Made: $g\n";
+
+	return $g;
 }
 
 
@@ -487,33 +721,87 @@ sub new
 	return $self;
 }
 
-sub findOrMakeGhostByLFN
+sub countDirty
 {
 	my $self = shift;
+
+	my $i = 0;
+
+	map {$i++ if $_->dirty() > 0 } $self->getAllGhosts();
+
+	return $i;
+}
+
+# sub findOrMakeGhostByLFN
+# {
+# 	my $self = shift;
+# 	my $lfn = shift;
+
+# 	my $lfnToGhost = $self->lfnToGhost();
+
+
+# 	print "Looking for ghost [$lfn]\n";
+
+# 	if( exists $lfnToGhost->{$lfn} )
+# 	{
+# 		print "   Found inside ghoststore\n";
+# 		return  $lfnToGhost->{$lfn};
+# 	}
+# 	else
+# 	{
+
+# 		print( "   Making new ghost for $lfn\n");
+# 		my $g = Ghost->make( $lfn );
+
+# 		$self->addGhost( $g );
+# 		return $g;
+# 	}
+# }
+
+sub findGhostForLFN
+{
+	my $self= shift;
 	my $lfn = shift;
 
 	my $lfnToGhost = $self->lfnToGhost();
 
 
-	print "Looking for ghost [$lfn]\n";
 
-	if( exists $lfnToGhost->{$lfn} )
+	if(exists $lfnToGhost->{$lfn} )
 	{
 		print "   Found inside ghoststore\n";
-		return  $lfnToGhost->{$lfn};
-	}
-	else
+ 		return $lfnToGhost->{$lfn};
+ 	}
+
+ 	return undef;
+}
+
+sub purifyAllGhostsToTK
+{
+	my $self = shift;
+	my $tk = TruthKeeper::get();
+	my $lfnToGhost = $self->lfnToGhost();
+
+	foreach my $g (values %$lfnToGhost)
 	{
+		if( $g->isTKversion() == 0 )
+		{
+			print "***** PURIFY $g->lfn()\n";
+			my $n = $tk->obtainGhostForLFN( $g->lfn );
+			$lfnToGhost->{$n->lfn()} = $n;
 
-		print( "   Making new ghost for $lfn\n");
-		my $g = Ghost->make( $lfn );
+		}
 
-		$self->addGhost( $g );
-		return $g;
 	}
 
 
+}
 
+sub getAllGhosts
+{
+	my $self = shift;
+	my $lfnToGhost = $self->lfnToGhost();
+	return values %$lfnToGhost;
 }
 
 sub addGhost($)
@@ -521,7 +809,11 @@ sub addGhost($)
 	my $self= shift;
 	my $g = shift;
 
+	my $lfn = $g->lfn();
 	my $lfnToGhost = $self->lfnToGhost();
+
+	print "Adding ghost $g (lfn=$lfn) (ltg=$lfnToGhost self=$self) ghoststore\n";
+
 
 	# Do the incorporation here
 	# the major caching form is by localname which is assumed to be unique
@@ -529,31 +821,10 @@ sub addGhost($)
 
 	if( exists $lfnToGhost->{$g->lfn()} )
 	{
-		# merge case
-		# take the best of both
-		# prefer checksum from the newer one
-		# use that for the date of the hash
-
-		my $base = $lfnToGhost->{$g->lfn()};
-
-		if( $base->lastFullHash() < $g->lastFullHash() )
-		{
-			$base->lastFullHash( $g->lastFullHash() );
-			$base->fullHash( $g->fullHash() );
-
-			print "  -  Merger case - old wins";
-		}
-		else
-		{
-			print "  -  Merger case - new wins";
-		}
-	}
-	else
-	{
-		$lfnToGhost->{$g->lfn()} = $g; 
+		die "Boundary case - adding ghost where one already existed";
 	}
 
-	$self->clean(0);
+	$lfnToGhost->{$lfn} = $g; 
 
 	return;
 }
@@ -576,8 +847,9 @@ sub slurpDescriptor($)
 	while( <FILE> )
 	{
 		chomp;
-		print "Slurping: $_\n";
+		print "Slurping: [$_]\n";
 		my $g = Ghost->newFromSerialized( $_, treeRoot => $treebase );
+		$g->isTKversion(0);
 		$self->addGhost( $g );
 
 		die "Ghost descriptor contains duplicates - some logic problem!" if( $seen{$g->lfn()}++ > 0 );
@@ -585,7 +857,7 @@ sub slurpDescriptor($)
 
 	close( FILE );
 
-	$self->clean(1);
+	# At this point, our ghosts are not linked to the TK, they are just versions of possible truth
 
 	$main::run_descriptors_read++;
 }
@@ -604,17 +876,15 @@ sub writeAsDescriptor($)
 	{
 		print FILE $g->serialize( pathMode => "basename");
 		print FILE "\n";
+
+		print "    WAD: Write:";
+		print $g->serialize( pathMode => "basename");
+		print "\n"
 	}
 
 	close( FILE );
 
-	# TODO: Idea of clean should be kept on the ghost level, not at the descriptor
-	# level. Until this is fixed, files that change checksum and are recognized
-	# may not get captured at the inplace tool
-
-	$self->clean(1);
-
-	print "Wrote descriptor -> $fn\n";
+	print "    WAD: Wrote descriptor -> $fn\n";
 
 	$main::run_descriptors_write++;
 }
@@ -656,9 +926,8 @@ sub writeSerializedToDisk($)
 package Ghost;
 
 use File::Basename;
-
 use base qw(Class::Accessor);
-Ghost->mk_accessors( qw(lfn lastFullHash fullHash ) );
+Ghost->mk_accessors( qw(lfn lastFullHash fullHash dirty isTKversion ) );
 
 sub newFromSerialized($)
 {
@@ -679,12 +948,21 @@ sub newFromSerialized($)
 		my $root = $options{'treeRoot'};
 		# $root =~ s/\/+$//;
 
-		$serialLFN = File::Spec->catfile( $root , $serialLFN );
+		# Not sure if this logic is right -- we need to prevent LFN:foo -> LFN:./foo
+
+		if( (defined $root) and ($root ne './' ))
+		{
+			print "patching [$root, $serialLFN]\n";
+			$serialLFN = File::Spec->catfile( $root , $serialLFN );
+		}
+
 	}
 
 	$self->lfn( $serialLFN );
 	$self->lastFullHash( shift @a );
 	$self->fullHash( shift @a );
+	$self->dirty( 0 );
+	$self->isTKversion( 0 );
 
 
 	print "Just deserialized: ";
@@ -714,12 +992,12 @@ sub serialize()
 
 	my $lfn = $self->lfn();
 
-	print "Serialize $self\n";
+	#print "Serialize $self\n";
 
 	if( $options{'pathMode'} eq 'basename' )
 	{
 			my( $fn, $dir ) = fileparse( $lfn );
-			print "    Serialization has truncated $lfn -> $fn (pathMode)\n";
+			# print "    Serialization has truncated $lfn -> $fn (pathMode)\n";
 			$lfn = $fn;
 
 	}
