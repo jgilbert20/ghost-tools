@@ -101,3 +101,14 @@ f = i->getNext
 fse2->findDuplicateOfGhost( f );
 
 the FSE syntax shpuld be implmeneted for real filesystes, remote filesystems and snapshots
+
+
++++++++++++++++++
+
+
+seems like the best separation of concerns is a new idea:
+
+FSE is really about the interface to a collection of files
+TruthKeeper is the module that generates ghosts
+it also tracks when ghost records are stale and may need to be pushed out to new places
+
