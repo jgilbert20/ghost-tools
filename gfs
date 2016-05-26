@@ -12,6 +12,13 @@ local $main::run_files_fullread = 0;
 local $main::run_descriptors_read = 0;
 local $main::run_descriptors_write = 0;
 
+# test cases:
+# snapshot directories both a/* and a/ and a
+
+# insight: we could have an entry for a directory.. the last full time it was scanned
+# then if the read date of the file is earlier than the scan date of the directory
+# then we know the file may be stale and can delete it
+
 sub main()
 {
 	print "Welcome to Ghost.\n";
@@ -31,6 +38,7 @@ sub main()
 	# foreach c (where size != 0)
 	# c->findDuplicate( $g );
 	# b->findDuplicate( $g );
+	# a->findDuplicate( $g );
 	# findDuplicate psucdocode
 	#    get ghost G for FN
 	#    find candidates - $fse->listAllFilesWithSize( $size )
@@ -79,7 +87,7 @@ sub main()
 
 
 	# LS tells us what we can find out about the current directory tree
-	# nothing is force read, only stat'ed
+	# nothing is force read. there is a dirscan and that is it.
 
 	if( $verb eq "ls" )
 	{
@@ -150,6 +158,12 @@ sub doverb_writeSnapshot()
 	$store->writeSnapshotToDisk( "snapshot-$$.out");
 }
 
+# GFS relies on all paths being canonicalized so that
+# text matching occurs properly.
+# Otherwise ./foo and foo will not text match and it will appear
+# like they are different files. Any routines that brings in a "net new"
+# path to the system should convert it to a cpath.
+
 sub assert_cpath($)
 {
 	my $lfn = shift;
@@ -162,7 +176,7 @@ sub canonize($)
 	my $lfn = shift;
 	my $clfn = File::Spec->canonpath( $lfn );
 
-	print "Canonicalize: $lfn ---> $clfn\n";	
+	# print "Canonicalize: $lfn ---> $clfn\n";	
 
 	return $clfn;
 }
@@ -996,7 +1010,7 @@ package Ghost;
 
 use File::Basename;
 use base qw(Class::Accessor);
-Ghost->mk_accessors( qw(lfn lastFullHash fullHash dirty isTKversion ) );
+Ghost->mk_accessors( qw(lfn lastFullHash fullHash dirty isTKversion lastDirScan) );
 
 my $serializeDebug = 0;
 
@@ -1017,24 +1031,18 @@ sub newFromSerialized($)
 	if( defined $options{'treeRoot'} )
 	{
 		my $root = $options{'treeRoot'};
-		# $root =~ s/\/+$//;
 
-		# FIXPATH TODO: Not sure if this logic is right -- we need to prevent LFN:foo -> LFN:./foo
-
-		if( (defined $root) and ($root ne './' ))
-		{
-			print "patching [$root, $serialLFN]\n";
-			$serialLFN = File::Spec->catfile( $root , $serialLFN );
-		}
-
+		$serialLFN = File::Spec->catfile( $root , $serialLFN );
+		$serialLFN = main::canonize( $serialLFN );
 	}
 
+	$self->lfn( $serialLFN );
+	$self->lastFullHash( shift @a );
+	$self->fullHash( shift @a );
+	$self->lastDirScan( shift @a );
 
-		$self->lfn( $serialLFN );
-		$self->lastFullHash( shift @a );
-		$self->fullHash( shift @a );
-		$self->dirty( 0 );
-		$self->isTKversion( 0 );
+	$self->dirty( 0 );
+	$self->isTKversion( 0 );
 
 	if( $serializeDebug )
 	{
@@ -1080,7 +1088,8 @@ sub serialize()
 
 	my @s = ( $lfn, 
 			  $self->lastFullHash(),
-			  $self->fullHash()
+			  $self->fullHash(),
+			  $self->lastDirScan()
 			  );
 
 	my $s = join ':', @s;
