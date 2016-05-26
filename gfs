@@ -9,6 +9,7 @@ use strict;
 my $DESCRIPTOR_FILENAME = "00descriptor.gfs";
 
 local $main::run_files_fullread = 0;
+local $main::run_files_stat = 0;
 local $main::run_descriptors_read = 0;
 local $main::run_descriptors_write = 0;
 
@@ -125,6 +126,7 @@ sub main()
 	print "----- DONE -----\n";
 
 	print "Full reads: $main::run_files_fullread\n";
+	print "Full reads: $main::run_files_stat\n";
 	print "Desc reads: $main::run_descriptors_read\n";
 	print "Desc wrtes: $main::run_descriptors_write\n";
 
@@ -260,6 +262,8 @@ sub getFullHashForceHitDisk($)
 	## TODO - implement without full slurp
 
 	my $lfn = shift;
+
+	print "FULLHASH: $lfn\n";
 
 	my $sha = Digest::SHA->new(1);
 	$sha->addfile( $lfn );
@@ -536,7 +540,7 @@ sub verifyNoDirtyGhostsRemain
 
 
 my %ghostStoreForDescriptorLFN;
-
+my $tkdebug = 0;
 
 sub flushGhostDescriptorCache
 {
@@ -556,11 +560,11 @@ sub flushDescriptorToDisk
 	my $self = shift;
 	my $lfn = shift; # LFN of the ghoststore
 
-	print "Flushing ghoststore [$lfn] to disk\n";
+	print "TK: Flushing ghoststore [$lfn] to disk\n" if $tkdebug;
 
 	if( not exists $ghostStoreForDescriptorLFN{$lfn} )
 	{
-		die "Internal assert - $lfn not found";
+		die "Internal assert - $lfn not found" if $tkdebug;
 	}
 
 	my $gs = $ghostStoreForDescriptorLFN{$lfn};
@@ -573,7 +577,7 @@ sub flushDescriptorToDisk
 	}
 	else
 	{
-		print "   - Not needed, no dirty records\n";
+		print "TK:   - Not needed, no dirty records\n" if $tkdebug;
 	}
 
 	map { $_->dirty(0) } $gs->getAllGhosts();
@@ -645,7 +649,7 @@ sub forceGhostCharacterization
 	# TODO error check that this path actual existing in the FSE!
 
 	my $gs = $self->getGhostStoreForDescriptorFileCoveringFN($lfn);
-	print "TK - Searching for a fullhash for [$lfn]\n";
+	print "TK - Searching for a fullhash for [$lfn]\n" if $tkdebug;
 	my $g = $gs->findOrMakeGhostByLFN($lfn);
 	my $h = $g->forceCharacterization();
 
@@ -765,12 +769,12 @@ sub obtainGhostForLFN
 
 	my $gs = $self->getGhostStoreForDescriptorFileCoveringFN($lfn);
 	my $g = $gs->findGhostForLFN($lfn);
-	print "Obtain: obtain [$lfn] pulled [$g] from ghost descriptor\n";
+	print "TK:Obtain: obtain [$lfn] pulled [$g] from ghost descriptor\n" if $tkdebug;
 	return $g if( defined $g );
 
 	# Wow, we've totally stuck out here - make a new thing
 
-	print( "Obtain: Making new ghost for $lfn\n");
+	print( "TK:Obtain: Making new ghost for $lfn\n")  if $tkdebug;
 	my $g = Ghost->make( $lfn );
 	$self->incorporateGhostData( $g );
 	$g->dirty(1);
@@ -778,7 +782,7 @@ sub obtainGhostForLFN
 	my $gs = $self->getGhostStoreForDescriptorFileCoveringFN( $lfn );
 	$gs->addGhost( $g );
 
-	print "Obtain: Made: $g\n";
+	print "TK:Obtain: Made: $g\n" if $tkdebug;
 
 	return $g;
 }
@@ -791,7 +795,7 @@ use File::Basename;
 use base qw(Class::Accessor);
 GhostStore->mk_accessors( qw(lfnToGhost clean) );
 
-my $gsDebug = 1;
+my $gsDebug = 0;
 
 sub new
 {
@@ -926,7 +930,7 @@ sub slurpDescriptor($)
 	while( <FILE> )
 	{
 		chomp;
-		print "Slurping: [$_]\n" if $gsDebug;
+		print "GhostStore: Slurping: [$_]\n" if $gsDebug;
 		my $g = Ghost->newFromSerialized( $_, treeRoot => $treebase );
 		$g->isTKversion(0);
 		$self->addGhost( $g );
@@ -1010,7 +1014,7 @@ package Ghost;
 
 use File::Basename;
 use base qw(Class::Accessor);
-Ghost->mk_accessors( qw(lfn lastFullHash fullHash dirty isTKversion lastDirScan) );
+Ghost->mk_accessors( qw(lfn lastFullHash size fullHash dirty isTKversion lastDirScan lastStat mtime) );
 
 my $serializeDebug = 0;
 
@@ -1038,8 +1042,11 @@ sub newFromSerialized($)
 
 	$self->lfn( $serialLFN );
 	$self->lastFullHash( shift @a );
+	$self->size( shift @a );
 	$self->fullHash( shift @a );
 	$self->lastDirScan( shift @a );
+	$self->lastStat( shift @a );
+	$self->mtime( shift @a );
 
 	$self->dirty( 0 );
 	$self->isTKversion( 0 );
@@ -1061,9 +1068,15 @@ sub printDebug
 
 	my $lfn = $self->lfn();
 	my $lastFullHash = $self->lastFullHash();
-	my $fullHash = $self->fullHash();
+		my $size = $self->size();
 
-	print "A Ghost: lfn:[$lfn] lFH:[$lastFullHash] full:[$fullHash]";
+	my $fullHash = $self->fullHash();
+	my $lastDirScan = $self->lastDirScan();
+	my $lastStat = $self->lastStat();
+	my $mtime = $self->mtime();
+
+
+	print "GhostDebug: lfn:[$lfn] lFH:[$lastFullHash] full:[$fullHash] lds:[$lastDirScan] lstat:[$lastStat] size:[$size] mtime:[$mtime]\n";
 
 }
 
@@ -1088,8 +1101,11 @@ sub serialize()
 
 	my @s = ( $lfn, 
 			  $self->lastFullHash(),
+			  $self->size(),
 			  $self->fullHash(),
-			  $self->lastDirScan()
+			  $self->lastDirScan(),
+			  $self->lastStat(),
+			  $self->mtime()
 			  );
 
 	my $s = join ':', @s;
@@ -1123,7 +1139,7 @@ sub forceCharacterization
 	my $self = shift;
 
 	$self->getFullHash();
-	# $self->getSize();
+	$self->getSize();
 	# $self->getFastHash();	
 }
 
@@ -1145,6 +1161,45 @@ sub getFullHash
 	}
 }
 
+sub getSize
+{
+	my $self = shift;
+
+	if( defined $self->size() )
+	{
+		return $self->size();
+	}
+	else
+	{
+		$self->getStatForceHitDisk();
+		return $self->size();
+	}	
+}
+
+sub getMTime
+{
+	my $self = shift;
+
+	if( defined $self->mtime() )
+	{
+		return $self->mtime();
+	}
+	else
+	{
+		$self->getStatForceHitDisk();
+		return $self->mtime();
+	}	
+}
+
+sub informDirscan
+{
+	my $self = shift;
+
+	$self->lastDirScan( time() );
+
+	# TODO: Do we want a dirscan to always force an update to the ghost?
+	# $self->dirty(1);
+}
 
 sub getFullHashForceHitDisk
 {
@@ -1157,7 +1212,30 @@ sub getFullHashForceHitDisk
 
 	$self->fullHash( $fullhash );
 
+	$self->dirty(1);
+
 	return $fullhash;
+}
+
+sub getStatForceHitDisk
+{
+	my $self = shift;
+	my $lfn = $self->lfn();
+
+	print "STAT: $lfn\n";
+
+	$main::run_files_stat++;
+
+	my ($dev,$ino,$mode,$nlink,$uid,$gid,$rdev,$size, $atime,$mtime,$ctime,$blksize,$blocks)
+		 = stat($lfn);
+
+	$self->size($size);
+	$self->mtime($mtime);
+	$self->lastStat( time() );
+
+	$self->dirty(1);
+
+	return undef;
 }
 
 
