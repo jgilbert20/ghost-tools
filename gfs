@@ -572,7 +572,15 @@ sub doverb_writeSnapshot()
 	my $tk = TruthKeeper::get();
 	my $targetGS = $tk->makeGhostsFromCommandLine( @ARGV );
 
+	my $i = $targetGS->getDescendingIterator();
 
+	while( my $g = $i->next() )
+	{
+		print "Write Snapshot - Got Ghost: $g";
+		$g->printDebug();
+
+
+	}
 
 }
 
@@ -1215,6 +1223,26 @@ use base qw(Class::Accessor);
 my $global_tk;
 
 my %ghostForLFN_private;
+my %ghostStoreForDescriptorLFN;
+
+my $tkdebug = 1;
+
+sub makeGhostsFromCommandLine
+{
+	my $self = shift;
+	my @stuff = @_;
+
+	my $gs = GhostStore->new();
+
+	foreach my $lfn (@stuff )
+	{
+		print "Adding lfn:[$lfn] from command line to store\n";
+		my $g = $self->obtainGhostForLFN($lfn);
+		$gs->addGhost( $g );
+	}
+
+	return $gs;
+}
 
 
 sub ghostForLFN
@@ -1302,8 +1330,6 @@ sub verifyNoDirtyGhostsRemain
 
 
 
-my %ghostStoreForDescriptorLFN;
-my $tkdebug = 0;
 
 sub flushGhostDescriptorCache
 {
@@ -1528,6 +1554,7 @@ sub obtainGhostForLFN
 
 	if( exists $ghostForLFN->{$lfn} )
 	{
+		print "TK:Obtain: obtain f:[$lfn] - found in cache\n" if $tkdebug;
 		return $ghostForLFN->{$lfn};		
 	}
 
@@ -1545,7 +1572,7 @@ sub obtainGhostForLFN
 	# Wow, we've totally stuck out here - make a new thing
 
 	print( "TK:Obtain: Making new ghost for f:[$lfn]\n")  if $tkdebug;
-	my $g = Ghost->make( $lfn );
+	my $g = Ghost->makePrivate( $lfn );
 	$self->incorporateGhostData( $g );
 	$g->dirty(1);
 	$g->isTKversion(1);
@@ -1559,6 +1586,107 @@ sub obtainGhostForLFN
 
 
 
+
+
+##########
+#
+# FilesystemIterator -- A helper for iterating over nested directories
+# Note: Does not use File::Find!
+#
+####
+
+package GhostIterator;
+
+use File::Basename;
+use base qw(Class::Accessor);
+GhostIterator->mk_accessors( qw(queue recurse parentGhoststore) );
+
+my $GI_DEBUG = 1; 
+
+sub new
+{
+	my $class = shift;
+	my $self = $class->SUPER::new();
+	$self->recurse(0);
+	return $self;
+}
+
+
+sub next
+{
+	my $self = shift;
+	my $n = $self->nextRaw();
+
+	if( ref $n )
+	{
+		print "GI: THUNK received --> $$n\n" if $GI_DEBUG;
+		return $self->next();
+	}
+
+	# Check for the end-of-queue case
+	if( not defined $n )
+	{
+		print "GI iterator: Undef case - iterator over\n" if $FSI_DEBUG;
+		return undef;
+	}
+
+	my $gs = $self->parentGhoststore();
+	my $g = $gs->findGhostForLFN( $n );
+
+	return $g;
+}
+
+
+
+# 	# Now make sure that this isn't something we need to ignore
+	
+# 	my( $fn, $dir ) = fileparse( $n );
+ 	
+# 	print " FSE::getNext() checking p:[$n] -> fn:[$fn]\n" if $FSI_DEBUG;
+
+# 	if( $fn eq $DESCRIPTOR_FILENAME )
+# 	{
+# 		print " FSE/next -> skipping descriptor fn:[$fn]\n" if $FSI_DEBUG;
+# 		return $self->next();
+# 	}
+# 	return $n;
+# }
+
+sub nextRaw
+{
+	my $self = shift;
+
+	my $q = $self->queue();
+	my $c = shift @$q;
+
+	if( not defined $c )
+	{
+		return undef; 
+	}
+
+	# if the next thing is a directory, scan into the directory
+	# if( $c->hasChildren() )
+	# {
+	# 	$self->scanDir( $c );
+	# }
+
+	return $c;
+}
+
+
+
+
+
+
+##########
+#
+# GhostStore - utility functions for dealing with arbitrary collections
+# of ghosts
+#
+####
+
+
+
 package GhostStore;
 
 use File::Basename;
@@ -1566,6 +1694,8 @@ use base qw(Class::Accessor);
 GhostStore->mk_accessors( qw(lfnToGhost clean) );
 
 my $gsDebug = 0;
+
+
 
 sub new
 {
@@ -1577,6 +1707,20 @@ sub new
 	return $self;
 }
 
+sub getDescendingIterator
+{
+	my $self = shift;
+
+	my $r = GhostIterator->new();
+	$r->queue( [ keys %{$self->lfnToGhost()} ] );
+	$r->recurse(1);
+	$r->parentGhoststore( $self );
+	return $r;
+}
+
+
+
+
 sub countDirty
 {
 	my $self = shift;
@@ -1587,32 +1731,6 @@ sub countDirty
 
 	return $i;
 }
-
-# sub findOrMakeGhostByLFN
-# {
-# 	my $self = shift;
-# 	my $lfn = shift;
-
-# 	my $lfnToGhost = $self->lfnToGhost();
-
-
-# 	print "Looking for ghost [$lfn]\n";
-
-# 	if( exists $lfnToGhost->{$lfn} )
-# 	{
-# 		print "   Found inside ghoststore\n";
-# 		return  $lfnToGhost->{$lfn};
-# 	}
-# 	else
-# 	{
-
-# 		print( "   Making new ghost for $lfn\n");
-# 		my $g = Ghost->make( $lfn );
-
-# 		$self->addGhost( $g );
-# 		return $g;
-# 	}
-# }
 
 sub findGhostForLFN
 {
@@ -1643,12 +1761,8 @@ sub purifyAllGhostsToTK
 			print "GhostStore: ***** PURIFY $g->lfn()\n" if $gsDebug;
 			my $n = $tk->obtainGhostForLFN( $g->lfn );
 			$lfnToGhost->{$n->lfn()} = $n;
-
 		}
-
 	}
-
-
 }
 
 sub getAllGhosts
@@ -1667,10 +1781,6 @@ sub addGhost($)
 	my $lfnToGhost = $self->lfnToGhost();
 
 	print "GhostStore: Adding ghost $g (lfn=$lfn) (ltg=$lfnToGhost self=$self) ghoststore\n" if $gsDebug;
-
-	# Do the incorporation here
-	# the major caching form is by localname which is assumed to be unique
-	# there should only be one ghost per LFN
 
 	if( exists $lfnToGhost->{$g->lfn()} )
 	{
@@ -1975,7 +2085,9 @@ sub serialize()
 	return $s;
 }
 
-sub make($)
+# as of refactor, only TK is really allowed to called this
+
+sub make_private($)
 {
 	my $class = shift;
 	my $lfn = shift;
@@ -1989,6 +2101,12 @@ sub make($)
 	$self->lfn( $lfn );
 
 	return $self;
+}
+
+sub make
+{
+	die "Assert - old code, warning!!";
+
 }
 
 # Forces the key fields to be loaded if they aren't already known
