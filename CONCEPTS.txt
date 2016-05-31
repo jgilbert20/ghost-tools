@@ -241,8 +241,10 @@ GS: Ghoststore
 
 	gfs snapshot filea fileb
 
-	main: @ghosts = TK->makeGhostFromCommandline( @ARGV );
-		GS->addGhosts( @ghosts );
+	main: gs = TK->makeGhostsFromCommandline( @ARGV );
+			obtainGhostForLFN( shift @ARGV )
+				look inside our local run cache for these ghosts first
+				if not, pull in the ghoststore of the parent using existing functions
 		i = gs->getDescendingIterator(); - populate this GhostIterator with a queue of the roots
 		g = i->next();
 			pop queue 
@@ -252,6 +254,9 @@ GS: Ghoststore
 					    if ok, then TK->getCachedChildren( g );
 					    	load the .gcip file
 					    if not ok, children = FSM->getImmediateChildren( g )
+					    		this function opens the directory, does a full scan,
+					    		and creates a ghoststore 
+					    		calls TK->makeGhostForLFN( "fs:" . thingWeFindInDir)
 					    	g->learnChildrenPresent( children );
 					    		setChildrenMarkPresent now scans the known children
 					    		marking those that aren't found as "not present"
@@ -266,7 +271,23 @@ GS: Ghoststore
 					g->flush();
 						Tk->flush() - called on thunk only for directory case
 						writes out the gcip file and cleans the dirty flag
+		g->forceCharacterize();
+			checks all of its fields. For those that don't seem right, 
+			we call the FSM -> retrieveFullHashHard
+							-> retrieveStatHard
 
+
+
+
+	gfs lsdup dirA dirB
+	$sourceGS = TK->makeFromCommand( @argv sources)
+	$targetGS = TK->makeFromCommand( @argv dest)
+
+	$targetGS->getDescendingIterator();
+	foreach( my $g = getNext() )
+		$sourceGS->findAllDuplicates( $g );
+			my @sizeMatches = $gs->findFilesWithSize( $size );
+				@matches->isDuplicateOf( $g )
 
 
 
