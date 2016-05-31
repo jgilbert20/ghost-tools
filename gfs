@@ -26,7 +26,9 @@ use MLDBM qw( BerkeleyDB::Hash Storable );
 my $DESCRIPTOR_FILENAME = "00descriptor.gfs";
 my $GENERAL_DEBUG = 1;
 my $USUAL_IGNORE = 1;
+local $main::SCRIPT_START = time();
 local $main::SCRIPT_START_GTOD = [gettimeofday];
+local $main::GUARD_TIME_SECONDS = undef; 
 
 # Run statistics - globals
 
@@ -50,10 +52,50 @@ my $EDIR = "$ENV{HOME}/.gfsrun/EXEC-$$";
 
 my $OPT_ALL = 0;
 my $OPT_STATS = 0;
+my $OPT_GUARDTIME = undef;
 
 &GetOptions( 'all' => \$OPT_ALL,
+			 'G|guard=s' => \$OPT_GUARDTIME,
 			 'stats' => \$OPT_STATS );
 
+
+if( defined $OPT_GUARDTIME )
+{
+	$main::GUARD_TIME_SECONDS = $OPT_GUARDTIME;
+
+	print "Guard time set to: $main::GUARD_TIME_SECONDS\n";
+}
+
+
+sub expressRelativeTime
+{
+	my $seconds = shift;
+
+	if( $seconds > 24*60*60)
+	{
+		$seconds /= 24*60*60;
+		my $r = sprintf( "%0.4s days", $seconds );
+		return $r;
+	}
+
+	if( $seconds > 2*60*60)
+	{
+		$seconds /= 60*60;
+		my $r = sprintf( "%0.4s hours", $seconds );
+		return $r;
+	}
+
+	if( $seconds > 120)
+	{
+		$seconds /= 60;
+		my $r = sprintf( "%0.4s secs", $seconds );
+		return $r;
+	}
+
+
+	return "$seconds" . "s";
+
+}
 
 
 # Key function prototypes
@@ -566,8 +608,11 @@ sub doverb_ls()
 		my $fullHash = $g->fullHash() || '<not calculated>';
 		my $lastFullHash = $g->lastFullHash();
 
-
 		my $lfh = defined $lastFullHash ? strftime( "%c", localtime( $lastFullHash) ) : '<not calculated>';
+
+		my $d = expressRelativeTime( $main::SCRIPT_START - $lastFullHash );
+
+		$lfh .= "($d)";
 
 		print "$fullHash\t$lfh\t$lfn\n";
 	}
@@ -1955,6 +2000,26 @@ sub forceCharacterization
 	# $self->getFastHash();	
 }
 
+sub hasAcceptableFullhash
+{
+	my $self = shift;
+
+	return 0 if( not defined $self->fullHash() );
+	
+	if( defined $main::GUARD_TIME_SECONDS )
+	{
+		my $age = $main::SCRIPT_START - $self->lastFullHash();
+
+		if( $age > $main::GUARD_TIME_SECONDS )
+		{
+			print "Forcing hash recalculation (", main::expressRelativeTime( $age ), ")\n";
+			return 0; 
+		}
+	}
+
+	return 1;
+}
+
 # returns an acceptable fullHash for the ghost
 # Normally, the latest cached data is trusted, but
 # this function can be set to take a out of data criteria in future TODO
@@ -1963,7 +2028,7 @@ sub getFullHash
 {
 	my $self = shift;
 
-	if( defined $self->fullHash() )
+	if( $self->hasAcceptableFullhash() )
 	{
 		return $self->fullHash();
 	}
@@ -1973,11 +2038,35 @@ sub getFullHash
 	}
 }
 
+
+sub hasAcceptableStat
+{
+	my $self = shift;
+
+	return 0 if( not defined $self->size() );
+	return 0 if( not defined $self->mtime() );
+
+	if( defined $main::GUARD_TIME_SECONDS )
+	{
+		my $age = $main::SCRIPT_START - $self->lastStat();
+
+		if( $age > $main::GUARD_TIME_SECONDS )
+		{
+			print "Forcing recalculation (", main::expressRelativeTime( $age ), ")\n";
+			return 0; 
+		}
+	}
+
+
+	return 1;
+}
+
+
 sub getSize
 {
 	my $self = shift;
 
-	if( defined $self->size() )
+	if( $self->hasAcceptableStat() )
 	{
 		return $self->size();
 	}
@@ -1992,7 +2081,7 @@ sub getMTime
 {
 	my $self = shift;
 
-	if( defined $self->mtime() )
+	if( $self->hasAcceptableStat() )
 	{
 		return $self->mtime();
 	}
