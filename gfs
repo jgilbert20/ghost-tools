@@ -1,17 +1,119 @@
 #!/usr/bin/perl
 
+use strict;
+
 use Digest::SHA;
 use File::Basename;
 use File::Spec;
 
-use strict;
+use File::Path;
+use File::Copy; 
+
+# Database Layer
+
+use BerkeleyDB;
+use BerkeleyDB::Hash;
+use BerkeleyDB::Btree;
+
+# Gives us tied access to databases
+
+use MLDBM qw( BerkeleyDB::Hash Storable );
+
+# Major globals
 
 my $DESCRIPTOR_FILENAME = "00descriptor.gfs";
+my $GENERAL_DEBUG = 1;
+
+
+# Run statistics - globals
 
 local $main::run_files_fullread = 0;
 local $main::run_files_stat = 0;
 local $main::run_descriptors_read = 0;
 local $main::run_descriptors_write = 0;
+
+# Get path to our WD
+
+my $HOME = $ENV{HOME};
+my $WDIR = "$HOME/.gfs";
+my $DBDIR = "$WDIR/db";
+my $EDIR = "$ENV{HOME}/.gfsrun/EXEC-$$";
+
+# Key function prototypes
+sub debug($);
+
+# Helper function that creates a nested path with lots of error checking
+
+sub mkdirs
+{
+    my $dir = shift;
+    my $dirx = dirname $dir;
+
+    print "MKDIRS:[$dirx]\n";
+
+    eval{ mkpath($dirx,1) };
+    $@ and die "Couldn't create dir path: $@";
+    die "Did not find new path" if not -d $dirx;
+
+   return 1;
+}
+
+# Verifies readability of various directories needed for program invocation
+
+sub verifyWorkingDirectories
+{
+	if( not -e $WDIR )
+	{
+	    mkdir $WDIR or die "Error creating [$WDIR]: $!";
+	}
+
+	if( not -e $DBDIR )
+	{
+	    mkdir $DBDIR or die "Error creating [$DBDIR]: $!";
+	}
+
+	if( not -e $EDIR )
+	{
+	    mkdirs($EDIR . "/") or die "Error creating [$EDIR]: $!";
+	}
+
+	die "Cannot create $WDIR" unless -w $WDIR;
+	die "Cannot create $DBDIR" unless -w $DBDIR;
+}
+
+# Sets up our data
+
+sub setupDatabases
+{
+	my $bdb_env = new BerkeleyDB::Env 
+	    -Verbose => 1,
+	    -Home => $DBDIR,
+	    -Flags => DB_CREATE|DB_INIT_MPOOL|DB_INIT_CDB,
+	    -ErrFile => "$DBDIR/Errors-$$",
+	    -ErrPrefix => "GFS";
+
+
+
+
+}
+
+
+sub debug ($)
+{
+	return if not $GENERAL_DEBUG;
+	my $a = shift @_;
+	chomp $a;
+	print "DEBUG_LINE: " . $a . "\n";
+}
+
+
+sub init
+{
+	verifyWorkingDirectories();
+	setupDatabases();
+}
+
+
 
 # test cases:
 # snapshot directories both a/* and a/ and a
@@ -20,15 +122,81 @@ local $main::run_descriptors_write = 0;
 # then if the read date of the file is earlier than the scan date of the directory
 # then we know the file may be stale and can delete it
 
+
+
+# how do we stick virtual things into the hash?
+# for instance, where or how do we store the idea that a .tar file has certain contents
+# or that an rsync directory (jgilbert@auspice.net:a/b/c) contains a file?
+# almost like a normal path a/b/c is basically an implicit "local:a/b/c"..
+# the local handler knows to write .gfs_info files
+# whereas the remote one knows not to
+# each FS type offeres a get, move, copy, retrieve full checksum, stat, etc function
+# so now we can handle S3, Rsync, etc
+
+# how does that tie in with tags?
+# how do I say anything under /Volume/Foo should be addressed as FOODRIVE:
+# clearly this only matters during AFN conversion
+# disktag:FOODRIVE|/one/two/three
+#
+# if that is the AFN recorded, then the system will think that is there
+# we just need to write a record like /Volume/Foo -> FOODRIVE
+# and also write a /Volume/Foo/GFS_ID.txt file
+# then a dereference just requires that we verify that the /Volume/Foo/GFS_ID can still be reached
+# maybe there is a tool like "bless" which does this for you
+# so the rel->AFN conversion would either need to rely on this mapping
+# or traverse back up to make sure that all ../GFS_ID.txt files were registered
+
+# is a snapshot treated as a file collection as a target? if it is, we have to emphasize 
+# that it is a ghost. e.g. you can enumerate, but the fact that snapshot:4444/sdf contains
+# this file version could never be used as a proxy.
+# so when you "get all AFNs for hash", you'd have to pass to a FShandler for the snapshot
+
+# GFS is an overlay snapshoting and directory reconstruction tool. Its not really meant 
+# for version control, but managing someone's life which may be scattered 
+# across many different asset types and locations.
+# GFS is entirely built around command line tools. It doesn't watch the filesystem
+# for changes.
+# key features
+# 1) highly accelerated content-aware rsync - a file is never retransmitted unless needed
+# 2) worried you still wantt o eb sure you have a backup of a wedding photos? 
+#     this has tools that let you flag and manage bit-rot and verify your stuff is where
+#     you think it is
+# 3) work with large file trees both on a desktop and laptop? GFS can tell you instantly
+#     which chnages you've made on your laptop that are not yet on your desktop and push them
+#     to the desktop efficiently
+# 4) in the field and want to be sure files you are working on are protected?
+#     GFS can make sure any file is either in your dropbox, on your machine at home
+# 5) trying to free up space on your laptop? do you have a copy of that big 10 GB ISO file
+#     at home? find out quickly if you can ditch it. 
+
+
+
+# Database layer use cases
+# 1) quickly give me ghost information for a path
+#      AFN -> GhostSerialized as absolute
+# 2) quickly give me the AFNs associated with a hash or size
+#      hash -> AFN 0..n
+#	   size -> AFN 0..n
+
+
+
+
+
+
 sub main()
 {
 	print "Welcome to Ghost.\n";
+
+	init();
 
 	my $tk = TruthKeeper::get();
 
 	my $verb = shift @ARGV;
 
 	print " Verb = [$verb]\n";
+
+
+
 
 	if( $verb eq "info" )
 	{
@@ -82,9 +250,21 @@ sub main()
 	# are rejected, unless you say --hit-disk which means basically ignore all of the 
 	# tools and recheck everything
 	
+	if( $verb eq "dbtest" )
+	{
+
+		my $fse = new FilesystemExplorer();
+		$fse->setRoots( @ARGV );
+
+		while( defined( my $file = $fse->next() ) )
+		{
+			print "DBTest - Scanning: [$file]\n";
 
 
 
+		}	
+
+	}	
 
 
 	# LS tells us what we can find out about the current directory tree
