@@ -91,10 +91,6 @@ sub setupDatabases
 	    -Flags => DB_CREATE|DB_INIT_MPOOL|DB_INIT_CDB,
 	    -ErrFile => "$DBDIR/Errors-$$",
 	    -ErrPrefix => "GFS";
-
-
-
-
 }
 
 
@@ -175,13 +171,17 @@ sub init
 # 1) quickly give me ghost information for a path
 #      AFN -> GhostSerialized as absolute
 # 2) quickly give me the AFNs associated with a hash or size
-#      hash -> AFN 0..n
-#	   size -> AFN 0..n
+#      hash -> AFN 0..n   (needed for LSDup)
+#	   size -> AFN 0..n   (also possibly needed for LSDup)
 
-
-
-
-
+# so when something is stored in location X or found in location X, 
+# what permanent record is created?
+# maybe we create spontaneous snapshot records that can be loaded back in?
+#
+#    gfs rsync /source jgilbert@asdf:foobar/
+# 
+# All files written to foobar drops a file in .gfs/receipts/rsync-$$-date.snapshot
+# With the note: "This snapshot record was written by GFS on date XXXX"
 
 sub main()
 {
@@ -195,25 +195,11 @@ sub main()
 
 	print " Verb = [$verb]\n";
 
-
-
-
 	if( $verb eq "info" )
 	{
 		doverb_info();
 	}
 
-	# Lsdup: A B C - for every file in C, say which are copied in A and or B and C (and where)
-	# foreach c (where size != 0)
-	# c->findDuplicate( $g );
-	# b->findDuplicate( $g );
-	# a->findDuplicate( $g );
-	# findDuplicate psucdocode
-	#    get ghost G for FN
-	#    find candidates - $fse->listAllFilesWithSize( $size )
-	#        lafby size, first time its called iterates over all FSE, hashing up sizes
-	#		 next, for each we do the test "$g->hasIdenticalContent($g)"
-	#		 	HIC first rules out size, then mod-date, then finally fullhash
 
 	# reconstruct-test A B C
 	#   makes sure that everything in A and B be reconstructed in target C
@@ -259,12 +245,17 @@ sub main()
 		while( defined( my $file = $fse->next() ) )
 		{
 			print "DBTest - Scanning: [$file]\n";
-
-
-
 		}	
 
 	}	
+
+
+	if( $verb eq "lsdup")
+	{
+		doverb_lsdup();
+	}
+
+
 
 
 	# LS tells us what we can find out about the current directory tree
@@ -378,6 +369,43 @@ sub doverb_ls()
 		my $lastFullHash = $g->lastFullHash();
 
 		print "Filename:[$lfn] fullH:[$fullHash] lastH:[$lastFullHash]\n";
+	}
+
+}
+
+
+	# Lsdup: A B C - for every file in C, say which are copied in A and or B and C (and where)
+	# foreach c (where size != 0)
+	# c->findDuplicate( $g );
+	# b->findDuplicate( $g );
+	# a->findDuplicate( $g );
+	# findDuplicate psucdocode
+	#    get ghost G for FN
+	#    find candidates - $fse->listAllFilesWithSize( $size )
+	#        lafby size, first time its called iterates over all FSE, hashing up sizes
+	#		 next, for each we do the test "$g->hasIdenticalContent($g)"
+	#		 	HIC first rules out size, then mod-date, then finally fullhash
+
+
+
+sub doverb_lsdup()
+{
+	my $tk = TruthKeeper::get();
+
+	my $target = pop @ARGV;
+
+
+	my $targetFSE = new FilesystemExplorer();
+	$targetFSE->setRoots( $target );
+
+	my $sourceFSE = new FilesystemExplorer();
+	$sourceFSE->setRoots( @ARGV );
+
+	while( defined( my $file = $targetFSE->next() ) )
+	{
+		print "Verb LSDUP - Finding duplicates for: [$file]\n";
+
+	
 
 
 	}
@@ -587,7 +615,7 @@ sub next
 	
 	my( $fn, $dir ) = fileparse( $n );
  	
-	print " FSE::getNext() checking [$n] -> [$fn]\n";
+	# print " FSE::getNext() checking [$n] -> [$fn]\n";
 
 	if( $fn eq $DESCRIPTOR_FILENAME )
 	{
