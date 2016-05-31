@@ -428,7 +428,6 @@ sub handleVerb
 		return;
 	}	
 
-
 	if( $verb eq "lsdup")
 	{
 		doverb_lsdup();
@@ -570,6 +569,16 @@ HERE
 
 sub doverb_writeSnapshot()
 {
+	my $tk = TruthKeeper::get();
+	my $targetGS = $tk->makeGhostsFromCommandLine( @ARGV );
+
+
+
+}
+
+
+sub doverb_writeSnapshot_old()
+{
 	my $store = GhostStore->new();
 
 	my $fse = new FilesystemExplorer();
@@ -594,7 +603,6 @@ sub doverb_writeSnapshot()
 
 	$store->writeSnapshotToDisk( "snapshot-$$.out");
 }
-
 
 
 # for each item listed, shows what we know about it -- no recursion, no forced characterization
@@ -1443,8 +1451,6 @@ sub incorporateGhostStore
 {
 	my $self = shift;
 	my $gs = shift;
-
-
 
   # print Dumper( $self );
 
