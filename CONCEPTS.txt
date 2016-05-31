@@ -125,7 +125,8 @@ gfs verify A B C
 
 gfs snapshot C snap:foo
 
-	Add everything in C to the snapshot called foo. Checksums are forced.
+	Add everything in C to the snapshot called foo. Checksums are forced if not present
+	but they are not recalcualted unnecessarily
 
 gfs verify C snap:foo
 
@@ -198,5 +199,74 @@ Definitions:
 
 	Source: A place to take things from, but must remain untouched
 	Auxiliary|Pillage: A place we don't give a shit about and okay to move things
+
++++++
+
+If you're anything like me, you've got files scattered in an annoying number of different places
+
+- My main laptop (800GB)
+- My main desktop (3TB) plus a RAID-8TB and a DroboPro-16Tb)
+- An old Drobo that sometimes I connect to keep spare copies of things
+- A few old hard drives on my desk with video render files I probably can delete
+- An archive of my files before 2012 at my parent's house
+- An archive of some more recent things
+- A dropbox folder
+- A google drive folder
+- An old laptop that I may or may not have fully moved out from 2013
+- A gaming machine that may or may not have other files
+
+How do you manage all of this stuff? How do you figure out what is a copy, what is a backup, and what is a primay storage for something? If you were smart, maybe you could be super organized. But there is another way. The power of technology. 
+
+
+
+
+
+Thats sort of annoying, right? 
+
+Everything is a ghost refactor
+
+M: main
+FSE: Filesystem manager
+G: Ghost
+	getSize()
+	learnSize() - accomodate potentially new information
+	learnStat
+TK: Truthkeeper
+GS: Ghoststore
+
+
+1-How do .gcpip files get populated initially?
+2-How does .gcip file change when contents is changed?
+3-How does a snapshot work?
+
+	gfs snapshot filea fileb
+
+	main: @ghosts = TK->makeGhostFromCommandline( @ARGV );
+		GS->addGhosts( @ghosts );
+		i = gs->getDescendingIterator(); - populate this GhostIterator with a queue of the roots
+		g = i->next();
+			pop queue 
+			if( g->hasChildren() )
+				g->getChildren()
+					getChildren finds out the last time dirent was populated
+					    if ok, then TK->getCachedChildren( g );
+					    	load the .gcip file
+					    if not ok, children = FSM->getImmediateChildren( g )
+					    	g->learnChildrenPresent( children );
+					    		setChildrenMarkPresent now scans the known children
+					    		marking those that aren't found as "not present"
+					    		and setting the lastDirEnt date
+			onThunk
+				g->finalizeChildrenPresent()
+					computes the hashes of names and subhashes
+					populates lastHashDate() 
+					g->learnFullHash(X);
+						if different, sets dirty flag
+						if date different, sets it, and sets dirty flag
+					g->flush();
+						Tk->flush() - called on thunk only for directory case
+						writes out the gcip file and cleans the dirty flag
+
+
 
 

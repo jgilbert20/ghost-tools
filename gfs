@@ -415,11 +415,6 @@ sub handleVerb
 {
 	my $verb = shift;
 
-	if( $verb eq "info" )
-	{
-		doverb_info();
-		return;		
-	}
 
 	if( $verb eq "dbtest" )
 	{
@@ -463,6 +458,8 @@ sub handleVerb
 		return;
 	}
 
+	#### THINGS BELOW THIS LINE NOT TESTED
+	
 	# Takes the listed things and writes a single descriptor file
 
 	if( $verb eq "write-descriptor")
@@ -482,6 +479,12 @@ sub handleVerb
 		$store->slurpDescriptor( $src);
 		$store->writeAsDescriptor( $d );
 		return;
+	}
+
+	if( $verb eq "info" )
+	{
+		doverb_info();
+		return;		
 	}
 
 	die "Verb $verb not recognized - try $0 help for ideas";
