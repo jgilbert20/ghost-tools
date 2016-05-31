@@ -112,3 +112,91 @@ FSE is really about the interface to a collection of files
 TruthKeeper is the module that generates ghosts
 it also tracks when ghost records are stale and may need to be pushed out to new places
 
+
++++++++++++++++++
+
+TODO: -G|guard - if a basic something hasn't been checked in this many days, check it again
+should get a warning if not specified and old data is being relied on
+
+
+gfs verify A B C
+
+    can A and B reconstruct everything in directory C?
+
+gfs snapshot C snap:foo
+
+	Add everything in C to the snapshot called foo. Checksums are forced.
+
+gfs verify C snap:foo
+
+	Verify if C contains everything in snapshot foo (is C in conformance to foo?)
+	If C has extra things, that is OK. The thing we are testing is snap:foo
+
+gfs verify snap:foo A
+
+	Verify that snapshot foo has everything now in A.. That is, is there anything
+	in volume A we cannot find in snap:foo?
+
+gfs rsync|copy|cp A B
+
+	Acts like we are copying A to B. We will feel free to move anything
+	around in B to make it look like A. 
+
+gfs rsync|copy|cp A B --pillage=C
+
+	In cases where it makes sense to fill in B by pillaging from C, go ahead and do that
+
+gfs rsync|copy|cp A B --delete
+
+	Same as earlier, but things in B that aren't supposed to be there will be moved to a
+	"deleted-xxxxxx" subdirectory kept at the top level of B
+
+gfs rsync|copy|cp A B --delete=C
+
+	Same as earlier, but things in B that aren't supposed to be there will be moved to a
+	"deleted-xxxxxx" subdirectory kept at the top level of C
+
+gfs deduplicate A B C 
+
+	Go through C, and anything that is duplicated in A, B or C is moved out
+
+gfs deduplicate A B C --lighten|thunk
+
+	Go through C -- things that are no longer needed are converted to thunks
+
+
+
+
+gfs lighten A B C
+
+    anuthing in C that can be reconstructed with A and B will be converted into a
+    lightweight thunk file
+
+gfs thicken A B C
+
+	Convert all thunks in C by copying files from A and B
+
+gfs bless /path/to/C volume1
+
+	now any AFN under /path/to/c will be volumized
+
+gfs verify vol:volume1 snap:foo 
+
+	equivilent to gfs verify /path/to/C snap:foo
+
+gfs scan .
+	
+	Updates all of our descriptors and also updates volume mappings
+	Brings our localdatabase up to date
+	basically the same operation as a snapshot but doesn't write a file
+
+
+
+
+
+Definitions:
+
+	Source: A place to take things from, but must remain untouched
+	Auxiliary|Pillage: A place we don't give a shit about and okay to move things
+
+
