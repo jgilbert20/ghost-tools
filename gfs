@@ -5,9 +5,9 @@ use strict;
 use Digest::SHA;
 use File::Basename;
 use File::Spec;
-
 use File::Path;
 use File::Copy; 
+use Time::HiRes qw( CLOCK_REALTIME gettimeofday tv_interval);
 
 # Database Layer
 
@@ -23,14 +23,19 @@ use MLDBM qw( BerkeleyDB::Hash Storable );
 
 my $DESCRIPTOR_FILENAME = "00descriptor.gfs";
 my $GENERAL_DEBUG = 1;
-
+my $USUAL_IGNORE = 1;
+local $main::SCRIPT_START_GTOD = [gettimeofday];
 
 # Run statistics - globals
 
 local $main::run_files_fullread = 0;
+local $main::run_bytes_fullread = 0;
+local $main::run_time_fullread = 0;
 local $main::run_files_stat = 0;
 local $main::run_descriptors_read = 0;
 local $main::run_descriptors_write = 0;
+local $main::readdir_invokes = 0;
+local $main::readdir_entires = 0;
 
 # Get path to our WD
 
@@ -56,6 +61,25 @@ sub mkdirs
     die "Did not find new path" if not -d $dirx;
 
    return 1;
+}
+
+# Helper function - if user requests it, ignores shit things like .git and .DS_Store
+# Returns true if the file is good to go, or false if it is usually ignored
+# This is not to be used for avoiding actual logic or recursion errors
+# (such as scanning our own descriptors).
+# User should be free to turn this feature off and the program must work as intended. 
+
+sub fileIsUsuallyIgnored
+{
+	my $cfn = shift;
+
+	return 0 if( not $USUAL_IGNORE );
+
+	return 1 if $cfn =~ /\.DS_Store$/;
+	return 1 if $cfn =~ /\Thumbs.db$/;
+	return 1 if $cfn =~ /\.pcip_info$/;
+
+	return 0;
 }
 
 # Verifies readability of various directories needed for program invocation
@@ -110,6 +134,71 @@ sub init
 }
 
 
+
+# Incorporated code from String::Escape via per artistic license
+# Reason: Need to tweak what counts as an escaped character
+
+# =head1 AUTHOR
+# Matthew Simon Cavalletto, C<< <simonm at cavalletto.org> >>
+# Initial versions developed at Evolution Online Systems with Eleanor J. Evans and Jeremy G. Bishop.
+# =head1 LICENSE
+# Copyright 2010, 2002 Matthew Simon Cavalletto.
+# Portions copyright 1996, 1997, 1998, 2001 Evolution Online Systems, Inc.
+# You may use, modify, and distribute this software under the same terms as Perl.
+# See http://dev.perl.org/licenses/ for more information.
+# =cut
+
+
+use vars qw( %Backslashed %Interpolated );
+
+# Earlier definitions are preferred to later ones, thus we output \n not \x0d
+_define_backslash_escapes(
+	( map { $_ => $_ } ( '\\', '"', '$', '@' ) ),
+	( 'r' => "\r", 'n' => "\n", 't' => "\t" ),
+	( map { 'x' . unpack('H2', chr($_)) => chr($_) } (0..255) ),
+	( map { sprintf('%03o', $_) => chr($_) } (0..255) ),
+);
+
+sub _define_backslash_escapes {
+	%Interpolated = @_;
+	%Backslashed  = reverse @_;
+}
+
+# $special_characters_escaped = backslash( $source_string );
+sub backslash ($) {
+	local $_ = ( defined $_[0] ? $_[0] : '' );
+	# Preserve only printable ASCII characters other than \, ", $, and @
+	s/([^\x20\x21\x24\x25-\x39\x41-\x5b\x5d-\x7e])/\\$Backslashed{$1}/gs;
+	return $_;
+}
+
+# $original_string = unbackslash( $special_characters_escaped );
+sub unbackslash ($) {
+	local $_ = ( defined $_[0] ? $_[0] : '' );
+	s/ (\A|\G|[^\\]) [\\] ( [0]\d\d | [x][\da-fA-F]{2} | . ) / $1 . ( $Interpolated{lc($2) }) /gsxe;
+	return $_;
+}
+
+
+sub gfs_escape($)
+{
+	my $v = shift;
+
+	$v =~ s/:/\\c/gs;
+	$v =~ s/\n/\\n/gs;
+	return $v;
+
+}
+
+sub gfs_unescape($)
+{
+
+	my $v = shift;
+	$v =~ s/\\c/:/gs;
+	$v =~ s/\\n/\n/gs;
+
+	return $v;
+}
 
 # test cases:
 # snapshot directories both a/* and a/ and a
@@ -296,11 +385,18 @@ sub main()
 
 	print "----- DONE -----\n";
 
-	print "Full reads: $main::run_files_fullread\n";
-	print "Full reads: $main::run_files_stat\n";
-	print "Desc reads: $main::run_descriptors_read\n";
-	print "Desc wrtes: $main::run_descriptors_write\n";
+	print "Full reads count: $main::run_files_fullread\n";
+	print "Full reads size : $main::run_bytes_fullread\n";
+	print "Full read time  : $main::run_time_fullread\n";
 
+	print "Stat reads      : $main::run_files_stat\n";
+
+	print "Local .gfs reads: $main::run_descriptors_read\n";
+	print "Local .gfs writs: $main::run_descriptors_write\n";
+	print "Readdir invokes : $main::readdir_invokes\n";
+	print "Readdir entries : $main::readdir_entries\n";
+
+	print "Total Script Time: " . tv_interval( $main::SCRIPT_START_GTOD ) . "\n";
 	
 }
 
@@ -414,31 +510,62 @@ sub doverb_lsdup()
 	my $sourceFSE = new FilesystemExplorer();
 	$sourceFSE->setRoots( @ARGV );
 
+	my $dup_count = 0;
+	my $dup_size = 0;
+
 	while( my $file = $targetIterator->next()  )
 	{
-
-
 		next unless -f $file;
+		next if fileIsUsuallyIgnored( $file );
+
+		# print "LSDUP - Iterated to lfn:[$file] - gathering data\n";
 
 		my $g = $tk->obtainGhostForLFN($file);
 
-		my @dups = $targetFSE->findDuplicates( $g );
+		my @dups = $targetFSE->findOtherDuplicates( $g );
+		my @sdups = $sourceFSE->findOtherDuplicates( $g );
 
 		print "Verb LSDUP - Finding duplicates for: [$file]\n";
-		$g->printDebug();
+		#$g->printDebug();
 
-		print "Duplicates:\n";
+		if( @dups > 0 )
+		{	
+			print "    Duplicate in local tree: ($target)\n";
 
-		foreach my $d (@dups)
-		{
+			foreach my $d (@dups)
+			{
+				my $dfn = $d->lfn();
 
-			print " DUP: [$d]\n";
-
-			# $d->printDebug();
-
+				print "      DUP: [$dfn]\n";
+				$dup_count++;
+				$dup_size += $d->getSize();
+				# $d->printDebug();
+			}
 		}
 
+		
+		if( @sdups > 0 )
+		{
+			print "    Duplicate in source trees (@ARGV):\n";
+			foreach my $d (@sdups)
+			{
+				my $dfn = $d->lfn();
+
+				print "      DUP: [$dfn]\n";
+				$dup_count++;
+				$dup_size += $d->getSize();
+				# $d->printDebug();
+			}
+		}
+
+
 	}
+
+	print "LSDup finished\n";
+	print "I found $dup_count files that were duplicated,\n";
+	print "occupyig $dup_size unnecessary space\n";
+
+
 
 }
 
@@ -501,11 +628,14 @@ die();
 
 sub getFullHashForceHitDisk($)
 {
-	## TODO - implement without full slurp
-
 	my $lfn = shift;
 
 	print "FULLHASH: $lfn\n";
+
+	# TODO: examine use of stat
+	$main::run_bytes_fullread += -s $lfn;
+
+	my $START_GTOD = [gettimeofday];
 
 	my $sha = Digest::SHA->new(1);
 	$sha->addfile( $lfn );
@@ -513,9 +643,17 @@ sub getFullHashForceHitDisk($)
 
 	$main::run_files_fullread++;
 
+	$main::run_time_fullread += tv_interval( $START_GTOD );
+
 	return( "SHA1/FULL/$hexdigest");
 }
 
+##########
+#
+# FilesystemIterator -- A helper for iterating over nested directories
+# Note: Does not use File::Find!
+#
+####
 
 package FilesystemIterator;
 
@@ -540,14 +678,23 @@ sub scanDir
 
 	my $q = $self->queue();	
 
-	print "FSE:ScanDIR into $dir\n" if $FSI_DEBUG;
+	print "FSE:ScanDIR into dir:[$dir]\n" if $FSI_DEBUG;
 
 	#$dir =~ s/\/+$//;
 
 	opendir DIR, $dir;
 
+
+	$main::readdir_invokes++;
+
 	# drop . and .., sort directory
-	my @files = map {  main::canonize( File::Spec->catfile( $dir, $_ ) ) } grep { !/^\.{1,2}$/ } sort { $a cmp $b } readdir DIR;
+	my @files = map {  main::canonize( File::Spec->catfile( $dir, $_ ) ) } 
+		grep { !/^\.{1,2}$/ } 
+		sort { $a cmp $b } 
+		readdir DIR;
+
+
+	$main::readdir_entries += @files;
 
 	print( "FSE:ScanDIR Returned: ", (join ':', @files ), "\n" ) if $FSI_DEBUG;
 
@@ -582,7 +729,7 @@ sub next
 
 	if( not defined $n )
 	{
-		# print "FSE iterator: Undef case\n";
+		print "FSE iterator: Undef case\n" if $FSI_DEBUG;
 		return undef;
 	}
 
@@ -590,16 +737,15 @@ sub next
 	
 	my( $fn, $dir ) = fileparse( $n );
  	
-	# print " FSE::getNext() checking [$n] -> [$fn]\n";
+	print " FSE::getNext() checking p:[$n] -> fn:[$fn]\n" if $FSI_DEBUG;
 
 	if( $fn eq $DESCRIPTOR_FILENAME )
 	{
-		# print " FSE/next -> skipping descriptor [$fn]\n";
+		print " FSE/next -> skipping descriptor fn:[$fn]\n" if $FSI_DEBUG;
 		return $self->next();
 	}
 	return $n;
 }
-
 
 sub nextRaw
 {
@@ -613,7 +759,7 @@ sub nextRaw
 		return undef; 
 	}
 
-	 # print "Got[$c]\n";
+	# print "Got[$c]\n";
 
 	# if the next thing is a directory, scan into the directory
 	if( -d $c )
@@ -641,6 +787,12 @@ sub nextRaw
 # One open question: how the truthkeeper is supposed to interact with FSE --
 # is there ever any design situation where the FSE needs to be called BY the truthkeeper?
 # if we can prevent this from ever occuring, i think the design will be cleaner 
+# One answer: all ghosts are made by FSE, and hold a link back to the FSE that made them, and this
+# delegates the getRealhash, etc stuff. So TK never deals with the FSE directly
+# a question though: when is it ever required for TK to do that?
+# another question: in the case that FSE is remote, how do we "batch" certain lookups
+# to prevent onesie twosies RPC calls?
+#
 #
 # Verbs i know it has to support
 #
@@ -676,8 +828,12 @@ sub loadSizeCache
 
 	my $iterator = $self->getIterator();
 
+	print "FSE-Generating size cache\n";
+
 	while( my $file = $iterator->next() )
 	{
+		next unless -f $file;
+
 		my $size = $tk->obtainGhostForLFN($file)->getSize();
 
 		next if $size <= 0;
@@ -704,8 +860,27 @@ sub findFilesWithSize
 		$self->loadSizeCache();
 	}
 
-	return ( @{$self->sizeToFNs()->{$s}} );
+	my $lu = $self->sizeToFNs()->{$s};
+
+	return +() if not defined $lu;
+
+	return ( @{$lu} );
 }
+
+
+# Returns files other than the one listed that are duplicates
+
+sub findOtherDuplicates
+{
+	my $self = shift;
+	my $g = shift;
+
+	return grep { not $g->isSameFilename($_) } $self->findDuplicates($g);
+
+
+}
+
+
 
 # Returns a list of actual duplicates of the file
 # may not actually hit the disk depending on what criteria
@@ -719,12 +894,38 @@ sub findDuplicates
 	# First, check our size cache for a match
 	my $size = $target->getSize();
 
-	my @otherAFN = $self->findFilesWithSize( $size );
+	return () if $size < 1; 
 
+	my @otherFN = $self->findFilesWithSize( $size );
 
+	return if @otherFN < 1;
 
+	# print " -- Checking size duplicates size:[$size]\n";
 
+	my @matches;
 
+	foreach my $c ( @otherFN )
+	{
+		my $gc = $self->getGhost( $c );
+
+		next if $gc->isSameFilename( $target );
+
+		if( 1 )
+		{
+			my $cFN = $gc->lfn();
+			my $tFN = $target->lfn();
+			print "     -- Checking size duplicates size:[$size]\n";
+			print "     ---> cfn:[$cFN]\n";
+			print "  vs ---> tfn:[$tFN]\n";
+		}
+
+		if( $target->isDuplicateOf( $gc ) )
+		{
+			push @matches, $gc;
+		}
+	}
+
+	return @matches;
 }
 
 sub getGhost()
@@ -734,8 +935,11 @@ sub getGhost()
 
 	# Todo - refactor - why wouldn't you always get ghosts from truthkeeper?
 	# is there a reason to have this pass through?
+	# or is the sematic here that a ghoststore may have unincorporated state?
 
 	my $tk = TruthKeeper::get();
+
+	# print "Checking getGhost (unusual case?) [$lfn]\n";
 
 	my $g = $tk->obtainGhostForLFN( $lfn );
 
@@ -759,6 +963,8 @@ sub forceGhostCharacterization
 {
 	my $self = shift;
 	my $lfn = shift;
+
+	print "Force: [$lfn]\n";
 
 	$self->tk->obtainGhostForLFN( $lfn )->forceCharacterization();
 }
@@ -953,6 +1159,8 @@ sub getGhostDescriptorFileForLFN($)
 	my $self = shift;
 	my $filename = shift;
 
+	print "GDF: $filename\n";
+
 	my( $fn, $dir ) = fileparse( $filename );
 
  	my $dfn = File::Spec->catfile($dir, $DESCRIPTOR_FILENAME);
@@ -976,7 +1184,9 @@ sub getGhostStoreForDescriptorFileCoveringFN
 	}
 	else
 	{
-		die "Overflow!" if ((keys %ghostStoreForDescriptorLFN) > 100);
+
+		# must revisit TODO - the point of this cache is that it shouldn't get too big
+		# die "Overflow!" if ((keys %ghostStoreForDescriptorLFN) > 100);
 
 		my $gs = GhostStore->new();
 
@@ -1111,6 +1321,11 @@ sub obtainGhostForLFN
 {
 	my $self = shift;
 	my $lfn = shift;
+
+	die if ((length $lfn) < 0);
+
+	print "TK:Obtain: obtain f:[$lfn] - requested\n" if $tkdebug;
+
 	my $ghostForLFN = $self->ghostForLFN();
 
 	main::assert_cpath( $lfn );
@@ -1128,12 +1343,12 @@ sub obtainGhostForLFN
 
 	my $gs = $self->getGhostStoreForDescriptorFileCoveringFN($lfn);
 	my $g = $gs->findGhostForLFN($lfn);
-	print "TK:Obtain: obtain [$lfn] pulled [$g] from ghost descriptor\n" if $tkdebug;
+	print "TK:Obtain: obtain f:[$lfn] pulled g:[$g] from ghost descriptor\n" if $tkdebug;
 	return $g if( defined $g );
 
 	# Wow, we've totally stuck out here - make a new thing
 
-	print( "TK:Obtain: Making new ghost for $lfn\n")  if $tkdebug;
+	print( "TK:Obtain: Making new ghost for f:[$lfn]\n")  if $tkdebug;
 	my $g = Ghost->make( $lfn );
 	$self->incorporateGhostData( $g );
 	$g->dirty(1);
@@ -1294,7 +1509,7 @@ sub slurpDescriptor($)
 		$g->isTKversion(0);
 		$self->addGhost( $g );
 
-		die "Ghost descriptor contains duplicates - some logic problem!" if( $seen{$g->lfn()}++ > 0 );
+		die "Ghost descriptor contains duplicates - some logic problem - see [$fn]!" if( $seen{$g->lfn()}++ > 0 );
 	}
 
 	close( FILE );
@@ -1368,6 +1583,15 @@ sub writeSerializedToDisk($)
 }
 
 
+##########
+#
+# Ghost - an imprint of a file that may or may not exist at a particular place
+# The ghost is a carrier of information about a file, and intended to be lightweight
+# More than one ghost can exist for a given file, and they can be different
+# to obtain an "authoritiative" ghost, the TruthKeeper is used to resolve them
+# for instance a snapshot could have one version of a ghost, a descriptor a different
+# and the one from the file system could yet again be different.
+
 
 package Ghost;
 
@@ -1388,6 +1612,8 @@ sub newFromSerialized($)
 	# TODO: Add proper escapes (String::Escape has nice examples)
 
 	my @a = split ':', $str;
+
+	@a = map {main::gfs_unescape($_)} @a;
 
 	my $serialLFN = shift @a;
 
@@ -1439,6 +1665,42 @@ sub printDebug
 
 }
 
+
+sub isSameFilename
+{
+	my $self = shift;
+	my $other = shift;
+
+	die "Incomplete info self-size" if not defined $self->lfn();
+	die "Incomplete info other-size" if not defined $other->lfn();
+
+	# TODO: revisit if perl libraries give a better way to do this
+
+	return 1 if $self->lfn() eq $other->lfn();
+	return 0;
+}
+
+
+
+sub isDuplicateOf
+{
+	my $self = shift;
+	my $other = shift;
+
+#	die "Incomplete info self-size" if not defined $self->size();
+#	die "Incomplete info other-size" if not defined $other->size();
+
+	return 0 if( $self->getSize() ne $other->getSize() );
+
+#    die "Incomplete info self full hash" if not defined $self->fullHash();
+#	die "Incomplete info other full hash " if not defined $other->fullHash();
+
+
+	return 0 if( $self->getFullHash() ne $other->getFullHash() );
+
+	return 1; 
+}
+
 sub serialize()
 {
 	my $self = shift;
@@ -1466,6 +1728,9 @@ sub serialize()
 			  $self->lastStat(),
 			  $self->mtime()
 			  );
+
+
+	@s = map {main::gfs_escape($_)} @s;
 
 	my $s = join ':', @s;
 
