@@ -305,32 +305,6 @@ sub main()
 }
 
 
-sub doverb_writeSnapshot()
-{
-	my $store = GhostStore->new();
-
-	my $fse = new FilesystemExplorer();
-	$fse->setRoots( @ARGV );
-
-	while( defined( my $file = $fse->next() ) )
-	{
-		print "SnapshotGen - Scanning: [$file]\n";
-
-		if( -f $file )
-		{
-			$fse->forceGhostCharacterization( $file );
-			my $g = $fse->getGhost( $file );
-			$store->addGhost( $g );
-		}
-		else
-		{
-			print "SnapshotGen - Skipping non-file [$file]\n";
-		}
-	}	
-
-	$store->writeSnapshotToDisk( "snapshot-$$.out");
-}
-
 # GFS relies on all paths being canonicalized so that
 # text matching occurs properly.
 # Otherwise ./foo and foo will not text match and it will appear
@@ -355,6 +329,40 @@ sub canonize($)
 }
 
 
+
+##########
+# Writes a snapshot file to disk for the listed paths
+# 
+
+sub doverb_writeSnapshot()
+{
+	my $store = GhostStore->new();
+
+	my $fse = new FilesystemExplorer();
+	$fse->setRoots( @ARGV );
+	my $iterator = $fse->getIterator();
+
+	while( defined( my $file = $iterator->next() ) )
+	{
+		print "SnapshotGen - Scanning: [$file]\n";
+
+		if( -f $file )
+		{
+			$fse->forceGhostCharacterization( $file );
+			my $g = $fse->getGhost( $file );
+			$store->addGhost( $g );
+		}
+		else
+		{
+			print "SnapshotGen - Skipping non-file [$file]\n";
+		}
+	}	
+
+	$store->writeSnapshotToDisk( "snapshot-$$.out");
+}
+
+
+
 # for each item listed, shows what we know about it -- no recursion, no forced characterization
 
 sub doverb_ls()
@@ -373,18 +381,23 @@ sub doverb_ls()
 
 }
 
-
-	# Lsdup: A B C - for every file in C, say which are copied in A and or B and C (and where)
-	# foreach c (where size != 0)
-	# c->findDuplicate( $g );
-	# b->findDuplicate( $g );
-	# a->findDuplicate( $g );
-	# findDuplicate psucdocode
-	#    get ghost G for FN
-	#    find candidates - $fse->listAllFilesWithSize( $size )
-	#        lafby size, first time its called iterates over all FSE, hashing up sizes
-	#		 next, for each we do the test "$g->hasIdenticalContent($g)"
-	#		 	HIC first rules out size, then mod-date, then finally fullhash
+###########
+# Lsdup: A B C - for every file in C, say which are copied in A and or B and C (and where)
+# Ghost-tools tries to be minimal about hitting the disk, but at a minimum,
+# a duplicate requires that at some point GFS has to have a full SHA-1 match of the file.
+# 
+# Tells you where the duplicates are, and when they were last checked or verified
+#
+# foreach c (where size != 0)
+# c->findDuplicates( $g );
+# b->findDuplicates( $g );
+# a->findDuplicates( $g );
+# findDuplicates psucdocode
+#    get ghost G for FN
+#    find candidates - $fse->listAllFilesWithSize( $size )
+#        lafby size, first time its called iterates over all FSE, hashing up sizes
+#		 next, for each we do the test "$g->hasIdenticalContent($g)"
+#		 	HIC first rules out size, then mod-date, then finally fullhash
 
 
 
@@ -394,19 +407,36 @@ sub doverb_lsdup()
 
 	my $target = pop @ARGV;
 
-
 	my $targetFSE = new FilesystemExplorer();
 	$targetFSE->setRoots( $target );
+	my $targetIterator = $targetFSE->getIterator();
 
 	my $sourceFSE = new FilesystemExplorer();
 	$sourceFSE->setRoots( @ARGV );
 
-	while( defined( my $file = $targetFSE->next() ) )
+	while( my $file = $targetIterator->next()  )
 	{
+
+
+		next unless -f $file;
+
+		my $g = $tk->obtainGhostForLFN($file);
+
+		my @dups = $targetFSE->findDuplicates( $g );
+
 		print "Verb LSDUP - Finding duplicates for: [$file]\n";
+		$g->printDebug();
 
-	
+		print "Duplicates:\n";
 
+		foreach my $d (@dups)
+		{
+
+			print " DUP: [$d]\n";
+
+			# $d->printDebug();
+
+		}
 
 	}
 
@@ -449,6 +479,10 @@ sub doverb_writeDescriptor()
 
 sub doverb_info()
 {
+
+	##################### BAD IMPLEMENTATION ------- KILL!!!
+die();
+
 	my $store = GhostStore->new();
 	$store->slurpDescriptor( $DESCRIPTOR_FILENAME  );
 
@@ -482,18 +516,215 @@ sub getFullHashForceHitDisk($)
 	return( "SHA1/FULL/$hexdigest");
 }
 
+
+package FilesystemIterator;
+
+use File::Basename;
+use base qw(Class::Accessor);
+FilesystemIterator->mk_accessors( qw(queue) );
+
+my $FSI_DEBUG = 0; 
+
+
+sub new
+{
+	my $class = shift;
+	my $self = $class->SUPER::new();
+	return $self;
+}
+
+sub scanDir
+{
+	my $self = shift;
+	my $dir = shift;
+
+	my $q = $self->queue();	
+
+	print "FSE:ScanDIR into $dir\n" if $FSI_DEBUG;
+
+	#$dir =~ s/\/+$//;
+
+	opendir DIR, $dir;
+
+	# drop . and .., sort directory
+	my @files = map {  main::canonize( File::Spec->catfile( $dir, $_ ) ) } grep { !/^\.{1,2}$/ } sort { $a cmp $b } readdir DIR;
+
+	print( "FSE:ScanDIR Returned: ", (join ':', @files ), "\n" ) if $FSI_DEBUG;
+
+	close DIR;
+
+	unshift @$q, \$dir;
+	unshift @$q, @files;
+	
+}
+
+
+# returns the next directory
+
+sub next
+{
+	my $self = shift;
+
+	my $n = $self->nextRaw();
+
+	if( ref $n )
+	{
+		# print "THUNK received --> $$n\n";
+
+		# TODO case: 
+		# in this case, we have just exited a directory -- may want
+		# to purge any contents of descriptors that weren't found
+
+		return $self->next();
+	}
+
+	# Check for the end-of-queue case
+
+	if( not defined $n )
+	{
+		# print "FSE iterator: Undef case\n";
+		return undef;
+	}
+
+	# Now make sure that this isn't something we need to ignore
+	
+	my( $fn, $dir ) = fileparse( $n );
+ 	
+	# print " FSE::getNext() checking [$n] -> [$fn]\n";
+
+	if( $fn eq $DESCRIPTOR_FILENAME )
+	{
+		# print " FSE/next -> skipping descriptor [$fn]\n";
+		return $self->next();
+	}
+	return $n;
+}
+
+
+sub nextRaw
+{
+	my $self = shift;
+
+	my $q = $self->queue();
+	my $c = shift @$q;
+
+	if( not defined $c )
+	{
+		return undef; 
+	}
+
+	 # print "Got[$c]\n";
+
+	# if the next thing is a directory, scan into the directory
+	if( -d $c )
+	{
+		$self->scanDir( $c );
+	}
+
+	return $c;
+}
+
+
+
+
+##########
+# The FSE class handles low level access and coherency for a particular
+# domain of listed files. This could be a real file system or a snapshot
+# or even a remote filesystem or S3 type thing.
+# 
+# I think this is the right definition for the class: 
+#
+# It provides the ability to iterate over the filesystem in an organized way,
+# and also supports the implementation of primitives such as copy, getHashHitDisk
+# findDuplicates, etc.
+# 
+# One open question: how the truthkeeper is supposed to interact with FSE --
+# is there ever any design situation where the FSE needs to be called BY the truthkeeper?
+# if we can prevent this from ever occuring, i think the design will be cleaner 
+#
+# Verbs i know it has to support
+#
+# - iteration
+# - findDuplicates();
+# - forceFullCharacterization();
+
+
+
+
 package FilesystemExplorer;
 
 use File::Basename;
 use base qw(Class::Accessor);
-FilesystemExplorer->mk_accessors( qw(topLevelLFNs queue) );
+FilesystemExplorer->mk_accessors( qw(topLevelLFNs sizeToFNs) );
 
 sub new
 {
 	my $class = shift;
 	my $self = $class->SUPER::new();
 
+	$self->sizeToFNs( undef );
+
 	return $self;
+}
+
+sub loadSizeCache
+{
+	my $self = shift;
+
+	my $h = {};
+	my $tk = $self->tk();
+
+	my $iterator = $self->getIterator();
+
+	while( my $file = $iterator->next() )
+	{
+		my $size = $tk->obtainGhostForLFN($file)->getSize();
+
+		next if $size <= 0;
+
+		print "FSE - Size Cache $file -> $size\n";
+
+		push @{$h->{$size}}, $file;
+	}
+
+
+	$self->sizeToFNs($h);
+
+}
+
+sub findFilesWithSize
+{
+	my $self = shift;
+	my $s = shift;
+
+	return undef if( $s <= 0 );
+
+	if( not defined $self->sizeToFNs() )
+	{
+		$self->loadSizeCache();
+	}
+
+	return ( @{$self->sizeToFNs()->{$s}} );
+}
+
+# Returns a list of actual duplicates of the file
+# may not actually hit the disk depending on what criteria
+# of verification or recency you provide
+
+sub findDuplicates
+{
+	my $self = shift;
+	my $target = shift;
+
+	# First, check our size cache for a match
+	my $size = $target->getSize();
+
+	my @otherAFN = $self->findFilesWithSize( $size );
+
+
+
+
+
 }
 
 sub getGhost()
@@ -501,8 +732,8 @@ sub getGhost()
 	my $self = shift;
 	my $lfn = shift;
 
-	# TODO the primary ghost should probably not be the descriptors ghost, right?
-	# Probably have to refactor this somehow
+	# Todo - refactor - why wouldn't you always get ghosts from truthkeeper?
+	# is there a reason to have this pass through?
 
 	my $tk = TruthKeeper::get();
 
@@ -532,6 +763,8 @@ sub forceGhostCharacterization
 	$self->tk->obtainGhostForLFN( $lfn )->forceCharacterization();
 }
 
+# Todo: Relocate this.
+
 sub getFullHash()
 {
 	my $self = shift;
@@ -546,108 +779,26 @@ sub setRoots()
 	my $self = shift;
 
 	$self->topLevelLFNs( [@_] );
-	$self->queue( [@_] );
 
 	foreach my $f ( @_ )
 	{
 		if( not -r $f )
 		{		
-			die "File [$f] is not a readable file or directory"
+			die "File [$f] is not a readable file or directory";
 		}
 	}
 }
 
-
-sub scanDir
-{
-	my $self = shift;
-	my $dir = shift;
-
-	my $q = $self->queue();	
-
-	print "FSE:ScanDIR into $dir\n";
-
-	#$dir =~ s/\/+$//;
-
-	opendir DIR, $dir;
-
-	# drop . and .., sort directory
-	my @files = map {  main::canonize( File::Spec->catfile( $dir, $_ ) ) } grep { !/^\.{1,2}$/ } sort { $a cmp $b } readdir DIR;
-
-	print( "FSE:ScanDIR Returned: ", (join ':', @files ), "\n" );
-
-	close DIR;
-
-	unshift @$q, \$dir;
-	unshift @$q, @files;
-	
-}
-
-
-# returns the next directory
-
-sub next
+sub getIterator()
 {
 	my $self = shift;
 
-	my $n = $self->nextRaw();
+	my $r = FilesystemIterator->new();
+	$r->queue( [ @{$self->topLevelLFNs()} ] );
 
-	if( ref $n )
-	{
-		print "THUNK received --> $$n\n";
-
-		# TODO case: 
-		# in this case, we have just exited a directory -- may want
-		# to purge any contents of descriptors that weren't found
-
-		return $self->next();
-	}
-
-	# Check for the end-of-queue case
-
-	if( not defined $n )
-	{
-		return undef;
-	}
-
-	# Now make sure that this isn't something we need to ignore
-
-	
-	my( $fn, $dir ) = fileparse( $n );
- 	
-	# print " FSE::getNext() checking [$n] -> [$fn]\n";
-
-	if( $fn eq $DESCRIPTOR_FILENAME )
-	{
-		print " FSE/next -> skipping descriptor [$fn]\n";
-		return $self->next();
-	}
-	return $n;
+	return $r;
 }
 
-
-sub nextRaw
-{
-	my $self = shift;
-
-	my $q = $self->queue();
-	my $c = shift @$q;
-
-	if( not defined $c )
-	{
-		return undef; 
-	}
-
-	#  print "Got[$c]\n";
-
-	# if the next thing is a directory, scan into the directory
-	if( -d $c )
-	{
-		$self->scanDir( $c );
-	}
-
-	return $c;
-}
 
 package TruthKeeper;
 
