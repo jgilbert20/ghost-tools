@@ -576,7 +576,7 @@ sub doverb_writeSnapshot()
 
 	while( my $g = $i->next() )
 	{
-		print "Write Snapshot - Got Ghost: $g";
+		print "Write Snapshot - Got Ghost: $g\n";
 		$g->printDebug();
 
 
@@ -1572,7 +1572,7 @@ sub obtainGhostForLFN
 	# Wow, we've totally stuck out here - make a new thing
 
 	print( "TK:Obtain: Making new ghost for f:[$lfn]\n")  if $tkdebug;
-	my $g = Ghost->makePrivate( $lfn );
+	my $g = Ghost->make_private( $lfn );
 	$self->incorporateGhostData( $g );
 	$g->dirty(1);
 	$g->isTKversion(1);
@@ -1626,7 +1626,7 @@ sub next
 	# Check for the end-of-queue case
 	if( not defined $n )
 	{
-		print "GI iterator: Undef case - iterator over\n" if $FSI_DEBUG;
+		print "GI iterator: Undef case - iterator over\n" if $GI_DEBUG;
 		return undef;
 	}
 
@@ -1664,10 +1664,17 @@ sub nextRaw
 		return undef; 
 	}
 
+	# Todo - clean up passing of ghosts back up to parent
+	my $gs = $self->parentGhoststore();
+	my $g = $gs->findGhostForLFN( $c );
+
+	print "GI: Checking [$c]->[$g] for children\n" if $GI_DEBUG;
+
 	# if the next thing is a directory, scan into the directory
-	# if( $c->hasChildren() )
+	# if( $g->hasChildren() )
 	# {
-	# 	$self->scanDir( $c );
+	# 	print "GI: Scan directory case\n" if $GI_DEBUG;
+	# 	#$self->scanDir( $c );
 	# }
 
 	return $c;
@@ -1903,7 +1910,10 @@ package Ghost;
 
 use File::Basename;
 use base qw(Class::Accessor);
-Ghost->mk_accessors( qw(lfn lastFullHash size fullHash dirty isTKversion lastDirScan lastStat mtime) );
+
+# GHOST_NEW_FIELD: Place 4/4 where you add new fields to ghosts
+
+Ghost->mk_accessors( qw(lfn lastFullHash size mode fullHash dirty isTKversion lastDirScan lastStat mtime) );
 
 my $serializeDebug = 0;
 
@@ -1931,9 +1941,12 @@ sub newFromSerialized($)
 		$serialLFN = main::canonize( $serialLFN );
 	}
 
+	# GHOST_NEW_FIELD: Place 1/4 where you add new fields to ghosts
+
 	$self->lfn( $serialLFN );
 	$self->lastFullHash( shift @a );
 	$self->size( shift @a );
+	$self->mode( shift @a );
 	$self->fullHash( shift @a );
 	$self->lastDirScan( shift @a );
 	$self->lastStat( shift @a );
@@ -1953,21 +1966,46 @@ sub newFromSerialized($)
 
 }
 
+# True if we can descend with a call to "getChildren"
+
+sub hasChildren
+{
+	my $self = shift;
+
+	print "Fetching type\n";
+
+	my $type = $self->getType();
+
+	print "Type is: $type\n";
+
+	# base case: no knowledge or hash
+
+
+
+
+}
+
 sub printDebug
 {
 	my $self = shift;
 
+	# GHOST_NEW_FIELD: Place 2/4 where you add new fields to ghosts
+
 	my $lfn = $self->lfn();
 	my $lastFullHash = $self->lastFullHash();
 		my $size = $self->size();
+		my $mode = $self->mode();
 
 	my $fullHash = $self->fullHash();
 	my $lastDirScan = $self->lastDirScan();
 	my $lastStat = $self->lastStat();
 	my $mtime = $self->mtime();
 
+	# not technically a field but we should include this
+	my $type = $self->getType();
 
-	print "GhostDebug: lfn:[$lfn] lFH:[$lastFullHash] full:[$fullHash] lds:[$lastDirScan] lstat:[$lastStat] size:[$size] mtime:[$mtime]\n";
+
+	print "GDB: lfn:[$lfn] type:[$type] mode:[$mode] lFH:[$lastFullHash] full:[$fullHash] lds:[$lastDirScan] lstat:[$lastStat] size:[$size] mtime:[$mtime]\n";
 
 }
 
@@ -1985,6 +2023,7 @@ sub isSameFilename
 
 	# After some testing, it appears that abs_path (also see realpath(3)) 
 	# is the very best way to test for complete filename equivilence
+	# The testing read-out is below and turned off for now
 
 	if( 0 )
 	{
@@ -2006,8 +2045,6 @@ sub isSameFilename
 	  	print "   me: [$abs1]\n";
 		print "   tg: [$abs2]\n";
 	}
-
-
 
 	die "Incomplete info self-size" if not defined $self->lfn();
 	die "Incomplete info other-size" if not defined $other->lfn();
@@ -2066,11 +2103,12 @@ sub serialize()
 
 	}
 
-	# TODO: Add proper escapes (String::Escape has nice examples)
+	# GHOST_NEW_FIELD: Place 3/4 where you add new fields to ghosts
 
 	my @s = ( $lfn, 
 			  $self->lastFullHash(),
 			  $self->size(),
+			  $self->mode(),
 			  $self->fullHash(),
 			  $self->lastDirScan(),
 			  $self->lastStat(),
@@ -2185,6 +2223,23 @@ sub hasAcceptableStat
 }
 
 
+
+
+sub getMode
+{
+	my $self = shift;
+
+	if( $self->hasAcceptableStat() )
+	{
+		return $self->mode();
+	}
+	else
+	{
+		$self->getStatForceHitDisk();
+		return $self->mode();
+	}	
+}
+
 sub getSize
 {
 	my $self = shift;
@@ -2241,6 +2296,25 @@ sub getFullHashForceHitDisk
 	return $fullhash;
 }
 
+use Fcntl ':mode';
+
+sub extractTypeFromMode
+{
+	my $self = shift;
+	my $mode = shift;
+
+	return 'f' if S_ISREG($mode);
+	return 'd' if S_ISDIR($mode);
+}
+
+sub getType
+{
+	my $self = shift;
+	my $mode = $self->getMode();
+	return $self->extractTypeFromMode( $mode );
+
+}
+
 sub getStatForceHitDisk
 {
 	my $self = shift;
@@ -2255,6 +2329,8 @@ sub getStatForceHitDisk
 
 	$self->size($size);
 	$self->mtime($mtime);
+	$self->mode($mode);
+
 	$self->lastStat( time() );
 
 	$self->dirty(1);
