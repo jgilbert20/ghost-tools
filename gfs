@@ -459,7 +459,7 @@ sub handleVerb
 	}
 
 	#### THINGS BELOW THIS LINE NOT TESTED
-	
+
 	# Takes the listed things and writes a single descriptor file
 
 	if( $verb eq "write-descriptor")
@@ -1069,11 +1069,7 @@ sub findOtherDuplicates
 	my $g = shift;
 
 	return grep { not $g->isSameFilename($_) } $self->findDuplicates($g);
-
-
 }
-
-
 
 # Returns a list of actual duplicates of the file
 # may not actually hit the disk depending on what criteria
