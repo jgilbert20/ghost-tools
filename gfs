@@ -48,6 +48,8 @@ my $WDIR = "$HOME/.gfs";
 my $DBDIR = "$WDIR/db";
 my $EDIR = "$ENV{HOME}/.gfsrun/EXEC-$$";
 
+$main::localFileSystemFSE = undef;
+
 # Option management
 
 my $OPT_ALL = 0;
@@ -185,6 +187,8 @@ sub init
 {
 	verifyWorkingDirectories();
 	setupDatabases();
+	$main::localFileSystemFSE = new FilesystemExplorer();
+
 }
 
 
@@ -574,14 +578,17 @@ sub doverb_writeSnapshot()
 
 	my $i = $targetGS->getDescendingIterator();
 
+	my $store = GhostStore->new();
+
+
 	while( my $g = $i->next() )
 	{
 		print "Write Snapshot - Got Ghost: $g\n";
 		$g->printDebug();
-
-
+		$store->addGhost( $g );
 	}
 
+	$store->writeSnapshotToDisk( "snapshot-$$.out");
 }
 
 
@@ -855,6 +862,22 @@ sub getFullHashForceHitDisk($)
 	return( "SHA1/FULL/$hexdigest");
 }
 
+
+# A hard ignore is a filename that we must pretend never existed
+# it will not factor into any directory checksums
+
+sub isHardIgnore
+{
+	my $fn = shift;
+
+	my $b = basename $fn;	
+
+	return 1 if $b =~ /$DESCRIPTOR_FILENAME$/;
+
+
+	return 0;
+}
+
 ##########
 #
 # FilesystemIterator -- A helper for iterating over nested directories
@@ -1016,7 +1039,10 @@ use File::Basename;
 use base qw(Class::Accessor);
 FilesystemExplorer->mk_accessors( qw(topLevelLFNs sizeToFNs) );
 
-my $fseDebug = 0;
+my $fseDebug = 1;
+
+# Return new FSE
+# CORE - any FSE must implement
 
 sub new
 {
@@ -1027,6 +1053,43 @@ sub new
 
 	return $self;
 }
+
+# Return LFNs of immediate children
+# CORE - any FSE must implement
+
+sub getImmediateChildren
+{
+	my $self = shift;
+	my $parent = shift;
+
+	my $dir = $parent->lfn();
+
+	print "FSE:ScanDIR into dir:[$dir]\n" if $fseDebug;
+
+	#$dir =~ s/\/+$//;
+
+	opendir DIR, $dir or die "cannot descend into [$dir] #!";
+
+	$main::readdir_invokes++;
+
+	# drop . and .., sort directory
+	my @files = map {  main::canonize( File::Spec->catfile( $dir, $_ ) ) } 
+		grep { !/^\.{1,2}$/ } 
+		grep { !main::isHardIgnore( $_ ) } 
+		sort { $a cmp $b } 
+		readdir DIR;
+
+
+	$main::readdir_entries += @files;
+
+	print( "FSE:ScanDIR Returned: ", (join ':', @files ), "\n" ) if $fseDebug;
+
+	close DIR;
+
+	return @files;
+}
+
+
 
 sub loadSizeCache
 {
@@ -1544,7 +1607,9 @@ sub obtainGhostForLFN
 	my $self = shift;
 	my $lfn = shift;
 
-	die if ((length $lfn) < 0);
+	die "LFN is zero length" if ((length $lfn) < 1);
+
+	die "LFN is not a clean string!" if ref $lfn;
 
 	print "TK:Obtain: obtain f:[$lfn] - requested\n" if $tkdebug;
 
@@ -1611,6 +1676,10 @@ sub new
 	return $self;
 }
 
+# Gets the next item in the iterator
+#
+# Behind the scenes, will call nextRaw and handle things in the queue
+# that are unexpected
 
 sub next
 {
@@ -1630,11 +1699,80 @@ sub next
 		return undef;
 	}
 
-	my $gs = $self->parentGhoststore();
-	my $g = $gs->findGhostForLFN( $n );
+	print "Next: Got [$n]\n";
+
+	my $tk = TruthKeeper::get();
+	my $g = $tk->obtainGhostForLFN( $n );
 
 	return $g;
 }
+
+# Internal helper function called when a directory needs to be expanded
+
+sub scanDir
+{
+	my $self = shift;
+	my $g = shift;
+ 	my $q = $self->queue();	
+
+	# call getChildren
+	# getChildren may have these buggers cached
+	# caching should be weak
+	# if not call up to TK and try to get from GCIP
+	# if not FSM->getImmediateChildren;
+
+	my @lfns = $g->getFSE()->getImmediateChildren( $g );
+
+	$g->learnChildrenByLFN( @lfns );
+
+	my @children = $g->getChildren();
+
+ 	unshift @$q, \$g;  # add the thunk that will tell us the directory is over
+ 	unshift @$q, @lfns; # add the files themselves
+
+
+
+}
+
+# sub scanDir
+# {
+# 	my $self = shift;
+# 	my $dir = shift;
+
+# 	my $q = $self->queue();	
+
+# 	print "GI:ScanDIR into dir:[$dir]\n" if $GI_DEBUG;
+
+# 	#$dir =~ s/\/+$//;
+
+# 	opendir DIR, $dir;
+
+# 	$main::readdir_invokes++;
+
+# 	# drop . and .., sort directory
+# 	my @files = map {  main::canonize( File::Spec->catfile( $dir, $_ ) ) } 
+# 		grep { !/^\.{1,2}$/ } 
+# 		sort { $a cmp $b } 
+# 		readdir DIR;
+
+
+# 	$main::readdir_entries += @files;
+
+# 	print( "FSE:ScanDIR Returned: ", (join ':', @files ), "\n" ) if $GI_DEBUG;
+
+# 	close DIR;
+
+# 	unshift @$q, \$dir;  # add the thunk that will tell us the directory is over
+# 	unshift @$q, @files; # add the files themselves
+	
+# }
+
+
+
+
+
+
+
 
 
 
@@ -1664,18 +1802,32 @@ sub nextRaw
 		return undef; 
 	}
 
+	if( ref $c )
+	{
+		return $c; 
+	}
+
 	# Todo - clean up passing of ghosts back up to parent
-	my $gs = $self->parentGhoststore();
-	my $g = $gs->findGhostForLFN( $c );
+	# issue here is that the parentGhostStore only has the top
+	# level parents.
+	# my $gs = $self->parentGhoststore();
+	# my $g = $gs->findGhostForLFN( $c );
+
+	# TODO: two obtains are called, first to check for being a directory
+	# second, by next. This could be refined by making the queue
+	# able to store both ghosts and LFNs.
+
+	my $tk = TruthKeeper::get();
+	my $g = $tk->obtainGhostForLFN( $c);
 
 	print "GI: Checking [$c]->[$g] for children\n" if $GI_DEBUG;
 
 	# if the next thing is a directory, scan into the directory
-	# if( $g->hasChildren() )
-	# {
-	# 	print "GI: Scan directory case\n" if $GI_DEBUG;
-	# 	#$self->scanDir( $c );
-	# }
+	if( $g->hasChildren() )
+	{
+		print "GI: Scan directory case\n" if $GI_DEBUG;
+		$self->scanDir( $g );
+	}
 
 	return $c;
 }
@@ -1692,8 +1844,6 @@ sub nextRaw
 #
 ####
 
-
-
 package GhostStore;
 
 use File::Basename;
@@ -1701,8 +1851,6 @@ use base qw(Class::Accessor);
 GhostStore->mk_accessors( qw(lfnToGhost clean) );
 
 my $gsDebug = 0;
-
-
 
 sub new
 {
@@ -1724,9 +1872,6 @@ sub getDescendingIterator
 	$r->parentGhoststore( $self );
 	return $r;
 }
-
-
-
 
 sub countDirty
 {
@@ -1899,6 +2044,7 @@ sub writeSerializedToDisk($)
 ##########
 #
 # Ghost - an imprint of a file that may or may not exist at a particular place
+#
 # The ghost is a carrier of information about a file, and intended to be lightweight
 # More than one ghost can exist for a given file, and they can be different
 # to obtain an "authoritiative" ghost, the TruthKeeper is used to resolve them
@@ -1913,7 +2059,7 @@ use base qw(Class::Accessor);
 
 # GHOST_NEW_FIELD: Place 4/4 where you add new fields to ghosts
 
-Ghost->mk_accessors( qw(lfn lastFullHash size mode fullHash dirty isTKversion lastDirScan lastStat mtime) );
+Ghost->mk_accessors( qw(lfn lastFullHash size mode fullHash dirty isTKversion lastDirScan lastStat mtime children) );
 
 my $serializeDebug = 0;
 
@@ -1924,8 +2070,6 @@ sub newFromSerialized($)
 	my %options = @_;
 
 	my $self = Ghost->new();
-
-	# TODO: Add proper escapes (String::Escape has nice examples)
 
 	my @a = split ':', $str;
 
@@ -1950,9 +2094,9 @@ sub newFromSerialized($)
 	$self->fullHash( shift @a );
 	$self->lastDirScan( shift @a );
 	$self->lastStat( shift @a );
-	$self->mtime( shift @a );
 
 	$self->dirty( 0 );
+	$self->mtime( shift @a );
 	$self->isTKversion( 0 );
 
 	if( $serializeDebug )
@@ -1966,7 +2110,81 @@ sub newFromSerialized($)
 
 }
 
-# True if we can descend with a call to "getChildren"
+# getFSE - returns whatever FSE object is best for this thing
+
+sub getFSE
+{
+	return $main::localFileSystemFSE;
+}
+
+sub getChildren()
+{
+	my $self = shift;
+
+	if( not defined $self->children() )
+	{
+		die "Corner case - someone didn't teach me my children";
+
+	}
+
+	# TODO - should this be weak?
+	# if so, how to handle orphans?
+	return $self->children();
+}
+
+# Caller is giving us a complete list of our children from primary source
+# Mark the deleted ones and perform other flags
+
+sub learnChildrenByLFN()
+{
+	my $self = shift;
+	my @lfns = @_;
+
+	my $tk = TruthKeeper::get();
+
+	# Ideally, we call getChildren and do some sort of "merge"
+
+	my @existingGhosts = ();
+
+	@{$self->children()} if( defined $self->children() );
+
+	my %seenLFN;
+	my @newKids;
+
+	map { $seenLFN{ $_->getLFN() } = 0 } @existingGhosts;
+
+	foreach my $lfn ( @lfns )
+	{
+		print "G: Learning child: lfn:[$lfn]\n";
+		if( exists $seenLFN{$lfn} )
+		{
+			print "G:   Child already registered\n";
+		}
+
+		$seenLFN{$lfn}++;
+
+		my $g = $tk->obtainGhostForLFN( $lfn );
+	
+		# inform ghost that it has been seen in a directory scan
+		# this also undeletes it
+		$g->learnDirscan();
+		push @newKids, $g;
+	}
+
+	foreach my $lfn ( keys %seenLFN )
+	{
+		if( $seenLFN{$lfn} < 1 )
+		{
+			print "G:   Child has disapeared\n";
+			my $g = $self->tk()->obtainGhostForLFN( $lfn );
+			$g->learnDeleted();
+		}
+	}
+
+	$self->children( @newKids );
+}
+
+# hasChildren() - True if we can descend with a call to "getChildren"
 
 sub hasChildren
 {
@@ -1980,9 +2198,12 @@ sub hasChildren
 
 	# base case: no knowledge or hash
 
+	if( $type eq 'd' )
+	{
+		return 1;
+	}
 
-
-
+	return 0;
 }
 
 sub printDebug
@@ -1993,9 +2214,8 @@ sub printDebug
 
 	my $lfn = $self->lfn();
 	my $lastFullHash = $self->lastFullHash();
-		my $size = $self->size();
-		my $mode = $self->mode();
-
+	my $size = $self->size();
+	my $mode = $self->mode();
 	my $fullHash = $self->fullHash();
 	my $lastDirScan = $self->lastDirScan();
 	my $lastStat = $self->lastStat();
@@ -2270,14 +2490,42 @@ sub getMTime
 	}	
 }
 
-sub informDirscan
+# Dirscan means that we have seen the ghost in a directory scan
+# TODO also update a "firstSeen" field.
+# If deleted, this should undelete by delegating to learnPresent
+
+sub learnDirscan
 {
 	my $self = shift;
 
 	$self->lastDirScan( time() );
 
 	# TODO: Do we want a dirscan to always force an update to the ghost?
+	# With this next line commented out, a new directory scan will not by itself
+	# force an update
 	# $self->dirty(1);
+
+	$self->learnPresent();
+}
+
+# Should undelete the file
+
+sub learnPresent
+{
+	# TODO: implement field
+}
+
+# Deleted means that we did not see the ghost
+# on a recent scan. Mark as deleted and set deleteDate.
+
+sub learnDeleted
+{
+	my $self = shift;
+
+	$self->lastDirScan( time() );
+
+	# TODO: Do we want a dirscan to always force an update to the ghost?
+	$self->dirty(1);
 }
 
 sub getFullHashForceHitDisk
@@ -2290,7 +2538,6 @@ sub getFullHashForceHitDisk
  	my $fullhash = main::getFullHashForceHitDisk( $lfn );
 
 	$self->fullHash( $fullhash );
-
 	$self->dirty(1);
 
 	return $fullhash;
