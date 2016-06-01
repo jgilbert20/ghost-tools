@@ -585,7 +585,7 @@ sub doverb_writeSnapshot()
 	{
 		print "Write Snapshot - Got Ghost: $g\n";
 
-		if( not $g->hasChildren() )
+		if( not $g->canHaveChildren() )
 		{
 			$g->forceCharacterization();
 		}
@@ -1633,7 +1633,7 @@ sub nextRaw
 	print "GI: Checking [$c]->[$g] for children\n" if $GI_DEBUG;
 
 	# if the next thing is a directory, scan into the directory
-	if( $g->hasChildren() )
+	if( $g->canHaveChildren() )
 	{
 		print "GI: Scan directory case\n" if $GI_DEBUG;
 		$self->scanDir( $g );
@@ -2002,17 +2002,17 @@ sub learnChildrenByLFN()
 	$self->children( \@newKids );
 }
 
-# hasChildren() - True if we can descend with a call to "getChildren"
+# canHaveChildren() - True if we can descend with a call to "getChildren"
 
-sub hasChildren
+sub canHaveChildren
 {
 	my $self = shift;
 
-	print "Fetching type\n";
+	# print "Fetching type\n";
 
 	my $type = $self->getType();
 
-	print "Type is: $type\n";
+	# print "Type is: $type\n";
 
 	# base case: no knowledge or hash
 
@@ -2202,7 +2202,7 @@ sub hasAcceptableFullhash
 {
 	my $self = shift;
 
-	print "Checking if I like my hash\n";
+#	print "Checking if I like my hash\n";
 
 	return 0 if( not defined $self->fullHash() );
 	
@@ -2352,7 +2352,7 @@ sub getFullHashForceHitDisk
 	my $self = shift;
 	my $lfn = $self->lfn();
 
-	die "Full hash not implemented for directories" if( $self->hasChildren() );
+	die "Full hash not implemented for directories" if( $self->canHaveChildren() );
 
 	$self->lastFullHash( time() );
 
@@ -2380,7 +2380,6 @@ sub getType
 	my $self = shift;
 	my $mode = $self->getMode();
 	return $self->extractTypeFromMode( $mode );
-
 }
 
 sub getStatForceHitDisk
@@ -2392,8 +2391,14 @@ sub getStatForceHitDisk
 
 	$main::run_files_stat++;
 
-	my ($dev,$ino,$mode,$nlink,$uid,$gid,$rdev,$size, $atime,$mtime,$ctime,$blksize,$blocks)
-		 = stat($lfn);
+	my @statfields = stat($lfn);
+
+	die "Ghost [$lfn] failed stat - probably doesn't exist" if( @statfields == 0 );
+
+	my ($dev,$ino,$mode,$nlink,$uid,$gid,$rdev,$size, $atime,$mtime,$ctime,$blksize,$blocks) = @statfields;
+		 
+
+
 
 	$self->size($size);
 	$self->mtime($mtime);
