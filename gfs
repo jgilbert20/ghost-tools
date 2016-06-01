@@ -420,17 +420,7 @@ sub handleVerb
 	my $verb = shift;
 
 
-	if( $verb eq "dbtest" )
-	{
-		my $fse = new FilesystemExplorer();
-		$fse->setRoots( @ARGV );
 
-		while( defined( my $file = $fse->next() ) )
-		{
-			print "DBTest - Scanning: [$file]\n";
-		}
-		return;
-	}	
 
 	if( $verb eq "lsdup")
 	{
@@ -461,34 +451,6 @@ sub handleVerb
 		return;
 	}
 
-	#### THINGS BELOW THIS LINE NOT TESTED
-
-	# Takes the listed things and writes a single descriptor file
-
-	if( $verb eq "write-descriptor")
-	{
-		doverb_writeDescriptor();
-		return;
-	}
-
-	# Basically a test verb used to prove that serialization and deserialization are identical
-
-	if( $verb eq "copyDescriptor" )
-	{
-		my $src = shift @ARGV;
-		my $d = shift @ARGV;
-
-		my $store = GhostStore->new();
-		$store->slurpDescriptor( $src);
-		$store->writeAsDescriptor( $d );
-		return;
-	}
-
-	if( $verb eq "info" )
-	{
-		doverb_info();
-		return;		
-	}
 
 	die "Verb $verb not recognized - try $0 help for ideas";
 
@@ -567,9 +529,10 @@ HERE
 
 }
 
-##########
-# Writes a snapshot file to disk for the listed paths
-# 
+# doverb_writeSnapshot - handle the write-snapshot command
+#
+# for each item listed, shows what we know about it -- no recursion, no forced 
+# characterization
 
 sub doverb_writeSnapshot()
 {
@@ -599,11 +562,17 @@ sub doverb_writeSnapshot()
 	$store->writeSnapshotToDisk( "snapshot-$$.out");
 }
 
-# for each item listed, shows what we know about it -- no recursion, no forced characterization
+# doverb_ls - handle the LS command
+#
+# for each item listed, shows what we know about it -- no recursion, no forced 
+# characterization
 
 sub doverb_ls()
 {
 	my $tk = TruthKeeper::get();
+
+	my $targetGS = $tk->makeGhostsFromCommandLine( @ARGV );
+
 	foreach my $lfn (@ARGV)
 	{
 		next unless -f $lfn;
@@ -642,9 +611,60 @@ sub doverb_ls()
 #		 next, for each we do the test "$g->hasIdenticalContent($g)"
 #		 	HIC first rules out size, then mod-date, then finally fullhash
 
-
-
 sub doverb_lsdup()
+{
+	my $target = pop @ARGV;
+	my @source = @ARGV;
+
+	my $tk = TruthKeeper::get();
+	my $targetGS = $tk->makeGhostsFromCommandLine( $target );
+	my $i = $targetGS->getDescendingIterator();
+
+	my $dup_count = 0;
+	my $dup_size = 0;
+	my $dup_size_interior = 0;
+	my $dup_count_interior = 0;
+	my $total_files = 0;
+	my @report; 
+	my $asWeGoPrint = 1;
+
+	while( my $g = $i->next() )
+	{
+		my $lfn = $g->lfn();
+
+		next unless $g->isFile();
+		next if fileIsUsuallyIgnored( $lfn );
+
+		$total_files++;
+
+		print "LS Dup -handling LFN:[$lfn]\n";
+
+		my @tdups = $targetGS->findOtherDuplicates( $g );
+
+		if( @tdups > 0 )
+		{	
+			print "    Duplicate in local tree: ($target)\n";
+
+			foreach my $d (@tdups)
+			{
+				my $dfn = $d->lfn();
+
+				print "      Target: $dfn\n" if $asWeGoPrint;
+				$dup_count++;
+				$dup_size += $d->getSize();
+				$dup_size_interior += $d->getSize();
+				# $d->printDebug();
+			}
+		}
+
+	}
+
+}
+
+
+
+
+sub doverb_lsdup_old()
 {
 	my $tk = TruthKeeper::get();
 
@@ -662,15 +682,12 @@ sub doverb_lsdup()
 	my $dup_size_interior = 0;
 	my $dup_count_interior = 0;
 	my $total_files = 0;
-
 	my @report; 
-
 	my $asWeGoPrint = 1;
 
 	while( my $file = $targetIterator->next()  )
 	{
 		next unless -f $file;
-		next if fileIsUsuallyIgnored( $file );
 
 		$total_files++;
 
@@ -798,28 +815,6 @@ sub doverb_writeDescriptor()
 	}
 }
 
-sub doverb_info()
-{
-
-	##################### BAD IMPLEMENTATION ------- KILL!!!
-die();
-
-	my $store = GhostStore->new();
-	$store->slurpDescriptor( $DESCRIPTOR_FILENAME  );
-
-	foreach my $lfn (@ARGV)
-	{
-		print( "Info request for: $lfn\n");
-		my $g = Ghost->make( $lfn );
-		my $h = $g->getFullHashForceHitDisk();
-		print("    $h\n");
-
-		$store->addGhost( $g );
-	}	
-
-	$store->writeAsDescriptor( $DESCRIPTOR_FILENAME );
-}
-
 sub getFullHashForceHitDisk($)
 {
 	my $lfn = shift;
@@ -930,184 +925,6 @@ sub getImmediateChildren
 	close DIR;
 
 	return @files;
-}
-
-
-
-sub loadSizeCache
-{
-	die "TODO No longer supported here - to remove";
-	my $self = shift;
-
-	my $h = {};
-	my $tk = $self->tk();
-
-	my $iterator = $self->getIterator();
-
-	print "FSE-Generating size cache\n";
-
-	while( my $file = $iterator->next() )
-	{
-		next unless -f $file;
-
-		my $size = $tk->obtainGhostForLFN($file)->getSize();
-
-		next if $size <= 0;
-
-		print "FSE - Size Cache $file -> $size\n" if $fseDebug;
-
-		push @{$h->{$size}}, $file;
-	}
-
-
-	$self->sizeToFNs($h);
-
-}
-
-sub findFilesWithSize
-{
-		die "TODO No longer supported here - to remove";
-
-	my $self = shift;
-	my $s = shift;
-
-	return undef if( $s <= 0 );
-
-	if( not defined $self->sizeToFNs() )
-	{
-		$self->loadSizeCache();
-	}
-
-	my $lu = $self->sizeToFNs()->{$s};
-
-	return +() if not defined $lu;
-
-	return ( @{$lu} );
-}
-
-
-# Returns files other than the one listed that are duplicates
-
-sub findOtherDuplicates
-{
-		die "TODO No longer supported here - to remove";
-
-	my $self = shift;
-	my $g = shift;
-
-	return grep { not $g->isSameFilename($_) } $self->findDuplicates($g);
-}
-
-# Returns a list of actual duplicates of the file
-# may not actually hit the disk depending on what criteria
-# of verification or recency you provide
-
-sub findDuplicates
-{
-		die "TODO No longer supported here - to remove";
-
-	my $self = shift;
-	my $target = shift;
-
-	# First, check our size cache for a match
-	my $size = $target->getSize();
-
-	return () if $size < 1; 
-
-	my @otherFN = $self->findFilesWithSize( $size );
-
-	return if @otherFN < 1;
-
-	# print " -- Checking size duplicates size:[$size]\n";
-
-	my @matches;
-
-	foreach my $c ( @otherFN )
-	{
-		my $gc = $self->getGhost( $c );
-
-		next if $gc->isSameFilename( $target );
-
-		if( $fseDebug )
-		{
-			my $cFN = $gc->lfn();
-			my $tFN = $target->lfn();
-
-			print "     -- Checking size duplicates size:[$size]\n";
-			print "     ---> cfn:[$cFN]\n";
-			print "  vs ---> tfn:[$tFN]\n";
-		}
-
-		if( $target->isDuplicateOf( $gc ) )
-		{
-			push @matches, $gc;
-		}
-	}
-
-	return @matches;
-}
-
-sub getGhost()
-{
-	die "TODO No longer supported here - to remove";
-
-
-
-	my $self = shift;
-	my $lfn = shift;
-
-	# Todo - refactor - why wouldn't you always get ghosts from truthkeeper?
-	# is there a reason to have this pass through?
-	# or is the sematic here that a ghoststore may have unincorporated state?
-
-	my $tk = TruthKeeper::get();
-
-	# print "Checking getGhost (unusual case?) [$lfn]\n";
-
-	my $g = $tk->obtainGhostForLFN( $lfn );
-
-	return $g;
-
-}
-
-sub tk
-{
-		die "TODO No longer supported here - to remove";
-
-	my $self = shift;
-	return TruthKeeper::get();
-
-}
-
-# Forces all data about the ghost to be calculated present
-# from a scan (e.g. hash, size, etc). Does not necessarily
-# mean anything is read from disk unless some recovation rule
-# is available
-
-sub forceGhostCharacterization
-{
-	die "TODO No longer supported here - to remove";
-
-
-	my $self = shift;
-	my $lfn = shift;
-
-	print "Force: [$lfn]\n";
-
-	$self->tk->obtainGhostForLFN( $lfn )->forceCharacterization();
-}
-
-# Todo: Relocate this.
-
-sub getFullHash()
-{
-		die "TODO No longer supported here - to remove";
-
-	my $self = shift;
-	my $lfn = shift;
-
-	$self->tk->obtainGhostForLFN( $lfn )->getFullHash();
-
 }
 
 sub setRoots()
@@ -1658,9 +1475,9 @@ package GhostStore;
 
 use File::Basename;
 use base qw(Class::Accessor);
-GhostStore->mk_accessors( qw(lfnToGhost clean) );
+GhostStore->mk_accessors( qw(lfnToGhost clean sizeToFNs) );
 
-my $gsDebug = 0;
+my $gsDebug = 1;
 
 sub new
 {
@@ -1850,6 +1667,124 @@ sub writeSerializedToDisk($)
 	print "Wrote snapshots -> $fn\n";
 }
 
+sub loadSizeCache
+{
+	my $self = shift;
+
+	my $h = {};
+	# my $tk = TruthKeeper::get();
+
+	my $iterator = $self->getDescendingIterator();
+
+	print "GS-Generating size cache\n";
+
+	while( my $g = $iterator->next() )
+	{
+		next unless $g->isFile();
+		my $size = $g->getSize();
+		next if $size <= 0;
+
+		if( $gsDebug )
+		{
+			my $lfn = $g->lfn();
+			print "GS - Size Cache lfn:[$lfn] -> $size\n" 
+		}
+
+		push @{$h->{$size}}, $g;
+	}
+
+
+	$self->sizeToFNs($h);
+
+}
+
+sub findFilesWithSize
+{
+
+	my $self = shift;
+	my $s = shift;
+
+	return undef if( $s <= 0 );
+
+	if( not defined $self->sizeToFNs() )
+	{
+		$self->loadSizeCache();
+	}
+
+	my $lu = $self->sizeToFNs()->{$s};
+
+	return +() if not defined $lu;
+
+	return ( @{$lu} );
+}
+
+# Returns all ghosts other than the one passed that is a hash duplicate
+
+sub findOtherDuplicates
+{
+	my $self = shift;
+	my $g = shift;
+
+	return grep { not $g->isSameFilename($_) } $self->findAllDuplicates($g);
+}
+
+# Returns every known ghost named in this collection that is a duplicate
+
+sub findAllDuplicates
+{
+	my $self = shift;
+	my $target = shift;
+
+
+	my $size = $target->getSize();
+
+	return () if $size < 1; 
+
+	# First, check our size cache for a match
+	my @otherFN = $self->findFilesWithSize( $size );
+
+	return if @otherFN < 1;
+
+	 print " -- Checking size duplicates size:[$size]\n" if $gsDebug;
+
+	my @matches;
+
+	#hack
+
+	die "hack";
+	@matches = @otherFN;
+
+	return @matches;
+
+	# foreach my $c ( @otherFN )
+	# {
+	# 	my $gc = $self->getGhost( $c );
+
+	# 	next if $gc->isSameFilename( $target );
+
+	# 	if( $fseDebug )
+	# 	{
+	# 		my $cFN = $gc->lfn();
+	# 		my $tFN = $target->lfn();
+
+	# 		print "     -- Checking size duplicates size:[$size]\n";
+	# 		print "     ---> cfn:[$cFN]\n";
+	# 		print "  vs ---> tfn:[$tFN]\n";
+	# 	}
+
+	# 	if( $target->isDuplicateOf( $gc ) )
+	# 	{
+	# 		push @matches, $gc;
+	# 	}
+	# }
+
+	# return @matches;
+}
+
+
+
+
+
 
 ##########
 #
@@ -1859,13 +1794,27 @@ sub writeSerializedToDisk($)
 # More than one ghost can exist for a given file, and they can be different
 # to obtain an "authoritiative" ghost, the TruthKeeper is used to resolve them
 # for instance a snapshot could have one version of a ghost, a descriptor a different
-# and the one from the file system could yet again be different.
-
+# and the one from the file system could yet again be different. Ghosts are intended
+# to be so lightweight that they can be used as proxies for filename everywhere
+# as of the "everthing-is-a-ghost" update, ghosts are used universally to handle
+# files. 
+#
+# The ghost class does not itself hit the disk - everything is delegated to the FSE
+#
+# Terminology used in function names has some nuance
+#
+# -     size() - the internal size descriptor, never use this!!
+# GET   getSize - gets an ACCEPTABLE size
+# LEARN learnSize - tell me that you've definitively got a new size from disk
+# MERGE mergeSize(g) - learn whatever I can from the ghost, update myself with the
+# newest information 
+#
 
 package Ghost;
 
 use File::Basename;
 use base qw(Class::Accessor);
+use Cwd qw(abs_path);
 
 # GHOST_NEW_FIELD: Place 4/4 where you add new fields to ghosts
 
@@ -2046,9 +1995,6 @@ sub printDebug
 	print "ghostDump: lfn:[$lfn] type:[$type] mode:[$mode] lFH:[$lastFullHash] full:[$fullHash] lds:[$lastDirScan] lstat:[$lastStat] size:[$size] mtime:[$mtime]\n";
 }
 
-
-use Cwd qw(abs_path);
-
 sub isSameFilename
 {
 	my $self = shift;
@@ -2056,7 +2002,6 @@ sub isSameFilename
 
 	my $fn1 = $self->lfn();
 	my $fn2 = $other->lfn();
-
 
 	# After some testing, it appears that abs_path (also see realpath(3)) 
 	# is the very best way to test for complete filename equivilence
@@ -2373,6 +2318,12 @@ sub extractTypeFromMode
 
 	return 'f' if S_ISREG($mode);
 	return 'd' if S_ISDIR($mode);
+}
+
+sub isFile
+{
+	my $self = shift;
+	return 1 if $self->getType() eq 'f';
 }
 
 sub getType
