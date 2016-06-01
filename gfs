@@ -543,7 +543,6 @@ sub doverb_writeSnapshot()
 
 	my $store = GhostStore->new();
 
-
 	while( my $g = $i->next() )
 	{
 		print "Write Snapshot - Got Ghost: $g\n";
@@ -618,6 +617,7 @@ sub doverb_lsdup()
 
 	my $tk = TruthKeeper::get();
 	my $targetGS = $tk->makeGhostsFromCommandLine( $target );
+	my $sourceGS = $tk->makeGhostsFromCommandLine( @source );
 	my $i = $targetGS->getDescendingIterator();
 
 	my $dup_count = 0;
@@ -637,69 +637,10 @@ sub doverb_lsdup()
 
 		$total_files++;
 
-		print "LS Dup -handling LFN:[$lfn]\n";
+	#	print "LS Dup -handling LFN:[$lfn]\n";
 
 		my @tdups = $targetGS->findOtherDuplicates( $g );
-
-		if( @tdups > 0 )
-		{	
-			print "    Duplicate in local tree: ($target)\n";
-
-			foreach my $d (@tdups)
-			{
-				my $dfn = $d->lfn();
-
-				print "      Target: $dfn\n" if $asWeGoPrint;
-				$dup_count++;
-				$dup_size += $d->getSize();
-				$dup_size_interior += $d->getSize();
-				# $d->printDebug();
-			}
-		}
-
-	}
-
-}
-
-
-
-
-sub doverb_lsdup_old()
-{
-	my $tk = TruthKeeper::get();
-
-	my $target = pop @ARGV;
-
-	my $targetFSE = new FilesystemExplorer();
-	$targetFSE->setRoots( $target );
-	my $targetIterator = $targetFSE->getIterator();
-
-	my $sourceFSE = new FilesystemExplorer();
-	$sourceFSE->setRoots( @ARGV );
-
-	my $dup_count = 0;
-	my $dup_size = 0;
-	my $dup_size_interior = 0;
-	my $dup_count_interior = 0;
-	my $total_files = 0;
-	my @report; 
-	my $asWeGoPrint = 1;
-
-	while( my $file = $targetIterator->next()  )
-	{
-		next unless -f $file;
-
-		$total_files++;
-
-		# print "LSDUP - Iterated to lfn:[$file] - gathering data\n";
-
-		my $g = $tk->obtainGhostForLFN($file);
-
-		my @tdups = $targetFSE->findOtherDuplicates( $g );
-		my @sdups = $sourceFSE->findOtherDuplicates( $g );
-
-		#print "Verb LSDUP - Finding duplicates for: [$file]\n";
-		#$g->printDebug();
+		my @sdups = $sourceGS->findOtherDuplicates( $g );
 
 		my $dupCount = @tdups + @sdups;
 
@@ -710,7 +651,7 @@ sub doverb_lsdup_old()
 
 		if( $asWeGoPrint )
 		{
-			printf "[%3d]_________%s\n", $dupCount, $file;
+			printf "[%3d]_________%s\n", $dupCount, $lfn;
 		}
 
 		if( @tdups > 0 )
@@ -729,7 +670,6 @@ sub doverb_lsdup_old()
 			}
 		}
 
-		
 		if( @sdups > 0 )
 		{
 			$dup_size_interior += $g->getSize();
@@ -758,25 +698,18 @@ sub doverb_lsdup_old()
 		my $i = 0 + @$tdups;
 		my $e = 0 + @$sdups;
 
-
 		if( $i > 0 or $e > 0 or $OPT_ALL )
 		{	
 			print "$size X ($i/$e) $file \n";
 		}
 	}
 
-
-
-
 	print "LSDup finished\n";
 	print "I found $dup_count_interior files that were duplicated in target ($target),\n";
 	print "when searching among the target plus source files: @ARGV\n";
-	print "occupying $dup_size unnecessary space across the whole filesystem over $dup_count fules.\n";
+	print "occupying $dup_size unnecessary space across the whole filesystem over $dup_count files.\n";
 	print "Within the target itself, this represents $dup_size_interior bytes.\n";
 	print "There were $total_files in the target directory\n";
-
-
-
 }
 
 # Write the in place descriptors in each directory named
@@ -968,7 +901,7 @@ my $global_tk;
 my %ghostForLFN_private;
 my %ghostStoreForDescriptorLFN;
 
-my $tkdebug = 1;
+my $tkdebug = 0;
 
 sub makeGhostsFromCommandLine
 {
@@ -1349,7 +1282,7 @@ use File::Basename;
 use base qw(Class::Accessor);
 GhostIterator->mk_accessors( qw(queue recurse parentGhoststore) );
 
-my $GI_DEBUG = 1; 
+my $GI_DEBUG = 0; 
 
 sub new
 {
@@ -1382,7 +1315,7 @@ sub next
 		return undef;
 	}
 
-	print "Next: Got [$n]\n";
+	# print "Next: Got [$n]\n";
 
 	my $tk = TruthKeeper::get();
 	my $g = $tk->obtainGhostForLFN( $n );
@@ -1477,7 +1410,7 @@ use File::Basename;
 use base qw(Class::Accessor);
 GhostStore->mk_accessors( qw(lfnToGhost clean sizeToFNs) );
 
-my $gsDebug = 1;
+my $gsDebug = 0;
 
 sub new
 {
@@ -1745,38 +1678,34 @@ sub findAllDuplicates
 
 	return if @otherFN < 1;
 
-	 print " -- Checking size duplicates size:[$size]\n" if $gsDebug;
+    print " -- Checking size duplicates size:[$size]\n" if $gsDebug;
 
 	my @matches;
 
-	#hack
+	foreach my $gc ( @otherFN )
+	{
+		next if $gc->isSameFilename( $target );
 
-	die "hack";
-	@matches = @otherFN;
+		if( $fseDebug )
+		{
+			my $cFN = $gc->lfn();
+			my $tFN = $target->lfn();
+
+			if( $gsDebug )
+			{
+				print "     -- Checking size duplicates size:[$size]\n";
+				print "     ---> cfn:[$cFN]\n";
+				print "  vs ---> tfn:[$tFN]\n";
+				}	
+		}
+
+		if( $target->isDuplicateOf( $gc ) )
+		{
+			push @matches, $gc;
+		}
+	}
 
 	return @matches;
-
-	# foreach my $c ( @otherFN )
-	# {
-	# 	my $gc = $self->getGhost( $c );
-
-	# 	next if $gc->isSameFilename( $target );
-
-	# 	if( $fseDebug )
-	# 	{
-	# 		my $cFN = $gc->lfn();
-	# 		my $tFN = $target->lfn();
-
-	# 		print "     -- Checking size duplicates size:[$size]\n";
-	# 		print "     ---> cfn:[$cFN]\n";
-	# 		print "  vs ---> tfn:[$tFN]\n";
-	# 	}
-
-	# 	if( $target->isDuplicateOf( $gc ) )
-	# 	{
-	# 		push @matches, $gc;
-	# 	}
-	# }
 
 	# return @matches;
 }
