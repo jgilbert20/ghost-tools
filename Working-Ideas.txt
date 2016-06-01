@@ -1,11 +1,19 @@
 Working Ideas.txt
 
 
-1) lsdup should work with snapshots
-2) findChildren should start with the files found in the descriptor, saving directory hashing
-3) we aren't handling the thunks, therefore directories aren't geting hashes
-4) support for identification of deleted files
-5) support for filesystems that may or may not be online - e.g. volumes that mount or unmount
+# Priorities
+
+Generally: Get copy|rsync working PERFECTLY then focus on automation and object stores
+
+- lsdup should work with snapshots
+- need to implement rsync
+- findChildren should start with the files found in the descriptor, saving directory hashing
+- we aren't handling the thunks, therefore directories aren't geting hashes
+- support for identification of deleted files
+- support for filesystems that may or may not be online - e.g. volumes that mount or unmount
+- allow some places to avoid getting .gfs_ip files created
+- need to create a better escape/unescaping mechanism for basic serialization
+- implement database cache
 
 
 TODO: -G|guard - if a basic something hasn't been checked in this many days, check it again
@@ -76,7 +84,7 @@ gfs deduplicate A B C --lighten|thunk
 
 gfs lighten A B C
 
-    anuthing in C that can be reconstructed with A and B will be converted into a
+    anything in C that can be reconstructed with A and B will be converted into a
     lightweight thunk file
 
 gfs thicken A B C
@@ -90,6 +98,24 @@ gfs bless /path/to/C volume1
 gfs verify vol:volume1 snap:foo 
 
 	equivilent to gfs verify /path/to/C snap:foo
+
+gfs map add /my/working/dir vol:volume1/my-working-dir-backup --orphans
+
+	Creates a rule that /my/working/dir should mirror to volume1 and retain orphans
+
+gfs init /foo/bar
+
+	Creates a new objectstore at /foo/bar.
+
+gfs copy /my/working/dir obj:/foo/bar
+
+	Copies everything into object store, giving you back a handle to the saved snapshot
+
+
+gfs run
+
+	push and pull data from all places until done
+
 
 gfs scan .
 	

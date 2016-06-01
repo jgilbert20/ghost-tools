@@ -40,21 +40,43 @@ But there is another way. The power of technology!
 
 Ghost tool's design critera are unusual and probably won't work for everyone. The key principals that have worked well for my own digital packrat nature and govorn the use of this tool
 
-- Be close to zero-install - everything is a perl script with common libraries
+- Be close to zero-install - everything is a perl script with base CPAN libraries
 - Use checksums and careful design to NEVER send anything twice
+- Familiar - syntax nearly identical to rsync
 - Largely ignore filesystem metadata (tags and permissions) - most people don't care about these things, or use EXIF or XMP
-- Require no databases
-- Always keep copies of things in organized directories similiar to the way they were when backed up so if things blow up you can manually recover everything - no proprietary tools needed!
+- Require no databases or even meta-files (but if you can stand them, they'll make everything go much faster!)
+- Always keep copies of things in organized directories similiar to the way they were found when backed up. That way, if things blow up you can manually recover everything and see your stuff in a familiar way - no proprietary tools needed!
 - Everything is driven from command line like git - no servers!
 - Paranoia - nothing is presumed to last forever, all storage has provisions for re-verification
 - Archival occurs at the file and directory level because those are the units of things that matter to people - data is not divided and scattered to the wind
 
+# Pros and Cons
+
+## Advantages
+
+- Feels a lot like rsync and copy tools but smarter
+- Tiny footprint and low maintanance
+
+## Disadvantages
+
+- Not going to easily give you any sort of GUI or web server
+- Doesn't provide peer-to-peer trusted storage
+
+
+
+
 # History - Why this tool, why now?
 
-Originally, I created a tool called powercut in 2005-6, back when I was a window's junkie. It did many of these same things but was a design nightmare. I was uninformed by much cleaner examples of content aware file storage like GIT. The design was based off of code I wrote at the beginning of my career to manage file collections for a knowledge management solution called KnowledgeRe@ch. (That old system had to be cool -- it had an "@" sign in the name!). Back before Carbonite and Mozy launched, I wrote a whole distributed backup tool called DSB in Java that I planned to launch as a commercial service. It had a nifty design that would have probably made me quite wealthy if I had continued the process of patenting it (I abandoned the pending patent in 2007.) DSB was great because it was self-organizing and fully distributed like Crashplan, and had a zero-trust model for internal replication. (Think a lightweight version Tahoe-FS.) Fast forward a few years while I got my MBA, and I gave up trying to maintain Java code and the servers needed to run it for myself and went back to simple command line tools. 
+Originally, I created a tool called powercut in 2005-6, back when I was a window's junkie. It did many of these same things but was a design nightmare. I was uninformed by much cleaner examples of content aware file storage like GIT. The design was based off of code I wrote at the beginning of my career to manage file collections for a knowledge management solution called KnowledgeRe@ch. (That old system had to be cool -- it had an "@" sign in the name!). Back before Carbonite and Mozy launched, I wrote a whole distributed backup tool called DSB in Java that I planned to launch as a commercial service. It had a nifty design that would have probably made me some money if I had continued the process of patenting it (I abandoned the pending patent in 2007.) DSB was great because it was self-organizing and fully distributed like Crashplan, and had a zero-trust model for internal replication. (Think a lightweight version Tahoe-FS.) Fast forward a few years while I got my MBA, and I gave up trying to maintain Java code and the servers needed to run it for myself and went back to simple command line tools. 
 
 Now its 2016 and time for a rewrite. I've learned what works and doesn't work in managing file replication and archival, and what the bare minimum of the principals needed to make such things work well. The design principals are clearer to me. And I've had the opportunity to learn what I like and don't like about newer technologies like git, Infinit, Dropbox, etc.
 
+# example
+
+make a copy of some file you care about
+here is a simple example of how to back it up and manage it
+
+also make a simple video / GIF tutorial
 
 
 

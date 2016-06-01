@@ -78,45 +78,6 @@ my @ghosts = GhostTree->ghostsForHash();
 
 
 
-++++++++++++++
-
-
-
-
-
-now we have a bit of an issue
-the FSE implementation is pretty tied to the descriptor logic
-also, ghosts can be part of many different ghost stores
-and there is no clean way for updated truth to be spontaneosly discovered and written back out to 
-those files
-
-maybe ghoststore is really just a good convienence method for a collection of ghosts
-don't think of it as a first class object
-
-maybe the FSE is really the management concept around a filesystem and its state
-its handles the details of its "backing store".
-we don't worry about Ghosts being in more than one GS, because FSE is really controlling the end-to-end behavior
-
-fse->writeSnapshot()
-
-$gs2 = fse->gs()->merge( fse2->gs() );
-
-the GS of an FSE is only for files in its tree (although maybe we don't have to take this
-as a super strict rule?)
-
-i = fse->findAllDuplicates(); # starts stat scan, returns first match;
-i->next();
-
-fse->removeFile( $i );
-fse->copyFile( $i , $destFSE, $xfn )
-
-i = fse->findOverlap( fse2 ) -- returns a hit for everything in FSE that is matched in fse2
-f = i->getNext
-
-fse2->findDuplicateOfGhost( f );
-
-the FSE syntax shpuld be implmeneted for real filesystes, remote filesystems and snapshots
-
 
 +++++++++++++++++
 
@@ -145,10 +106,17 @@ Definitions:
 
 Thats sort of annoying, right? 
 
-Everything is a ghost refactor
+Everything is a ghost refactor. In this design, ghosts are interachanable with filenames
+and FSE is really stripped down
 
 M: main
 FSE: Filesystem manager
+	getStat
+	getFullHash
+	listDirectory
+	copy
+	move
+
 G: Ghost
 	getSize()
 	learnSize() - accomodate potentially new information
@@ -227,3 +195,91 @@ fields to add to ghosts lastEnumerated, firstStat, isDeleted,
 
 
 isHardIgnore needs to have . and .. added (they are creeping in)
+
+++++++++
+
+
+object store concepts
+
+a blob always has the hash of the file it saves - the header (everything up to the first null) can be anything
+
+++++
+
+RSYNC implementation ideas
+
+gs = ghoststore of source
+for each file in ghoststore
+	get a full snapshot of the remote directory + its pillage/spare places + aux places
+	get a full snapshot of the source directory
+	identify corresponding path in target to match rsync exactly
+		A. There is a file fT already sitting at TARGET at this filename
+			A1. The hash of fT is correct - its what we want
+				-- Mark TARGET fT as claimed, no action needed, go to next file
+			A2. The hash is not correct
+				-- Mark as orphaned, select new orphaning location - during clearance MOVE phase (will be moved out first)
+				-- Flow down to Case B
+		B. There is no file at the remote location in TARGET tree at that filename, or the file in TARGET is marked orphaned
+			A1. There is no hash ANYWHERE at TARGET, PILLAGE, AUX, COPY or ORPHAN
+				-- Queue for remote copy, function done
+			A2. There is a hash available in PILLAGE that is not claimed
+				-- Queue move PILLAGE -> fT, claim it
+			A2. There is a hash availble in ORPHAN that is not claimed
+				-- Queue clearance move ORPHAN -> fT (assign new location) - DONE
+			A3. There is a hash available in TARGET that is claimed
+				-- Queue local copy, done
+			A4. There is a hash available in AUX
+				-- Queue local copy, done
+			A5. There is a hash available in PILLAGE that is claimed
+				-- Queue local copy, done
+			A6. There is a hash available in COPYLIST
+				-- Queue local copy, done
+
+First do all clearance moves
+Then do all remote copies
+Then do all local copies
+
+Internal commands we need:
+
+action_clearanceMove( $s, $d )
+	mark $s as empty, $s->deleted()
+	mark $d with new ghost by cloning and assigning new LFN
+
+action_remoteCopy( $s, $d )
+	mark $d 
+
+action_localCopy
+
+so we create some virtual ghosts along the way
+every time the operation is done, we should commit them (take off their virtual flag?)
+
+maybe we just have a notion of copies or moves, and later we decide if they are local or remote?
+
+need to check $g->isPathUnder($y);
+
+next steps could occur in parallel
+	begin copying over files we think are net new in reverse mtime order
+	begin verification download (basically, get a snapshot of the remote FS)
+
+
+PUSH looks different.. Push just says that we're going to move over things we think weren't there
+into a "pushed-content" subdirectory
+we could get things wrong but better for an offline situation
+
+gsf accept pushed-content-1234 is used to rearrange the tree
+
+maybe we have concept of a library
+
+GFS-library/objects
+GFS-library/files
+GFS-library/orphans
+GFS-library/pushes
+
+
+
+
+
+
+
+
+
+
