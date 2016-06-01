@@ -1481,6 +1481,11 @@ sub getGhostStoreForDescriptorFileCoveringFN
 		{
 			$gs->slurpDescriptor( $gsfn );
 			$self->incorporateGhostStore( $gs );
+
+			# TODO
+			# to properly handle identification of deleted files,
+			# the ghosts should be added as children to whatever the
+			# parent is
 		}
 
 		$ghostStoreForDescriptorLFN{$gsfn} = $gs;
@@ -2127,9 +2132,17 @@ sub getChildren()
 
 	}
 
+
+	if( not ref $self->children() )
+	{
+		die "Corner case - someone didn't teach me my children";
+
+	}
+
+
 	# TODO - should this be weak?
 	# if so, how to handle orphans?
-	return $self->children();
+	return @{$self->children()};
 }
 
 # Caller is giving us a complete list of our children from primary source
@@ -2181,7 +2194,7 @@ sub learnChildrenByLFN()
 		}
 	}
 
-	$self->children( @newKids );
+	$self->children( \@newKids );
 }
 
 # hasChildren() - True if we can descend with a call to "getChildren"
