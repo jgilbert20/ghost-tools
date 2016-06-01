@@ -39,7 +39,7 @@ local $main::run_files_stat = 0;
 local $main::run_descriptors_read = 0;
 local $main::run_descriptors_write = 0;
 local $main::readdir_invokes = 0;
-local $main::readdir_entires = 0;
+local $main::readdir_entries = 0;
 
 # Get path to our WD
 
@@ -584,41 +584,20 @@ sub doverb_writeSnapshot()
 	while( my $g = $i->next() )
 	{
 		print "Write Snapshot - Got Ghost: $g\n";
+
+		if( not $g->hasChildren() )
+		{
+			$g->forceCharacterization();
+		}
+		
+
 		$g->printDebug();
 		$store->addGhost( $g );
+
 	}
 
 	$store->writeSnapshotToDisk( "snapshot-$$.out");
 }
-
-
-sub doverb_writeSnapshot_old()
-{
-	my $store = GhostStore->new();
-
-	my $fse = new FilesystemExplorer();
-	$fse->setRoots( @ARGV );
-	my $iterator = $fse->getIterator();
-
-	while( defined( my $file = $iterator->next() ) )
-	{
-		print "SnapshotGen - Scanning: [$file]\n";
-
-		if( -f $file )
-		{
-			$fse->forceGhostCharacterization( $file );
-			my $g = $fse->getGhost( $file );
-			$store->addGhost( $g );
-		}
-		else
-		{
-			print "SnapshotGen - Skipping non-file [$file]\n";
-		}
-	}	
-
-	$store->writeSnapshotToDisk( "snapshot-$$.out");
-}
-
 
 # for each item listed, shows what we know about it -- no recursion, no forced characterization
 
@@ -787,6 +766,7 @@ sub doverb_lsdup()
 
 sub doverb_writeDescriptor()
 {
+	die "dead";
 	my $store = GhostStore->new();
 
 	my $fse = new FilesystemExplorer();
@@ -878,130 +858,6 @@ sub isHardIgnore
 	return 0;
 }
 
-##########
-#
-# FilesystemIterator -- A helper for iterating over nested directories
-# Note: Does not use File::Find!
-#
-####
-
-package FilesystemIterator;
-
-use File::Basename;
-use base qw(Class::Accessor);
-FilesystemIterator->mk_accessors( qw(queue) );
-
-my $FSI_DEBUG = 0; 
-
-
-sub new
-{
-	my $class = shift;
-	my $self = $class->SUPER::new();
-	return $self;
-}
-
-sub scanDir
-{
-	my $self = shift;
-	my $dir = shift;
-
-	my $q = $self->queue();	
-
-	print "FSE:ScanDIR into dir:[$dir]\n" if $FSI_DEBUG;
-
-	#$dir =~ s/\/+$//;
-
-	opendir DIR, $dir;
-
-
-	$main::readdir_invokes++;
-
-	# drop . and .., sort directory
-	my @files = map {  main::canonize( File::Spec->catfile( $dir, $_ ) ) } 
-		grep { !/^\.{1,2}$/ } 
-		sort { $a cmp $b } 
-		readdir DIR;
-
-
-	$main::readdir_entries += @files;
-
-	print( "FSE:ScanDIR Returned: ", (join ':', @files ), "\n" ) if $FSI_DEBUG;
-
-	close DIR;
-
-	unshift @$q, \$dir;
-	unshift @$q, @files;
-	
-}
-
-
-# returns the next directory
-
-sub next
-{
-	my $self = shift;
-
-	my $n = $self->nextRaw();
-
-	if( ref $n )
-	{
-		# print "THUNK received --> $$n\n";
-
-		# TODO case: 
-		# in this case, we have just exited a directory -- may want
-		# to purge any contents of descriptors that weren't found
-
-		return $self->next();
-	}
-
-	# Check for the end-of-queue case
-
-	if( not defined $n )
-	{
-		print "FSE iterator: Undef case\n" if $FSI_DEBUG;
-		return undef;
-	}
-
-	# Now make sure that this isn't something we need to ignore
-	
-	my( $fn, $dir ) = fileparse( $n );
- 	
-	print " FSE::getNext() checking p:[$n] -> fn:[$fn]\n" if $FSI_DEBUG;
-
-	if( $fn eq $DESCRIPTOR_FILENAME )
-	{
-		print " FSE/next -> skipping descriptor fn:[$fn]\n" if $FSI_DEBUG;
-		return $self->next();
-	}
-	return $n;
-}
-
-sub nextRaw
-{
-	my $self = shift;
-
-	my $q = $self->queue();
-	my $c = shift @$q;
-
-	if( not defined $c )
-	{
-		return undef; 
-	}
-
-	# print "Got[$c]\n";
-
-	# if the next thing is a directory, scan into the directory
-	if( -d $c )
-	{
-		$self->scanDir( $c );
-	}
-
-	return $c;
-}
-
-
-
 
 ##########
 # The FSE class handles low level access and coherency for a particular
@@ -1010,28 +866,15 @@ sub nextRaw
 # 
 # I think this is the right definition for the class: 
 #
-# It provides the ability to iterate over the filesystem in an organized way,
-# and also supports the implementation of primitives such as copy, getHashHitDisk
-# findDuplicates, etc.
+# It provides the ability to iterate over the filesystem in an organized way.
+# Everything that hits a primary resource should go here
+# FSE is mainly called by the ghost API
 # 
-# One open question: how the truthkeeper is supposed to interact with FSE --
-# is there ever any design situation where the FSE needs to be called BY the truthkeeper?
-# if we can prevent this from ever occuring, i think the design will be cleaner 
-# One answer: all ghosts are made by FSE, and hold a link back to the FSE that made them, and this
-# delegates the getRealhash, etc stuff. So TK never deals with the FSE directly
-# a question though: when is it ever required for TK to do that?
-# another question: in the case that FSE is remote, how do we "batch" certain lookups
-# to prevent onesie twosies RPC calls?
-#
-#
 # Verbs i know it has to support
 #
 # - iteration
 # - findDuplicates();
 # - forceFullCharacterization();
-
-
-
 
 package FilesystemExplorer;
 
@@ -1093,6 +936,7 @@ sub getImmediateChildren
 
 sub loadSizeCache
 {
+	die "TODO No longer supported here - to remove";
 	my $self = shift;
 
 	my $h = {};
@@ -1122,6 +966,8 @@ sub loadSizeCache
 
 sub findFilesWithSize
 {
+		die "TODO No longer supported here - to remove";
+
 	my $self = shift;
 	my $s = shift;
 
@@ -1144,6 +990,8 @@ sub findFilesWithSize
 
 sub findOtherDuplicates
 {
+		die "TODO No longer supported here - to remove";
+
 	my $self = shift;
 	my $g = shift;
 
@@ -1156,6 +1004,8 @@ sub findOtherDuplicates
 
 sub findDuplicates
 {
+		die "TODO No longer supported here - to remove";
+
 	my $self = shift;
 	my $target = shift;
 
@@ -1199,6 +1049,10 @@ sub findDuplicates
 
 sub getGhost()
 {
+	die "TODO No longer supported here - to remove";
+
+
+
 	my $self = shift;
 	my $lfn = shift;
 
@@ -1218,6 +1072,8 @@ sub getGhost()
 
 sub tk
 {
+		die "TODO No longer supported here - to remove";
+
 	my $self = shift;
 	return TruthKeeper::get();
 
@@ -1230,6 +1086,9 @@ sub tk
 
 sub forceGhostCharacterization
 {
+	die "TODO No longer supported here - to remove";
+
+
 	my $self = shift;
 	my $lfn = shift;
 
@@ -1242,6 +1101,8 @@ sub forceGhostCharacterization
 
 sub getFullHash()
 {
+		die "TODO No longer supported here - to remove";
+
 	my $self = shift;
 	my $lfn = shift;
 
@@ -1251,6 +1112,8 @@ sub getFullHash()
 
 sub setRoots()
 {
+		die "TODO No longer supported here - to remove";
+
 	my $self = shift;
 
 	$self->topLevelLFNs( [@_] );
@@ -1266,6 +1129,8 @@ sub setRoots()
 
 sub getIterator()
 {
+		die "TODO No longer supported here - to remove";
+
 	my $self = shift;
 
 	my $r = FilesystemIterator->new();
@@ -1280,8 +1145,6 @@ package TruthKeeper;
 use Data::Dumper;
 use File::Basename;
 use base qw(Class::Accessor);
-
-# TruthKeeper->mk_accessors( qw(ghostForLFN) );
 
 my $global_tk;
 
@@ -1391,16 +1254,12 @@ sub verifyNoDirtyGhostsRemain
 	die "Dirty ghosts remain unflushed!! assert" if $error > 0;
 }
 
-
-
-
 sub flushGhostDescriptorCache
 {
 	my $self = shift;
 
 	foreach my $gslfn ( keys %ghostStoreForDescriptorLFN )
 	{
-		
 		## my $gs = getGhostStoreForDescriptorFileCoveringFN( $k );
 
 		$self->flushDescriptorToDisk( $gslfn );
@@ -1495,13 +1354,13 @@ sub getGhostStoreForDescriptorFileCoveringFN
 }
 
 
-# Forces all data about the ghost to be calculated present
-# from a scan (e.g. hash, size, etc). Does not necessarily
-# mean anything is read from disk unless some recovation rule
-# is available
+
 
 sub forceGhostCharacterization
 {
+	die "TODO - dead code - do not rely on GS to hold this anymore";
+
+
 	my $self = shift;
 	my $lfn = shift;
 
@@ -1527,6 +1386,8 @@ sub forceGhostCharacterization
 
 sub getFullHash()
 {
+		die "TODO - dead code - do not rely on GS to hold this anymore";
+
 	my $self = shift;
 	my $lfn = shift;
 
@@ -1738,62 +1599,6 @@ sub scanDir
 
 
 }
-
-# sub scanDir
-# {
-# 	my $self = shift;
-# 	my $dir = shift;
-
-# 	my $q = $self->queue();	
-
-# 	print "GI:ScanDIR into dir:[$dir]\n" if $GI_DEBUG;
-
-# 	#$dir =~ s/\/+$//;
-
-# 	opendir DIR, $dir;
-
-# 	$main::readdir_invokes++;
-
-# 	# drop . and .., sort directory
-# 	my @files = map {  main::canonize( File::Spec->catfile( $dir, $_ ) ) } 
-# 		grep { !/^\.{1,2}$/ } 
-# 		sort { $a cmp $b } 
-# 		readdir DIR;
-
-
-# 	$main::readdir_entries += @files;
-
-# 	print( "FSE:ScanDIR Returned: ", (join ':', @files ), "\n" ) if $GI_DEBUG;
-
-# 	close DIR;
-
-# 	unshift @$q, \$dir;  # add the thunk that will tell us the directory is over
-# 	unshift @$q, @files; # add the files themselves
-	
-# }
-
-
-
-
-
-
-
-
-
-
-# 	# Now make sure that this isn't something we need to ignore
-	
-# 	my( $fn, $dir ) = fileparse( $n );
- 	
-# 	print " FSE::getNext() checking p:[$n] -> fn:[$fn]\n" if $FSI_DEBUG;
-
-# 	if( $fn eq $DESCRIPTOR_FILENAME )
-# 	{
-# 		print " FSE/next -> skipping descriptor fn:[$fn]\n" if $FSI_DEBUG;
-# 		return $self->next();
-# 	}
-# 	return $n;
-# }
 
 sub nextRaw
 {
@@ -2238,8 +2043,7 @@ sub printDebug
 	my $type = $self->getType();
 
 
-	print "GDB: lfn:[$lfn] type:[$type] mode:[$mode] lFH:[$lastFullHash] full:[$fullHash] lds:[$lastDirScan] lstat:[$lastStat] size:[$size] mtime:[$mtime]\n";
-
+	print "ghostDump: lfn:[$lfn] type:[$type] mode:[$mode] lFH:[$lastFullHash] full:[$fullHash] lds:[$lastDirScan] lstat:[$lastStat] size:[$size] mtime:[$mtime]\n";
 }
 
 
@@ -2398,6 +2202,8 @@ sub hasAcceptableFullhash
 {
 	my $self = shift;
 
+	print "Checking if I like my hash\n";
+
 	return 0 if( not defined $self->fullHash() );
 	
 	if( defined $main::GUARD_TIME_SECONDS )
@@ -2545,6 +2351,8 @@ sub getFullHashForceHitDisk
 {
 	my $self = shift;
 	my $lfn = $self->lfn();
+
+	die "Full hash not implemented for directories" if( $self->hasChildren() );
 
 	$self->lastFullHash( time() );
 
