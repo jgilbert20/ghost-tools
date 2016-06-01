@@ -244,6 +244,7 @@ sub gfs_escape($)
 	my $v = shift;
 
 	$v =~ s/:/\\c/gs;
+	$v =~ s/\@/\\a/gs;
 	$v =~ s/#/\\p/gs;
 	$v =~ s/\n/\\n/gs;
 	return $v;
@@ -255,6 +256,7 @@ sub gfs_unescape($)
 
 	my $v = shift;
 	$v =~ s/\\c/:/gs;
+	$v =~ s/\\a/\@/gs;
 	$v =~ s/\\p/#/gs;
 	$v =~ s/\\n/\n/gs;
 
@@ -1555,7 +1557,6 @@ sub slurpDescriptor($)
 			}
 
 			next;
-
 		}
 
 		my $g = Ghost->newFromSerialized( $_, treeRoot => $treebase );
