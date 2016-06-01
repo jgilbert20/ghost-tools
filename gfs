@@ -24,7 +24,7 @@ use MLDBM qw( BerkeleyDB::Hash Storable );
 # Major globals
 
 my $DESCRIPTOR_FILENAME = ".gfs_ip";
-my $DESCRIPTOR_VERSION_NUMBER = 4;
+my $SERIALIZATION_VERSION_NUMBER = 5;
 my $GENERAL_DEBUG = 1;
 my $USUAL_IGNORE = 1;
 local $main::SCRIPT_START = time();
@@ -1548,11 +1548,11 @@ sub slurpDescriptor($)
 
 			if( $name eq 'version' )
 			{
-				print "Comparing version $DESCRIPTOR_VERSION_NUMBER to [$value]\n";
+				print "Comparing version $SERIALIZATION_VERSION_NUMBER to [$value]\n";
 
-				if( $DESCRIPTOR_VERSION_NUMBER != ($value+0) )
+				if( $SERIALIZATION_VERSION_NUMBER != ($value+0) )
 				{
-					die "Version mismatch in $DESCRIPTOR_FILENAME: $DESCRIPTOR_VERSION_NUMBER != [$value] -- the descriptor version is wrong. Delete the old descriptors to continue.";
+					die "Version mismatch in $DESCRIPTOR_FILENAME: $SERIALIZATION_VERSION_NUMBER != [$value] -- the descriptor version is wrong. Delete the old descriptors to continue.";
 				}
 			}
 
@@ -1591,7 +1591,7 @@ sub writeAsDescriptor($)
 	print FILE "### To remove this and others like it, try this command\n";
 	print FILE "###    find . -name '$DESCRIPTOR_FILENAME' -print0  | xargs -0 rm -iv\n";
 	print FILE "### \n";
-	print FILE "@@@ version = $DESCRIPTOR_VERSION_NUMBER\n";
+	print FILE "@@@ version = $SERIALIZATION_VERSION_NUMBER\n";
 	print FILE "### \n";
 
 	foreach my $g ( values %$lfnToGhost )
@@ -1635,6 +1635,16 @@ sub writeSerializedToDisk($)
 	my $lfnToGhost = $self->lfnToGhost();
 
 	open( FILE, ">$fn") or die "Cannot open $fn to write snapshot or descriptor";
+
+	my $date = strftime( "%c", localtime() );
+
+	print FILE "### This is a snapshot, written by the tool $0\n";
+	print FILE "### File written on $date\n";
+	print FILE "### It is a record of all of the files stored at a point in time\n";
+	print FILE "### The gfs tool can use this to reconstruct this file tree later\n";
+	print FILE "### \n";
+	print FILE "@@@ version = $SERIALIZATION_VERSION_NUMBER\n";
+	print FILE "### \n";
 
 	foreach my $g ( values %$lfnToGhost )
 	{
@@ -1794,7 +1804,9 @@ use Cwd qw(abs_path);
 
 # GHOST_NEW_FIELD: Place 4/4 where you add new fields to ghosts
 
-Ghost->mk_accessors( qw(lfn lastFullHash size mode fullHash dirty isTKversion lastDirScan lastStat mtime children) );
+Ghost->mk_accessors( qw(lfn lastFullHash size mode fullHash 
+	dirty isTKversion lastDirScan lastStat mtime lastEnumerated firstStat fileStatus
+	 children) );
 
 my $serializeDebug = 0;
 
@@ -1829,6 +1841,9 @@ sub newFromSerialized($)
 	$self->fullHash( shift @a );
 	$self->lastDirScan( shift @a );
 	$self->lastStat( shift @a );
+	$self->lastEnumerated( shift @a );
+	$self->firstStat( shift @a );
+	$self->fileStatus( shift @a );
 
 	$self->dirty( 0 );
 	$self->mtime( shift @a );
@@ -1963,6 +1978,10 @@ sub printDebug
 	my $lastDirScan = $self->lastDirScan();
 	my $lastStat = $self->lastStat();
 	my $mtime = $self->mtime();
+	my $lastEnumerated = $self->lastEnumerated();
+	my $firstStat = $self->firstStat();
+	my $fileStatus = $self->fileStatus();
+
 
 	# not technically a field but we should include this
 	my $type = $self->getType();
@@ -2070,7 +2089,12 @@ sub serialize()
 			  $self->fullHash(),
 			  $self->lastDirScan(),
 			  $self->lastStat(),
-			  $self->mtime()
+			  $self->mtime(),
+			  $self->lastEnumerated(),
+			  $self->firstStat(),
+			  $self->fileStatus()
+
+
 			  );
 
 
