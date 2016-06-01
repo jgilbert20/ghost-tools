@@ -290,4 +290,18 @@ GS: Ghoststore
 				@matches->isDuplicateOf( $g )
 
 
+++++
 
+Everything-is-a-ghost refactor complete
+things still not really handled
+
+1) lsdup should work with snapshots
+2) findChildren should start with the files found in the descriptor, saving directory hashing
+3) we aren't handling the thunks, therefore directories aren't geting hashes
+4) support for identification of deleted files
+5) support for filesystems that may or may not be online - e.g. volumes that mount or unmount
+
+fields to add to ghosts lastEnumerated, firstStat, isDeleted, 
+
+
+isHardIgnore needs to have . and .. added (they are creeping in)

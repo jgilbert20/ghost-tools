@@ -23,7 +23,8 @@ use MLDBM qw( BerkeleyDB::Hash Storable );
 
 # Major globals
 
-my $DESCRIPTOR_FILENAME = "00descriptor.gfs";
+my $DESCRIPTOR_FILENAME = ".gfs_ip";
+my $DESCRIPTOR_VERSION_NUMBER = 4;
 my $GENERAL_DEBUG = 1;
 my $USUAL_IGNORE = 1;
 local $main::SCRIPT_START = time();
@@ -243,6 +244,7 @@ sub gfs_escape($)
 	my $v = shift;
 
 	$v =~ s/:/\\c/gs;
+	$v =~ s/#/\\p/gs;
 	$v =~ s/\n/\\n/gs;
 	return $v;
 
@@ -253,6 +255,7 @@ sub gfs_unescape($)
 
 	my $v = shift;
 	$v =~ s/\\c/:/gs;
+	$v =~ s/\\p/#/gs;
 	$v =~ s/\\n/\n/gs;
 
 	return $v;
@@ -661,7 +664,7 @@ sub doverb_lsdup()
 			foreach my $d (@tdups)
 			{
 				my $dfn = $d->lfn();
-
+ 
 				print "      Target: $dfn\n" if $asWeGoPrint;
 				$dup_count++;
 				$dup_size += $d->getSize();
@@ -773,6 +776,7 @@ sub getFullHashForceHitDisk($)
 
 # A hard ignore is a filename that we must pretend never existed
 # it will not factor into any directory checksums
+# or be saved to any ghost stores
 
 sub isHardIgnore
 {
@@ -781,7 +785,6 @@ sub isHardIgnore
 	my $b = basename $fn;	
 
 	return 1 if $b =~ /$DESCRIPTOR_FILENAME$/;
-
 
 	return 0;
 }
@@ -1407,10 +1410,11 @@ sub nextRaw
 package GhostStore;
 
 use File::Basename;
+use POSIX;
 use base qw(Class::Accessor);
 GhostStore->mk_accessors( qw(lfnToGhost clean sizeToFNs) );
 
-my $gsDebug = 0;
+my $gsDebug = 1;
 
 sub new
 {
@@ -1492,6 +1496,10 @@ sub addGhost($)
 	my $lfn = $g->lfn();
 	my $lfnToGhost = $self->lfnToGhost();
 
+	warn "Something wrong lfn:$lfn" if $lfn eq ".";
+	warn "Something wrong lfn:$lfn" if $lfn eq "..";
+
+
 	print "GhostStore: Adding ghost $g (lfn=$lfn) (ltg=$lfnToGhost self=$self) ghoststore\n" if $gsDebug;
 
 	if( exists $lfnToGhost->{$g->lfn()} )
@@ -1504,12 +1512,14 @@ sub addGhost($)
 	return;
 }
 
+# Pulls in the descriptor listed 
+
 sub slurpDescriptor($)
 {
 	my $self = shift;
 	my $fn = shift;
 
-	print "GhostStore: Slurping descriptor [$fn]" if $gsDebug;
+	print "GhostStore: Slurping descriptor [$fn]\n" if $gsDebug;
 
 	my( $parsedFn, $dir ) = fileparse( $fn );
 
@@ -1523,6 +1533,31 @@ sub slurpDescriptor($)
 	{
 		chomp;
 		print "GhostStore: Slurping: [$_]\n" if $gsDebug;
+
+		if( /^###/ )
+		{
+			next;
+		}
+
+		if( /^@@@\s*(\w+)\s*\=\s*(.*)/ )
+		{
+			my ($name, $value) = ($1,$2);
+			print "DESCRIPTOR: $name --> $value\n" if $gsDebug;
+
+			if( $name eq 'version' )
+			{
+				print "Comparing version $DESCRIPTOR_VERSION_NUMBER to [$value]\n";
+
+				if( $DESCRIPTOR_VERSION_NUMBER != ($value+0) )
+				{
+					die "Version mismatch in $DESCRIPTOR_FILENAME: $DESCRIPTOR_VERSION_NUMBER != [$value] -- the descriptor version is wrong. Delete the old descriptors to continue.";
+				}
+			}
+
+			next;
+
+		}
+
 		my $g = Ghost->newFromSerialized( $_, treeRoot => $treebase );
 		$g->isTKversion(0);
 		$self->addGhost( $g );
@@ -1546,6 +1581,17 @@ sub writeAsDescriptor($)
 	my $lfnToGhost = $self->lfnToGhost();
 
 	open( FILE, ">$fn") or die "Cannot open $fn to write descriptor";
+
+	my $date = strftime( "%c", localtime() );
+
+	print FILE "### This is a checksum tracking file written by $0\n";
+	print FILE "### File written on $date\n";
+	print FILE "### \n";
+	print FILE "### To remove this and others like it, try this command\n";
+	print FILE "###    find . -name '$DESCRIPTOR_FILENAME' -print0  | xargs -0 rm -iv\n";
+	print FILE "### \n";
+	print FILE "@@@ version = $DESCRIPTOR_VERSION_NUMBER\n";
+	print FILE "### \n";
 
 	foreach my $g ( values %$lfnToGhost )
 	{
