@@ -398,7 +398,6 @@ sub main()
 
 sub handleStats
 {
-
 	print "----- DONE -----\n";
 
 	print "Full reads count: $main::run_files_fullread\n";
@@ -412,8 +411,7 @@ sub handleStats
 	print "Readdir invokes : $main::readdir_invokes\n";
 	print "Readdir entries : $main::readdir_entries\n";
 
-	print "Total Script Time: " . tv_interval( $main::SCRIPT_START_GTOD ) . "\n";
-	
+	print "Total Script Time: " . tv_interval( $main::SCRIPT_START_GTOD ) . "\n";	
 }
 
 sub handleVerb
@@ -2368,7 +2366,7 @@ sub getFullHashSourceVerify
 	die "Full hash not implemented for directories" if( $self->canHaveChildren() );
 
 	my $fullhash = $self->getFSE()->getFullHashSourceVerify( $lfn );
- 	$self->learnFullHash( $fullhash, $time );
+ 	$self->learnFullHash( $time, $fullhash );
 
 	return $fullhash;
 }
