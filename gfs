@@ -65,10 +65,10 @@ my $OPT_GUARDTIME = undef;
 if( defined $OPT_GUARDTIME )
 {
 	$main::GUARD_TIME_SECONDS = $OPT_GUARDTIME;
-
 	print "Guard time set to: $main::GUARD_TIME_SECONDS\n";
 }
 
+# Utility function to present relative time in a human readable way
 
 sub expressRelativeTime
 {
@@ -95,9 +95,7 @@ sub expressRelativeTime
 		return $r;
 	}
 
-
 	return "$seconds" . "s";
-
 }
 
 
@@ -112,7 +110,6 @@ sub mkdirs
     my $dirx = dirname $dir;
 
     # print "MKDIRS:[$dirx]\n";
-
     eval{ mkpath($dirx,1) };
     $@ and die "Couldn't create dir path: $@";
     die "Did not find new path" if not -d $dirx;
@@ -188,8 +185,7 @@ sub init
 {
 	verifyWorkingDirectories();
 	setupDatabases();
-	$main::localFileSystemFSE = new FilesystemExplorer();
-
+	$main::localFileSystemFSE = new FilesystemExplorer::FS();
 }
 
 
@@ -448,6 +444,11 @@ sub handleVerb
 		return;
 	}
 
+	if( $verb eq "checksum" )
+	{
+		doverb_checksum();
+		return;
+	}
 	# Writes a permanent file of this entire tree
 
 	if( $verb eq "write-snapshot")
@@ -594,8 +595,32 @@ sub doverb_ls()
 
 		print "$fullHash\t$lfh\t$lfn\n";
 	}
+}
+
+
+# doverb_checksum - checksum the files we are given
+#
+#
+
+sub doverb_checksum()
+{
+	my $tk = TruthKeeper::get();
+	my $targetGS = $tk->makeGhostsFromCommandLine( @ARGV );
+	my $i = $targetGS->getDescendingIterator();
+
+	while( my $g = $i->next() )
+	{
+		print "Checksum - Got Ghost: $g\n";
+
+		$g->getFullHash();
+		$g->printDebug();
+
+	}
+
 
 }
+
+
 
 ###########
 # Lsdup: A B C - for every file in C, say which are copied in A and or B and C (and where)
@@ -724,7 +749,7 @@ sub doverb_writeDescriptor()
 	die "dead";
 	my $store = GhostStore->new();
 
-	my $fse = new FilesystemExplorer();
+	my $fse = new FilesystemExplorer::FS();
 	$fse->setRoots( @ARGV );
 
 	# sort of a lazy way to do it -- forces
@@ -753,27 +778,7 @@ sub doverb_writeDescriptor()
 	}
 }
 
-sub getFullHashForceHitDisk($)
-{
-	my $lfn = shift;
 
-	print "FULLHASH: $lfn\n";
-
-	# TODO: examine use of stat
-	$main::run_bytes_fullread += -s $lfn;
-
-	my $START_GTOD = [gettimeofday];
-
-	my $sha = Digest::SHA->new(1);
-	$sha->addfile( $lfn );
-	my $hexdigest = $sha->hexdigest();
-
-	$main::run_files_fullread++;
-
-	$main::run_time_fullread += tv_interval( $START_GTOD );
-
-	return( "SHA1/FULL/$hexdigest");
-}
 
 
 # A hard ignore is a filename that we must pretend never existed
@@ -792,6 +797,44 @@ sub isHardIgnore
 }
 
 
+package FSEFactory;
+
+sub getFSEHandlerForLFN
+{
+	my $class = shift;
+	my $lfn = shift;
+
+	my $r = undef;
+
+	if( $lfn =~ /^snap:/ )
+	{
+		$r = 'FilesystemExplorer::Snapshot';
+	}	
+	else
+	{
+		$r = 'FilesystemExplorer::FS';
+	}
+
+	main::debug "FSEFactory: FSE handler for lfn:[$lfn] --> Class:[$r]";
+
+	return $r; 
+}
+
+
+package FilesystemExplorer::Snapshot;
+
+use File::Basename;
+use base qw(Class::Accessor);
+FilesystemExplorer::Snapshot->mk_accessors( qw( rootGhost ) );
+
+sub new
+{
+	my $class = shift;
+	my $self = $class->SUPER::new();
+
+	return $self;
+}
+
 ##########
 # The FSE class handles low level access and coherency for a particular
 # domain of listed files. This could be a real file system or a snapshot
@@ -809,11 +852,12 @@ sub isHardIgnore
 # - findDuplicates();
 # - forceFullCharacterization();
 
-package FilesystemExplorer;
+package FilesystemExplorer::FS;
 
+use Time::HiRes qw( CLOCK_REALTIME gettimeofday tv_interval);
 use File::Basename;
 use base qw(Class::Accessor);
-FilesystemExplorer->mk_accessors( qw(topLevelLFNs sizeToFNs) );
+FilesystemExplorer::FS->mk_accessors( qw(topLevelLFNs sizeToFNs) );
 
 my $fseDebug = 1;
 
@@ -829,6 +873,47 @@ sub new
 
 	return $self;
 }
+
+
+sub getFullHashSourceVerify
+{
+	my $self = shift;
+	my $lfn = shift;
+
+	print "*** FULLHASH: $lfn\n";
+
+	# TODO: examine use of stat
+	$main::run_bytes_fullread += -s $lfn;
+
+	my $START_GTOD = [gettimeofday];
+
+	my $sha = Digest::SHA->new(1);
+	$sha->addfile( $lfn );
+	my $hexdigest = $sha->hexdigest();
+
+	$main::run_files_fullread++;
+
+	$main::run_time_fullread += tv_interval( $START_GTOD );
+
+	return( "SHA1/FULL/$hexdigest");
+}
+
+sub getStatSourceVerify
+{
+	my $self = shift;
+	my $lfn = shift;
+
+	print "*** STAT: $lfn\n";
+
+	$main::run_files_stat++;
+
+	my @statfields = stat($lfn);
+
+	die "Ghost [$lfn] failed stat - probably doesn't exist" if( @statfields == 0 );
+
+	return \@statfields; 
+}
+
 
 # Return LFNs of immediate children
 # CORE - any FSE must implement
@@ -854,7 +939,6 @@ sub getImmediateChildren
 		grep { !main::isHardIgnore( $_ ) } 
 		sort { $a cmp $b } 
 		readdir DIR;
-
 
 	$main::readdir_entries += @files;
 
@@ -1053,8 +1137,6 @@ sub flushDescriptorToDisk
 	return undef; 
 }
 
-
-
 sub getGhostDescriptorFileForLFN($)
 {
 	my $self = shift;
@@ -1070,7 +1152,6 @@ sub getGhostDescriptorFileForLFN($)
 
 	return $dfn;
 }
-
 
 sub getGhostStoreForDescriptorFileCoveringFN
 {
@@ -1107,55 +1188,6 @@ sub getGhostStoreForDescriptorFileCoveringFN
 		return $gs;
 	}
 }
-
-
-
-
-sub forceGhostCharacterization
-{
-	die "TODO - dead code - do not rely on GS to hold this anymore";
-
-
-	my $self = shift;
-	my $lfn = shift;
-
-	# TODO: see notes for getFullHash
-
-	# TODO error check that this path actual existing in the FSE!
-
-	my $gs = $self->getGhostStoreForDescriptorFileCoveringFN($lfn);
-	print "TK - Searching for a fullhash for [$lfn]\n" if $tkdebug;
-	my $g = $gs->findOrMakeGhostByLFN($lfn);
-	my $h = $g->forceCharacterization();
-
-	return $h;
-}
-
-# Caller wants the full hash
-# Best place to get it is a descriptor file
-# next best place to get it is to hit the disk
-
-# TODO: This may need to be reimplemented - better way to handle
-# could be to use a FSE specific ghost store and let some other
-# mechanism actually trigger writing the in place files
-
-sub getFullHash()
-{
-		die "TODO - dead code - do not rely on GS to hold this anymore";
-
-	my $self = shift;
-	my $lfn = shift;
-
-	# TODO error check that this path actual existing in the FSE!
-
-	my $gs = $self->getGhostStoreForDescriptorFileCoveringFN($lfn);
-	print "FSE - Searching for a fullhash for [$lfn]\n";
-	my $g = $gs->findOrMakeGhostByLFN($lfn);
-	my $h = $g->getFullHash();
-
-	return $h;
-}
-
 
 sub incorporateGhostStore
 {
@@ -1229,7 +1261,6 @@ sub obtainGhostForLFN
 	my $lfn = shift;
 
 	die "LFN is zero length" if ((length $lfn) < 1);
-
 	die "LFN is not a clean string!" if ref $lfn;
 
 	print "TK:Obtain: obtain f:[$lfn] - requested\n" if $tkdebug;
@@ -1344,15 +1375,12 @@ sub scanDir
 
 	my @lfns = $g->getFSE()->getImmediateChildren( $g );
 
-	$g->learnChildrenByLFN( @lfns );
+	$g->learnChildrenByLFN( time(), @lfns );
 
 	my @children = $g->getChildren();
 
  	unshift @$q, \$g;  # add the thunk that will tell us the directory is over
  	unshift @$q, @lfns; # add the files themselves
-
-
-
 }
 
 sub nextRaw
@@ -1501,8 +1529,7 @@ sub addGhost($)
 	warn "Something wrong lfn:$lfn" if $lfn eq ".";
 	warn "Something wrong lfn:$lfn" if $lfn eq "..";
 
-
-	print "GhostStore: Adding ghost $g (lfn=$lfn) (ltg=$lfnToGhost self=$self) ghoststore\n" if $gsDebug;
+	print "GhostStore: Adding ghost $g (lfn=$lfn) (lfntoghosthash=$lfnToGhost gs_self=$self) ghoststore\n" if $gsDebug;
 
 	if( exists $lfnToGhost->{$g->lfn()} )
 	{
@@ -1896,6 +1923,8 @@ sub getChildren()
 sub learnChildrenByLFN()
 {
 	my $self = shift;
+	my $time = shift;
+
 	my @lfns = @_;
 
 	my $tk = TruthKeeper::get();
@@ -1925,7 +1954,7 @@ sub learnChildrenByLFN()
 	
 		# inform ghost that it has been seen in a directory scan
 		# this also undeletes it
-		$g->learnDirscan();
+		$g->learnDirscan($time);
 		push @newKids, $g;
 	}
 
@@ -1935,7 +1964,7 @@ sub learnChildrenByLFN()
 		{
 			print "G:   Child has disapeared\n";
 			my $g = $self->tk()->obtainGhostForLFN( $lfn );
-			$g->learnDeleted();
+			$g->learnDeleted($time);
 		}
 	}
 
@@ -1982,12 +2011,10 @@ sub printDebug
 	my $firstStat = $self->firstStat();
 	my $fileStatus = $self->fileStatus();
 
-
 	# not technically a field but we should include this
 	my $type = $self->getType();
 
-
-	print "ghostDump: lfn:[$lfn] type:[$type] mode:[$mode] lFH:[$lastFullHash] full:[$fullHash] lds:[$lastDirScan] lstat:[$lastStat] size:[$size] mtime:[$mtime]\n";
+	print "ghostDump: lfn:[$lfn] type:[$type] mode:[$mode] lFH:[$lastFullHash] full:[$fullHash] lds:[$lastDirScan] lastfullstat:[$lastStat] size:[$size] mtime:[$mtime]\n";
 }
 
 sub isSameFilename
@@ -2093,10 +2120,7 @@ sub serialize()
 			  $self->lastEnumerated(),
 			  $self->firstStat(),
 			  $self->fileStatus()
-
-
 			  );
-
 
 	@s = map {main::gfs_escape($_)} @s;
 
@@ -2179,7 +2203,7 @@ sub getFullHash
 	}
 	else
 	{
-		return $self->getFullHashForceHitDisk();
+		return $self->getFullHashSourceVerify( time() );
 	}
 }
 
@@ -2207,7 +2231,7 @@ sub hasAcceptableStat
 }
 
 
-
+# TODO factor out hasAcceptable patttern into "bringStatToDateIfNeeded()"
 
 sub getMode
 {
@@ -2219,7 +2243,7 @@ sub getMode
 	}
 	else
 	{
-		$self->getStatForceHitDisk();
+		$self->getStatSourceVerify( time() );
 		return $self->mode();
 	}	
 }
@@ -2234,7 +2258,7 @@ sub getSize
 	}
 	else
 	{
-		$self->getStatForceHitDisk();
+		$self->getStatSourceVerify( time() );
 		return $self->size();
 	}	
 }
@@ -2249,7 +2273,7 @@ sub getMTime
 	}
 	else
 	{
-		$self->getStatForceHitDisk();
+		$self->getStatSourceVerify( time() );
 		return $self->mtime();
 	}	
 }
@@ -2261,21 +2285,25 @@ sub getMTime
 sub learnDirscan
 {
 	my $self = shift;
+	my $time = shift; 
 
-	$self->lastDirScan( time() );
+	$self->lastDirScan( $time );
 
 	# TODO: Do we want a dirscan to always force an update to the ghost?
 	# With this next line commented out, a new directory scan will not by itself
 	# force an update
 	# $self->dirty(1);
 
-	$self->learnPresent();
+	$self->learnPresent( $time );
 }
 
 # Should undelete the file
 
 sub learnPresent
 {
+	my $self = shift;
+	my $time = shift; 
+
 	# TODO: implement field
 }
 
@@ -2285,28 +2313,12 @@ sub learnPresent
 sub learnDeleted
 {
 	my $self = shift;
+	my $time = shift; 
 
-	$self->lastDirScan( time() );
+	$self->lastDirScan( $time );
 
 	# TODO: Do we want a dirscan to always force an update to the ghost?
 	$self->dirty(1);
-}
-
-sub getFullHashForceHitDisk
-{
-	my $self = shift;
-	my $lfn = $self->lfn();
-
-	die "Full hash not implemented for directories" if( $self->canHaveChildren() );
-
-	$self->lastFullHash( time() );
-
- 	my $fullhash = main::getFullHashForceHitDisk( $lfn );
-
-	$self->fullHash( $fullhash );
-	$self->dirty(1);
-
-	return $fullhash;
 }
 
 use Fcntl ':mode';
@@ -2333,31 +2345,66 @@ sub getType
 	return $self->extractTypeFromMode( $mode );
 }
 
-sub getStatForceHitDisk
+sub learnFullHash
 {
 	my $self = shift;
+	my $time = shift;
+	my $hash = shift;
+
+	# TODO - merger case here
+
+	$self->lastFullHash( $time );
+	$self->fullHash( $hash );
+	$self->dirty(1);
+}
+
+sub getFullHashSourceVerify
+{
+	my $self = shift;
+	my $time = shift;
+
 	my $lfn = $self->lfn();
 
-	print "STAT: $lfn\n";
+	die "Full hash not implemented for directories" if( $self->canHaveChildren() );
 
-	$main::run_files_stat++;
+	my $fullhash = $self->getFSE()->getFullHashSourceVerify( $lfn );
+ 	$self->learnFullHash( $fullhash, $time );
 
-	my @statfields = stat($lfn);
+	return $fullhash;
+}
 
-	die "Ghost [$lfn] failed stat - probably doesn't exist" if( @statfields == 0 );
+sub learnStat
+{
+	my $self = shift;
+	my $time = shift;
 
-	my ($dev,$ino,$mode,$nlink,$uid,$gid,$rdev,$size, $atime,$mtime,$ctime,$blksize,$blocks) = @statfields;
-		 
+	my $size = shift;
+	my $mtime = shift;
+	my $mode = shift; 
 
-
+	# TODO - merger case here!!
 
 	$self->size($size);
 	$self->mtime($mtime);
 	$self->mode($mode);
 
-	$self->lastStat( time() );
+	$self->lastStat( $time );
 
 	$self->dirty(1);
+}
+
+sub getStatSourceVerify
+{
+	my $self = shift;
+	my $time = shift; 
+
+	my $lfn = $self->lfn();
+
+	my $fields = $self->getFSE()->getStatSourceVerify( $lfn );
+
+	my ($dev,$ino,$mode,$nlink,$uid,$gid,$rdev,$size,$atime,$mtime,$ctime,$blksize,$blocks) = @$fields; 
+	 
+	$self->learnStat( $time, $size, $mtime, $mode );
 
 	return undef;
 }

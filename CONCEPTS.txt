@@ -368,6 +368,470 @@ refs/tags/xyz
 GFS objects
 
 
+# design decision - where should domains be stored? How do they nest?
+
+fs:/a -> /a
+
+do we store fs:/a in the lfn?
+or do we split into a separate field like domain?
+my temptation is to split them
+
+that decision would result in these definitions:
+
+LFN - local file name - whatever is colloquial inside that file system to
+describe something LFNs can never presume to be universally unique between
+invocations of GFS because they may be relative paths or tags/references may
+change
+
+for instance fs:a depends on your CWD
+for a different PWD, fs:a could refer to a different file
+
+to determine if two LFNs are the same inside one running instance of GFS, 
+the only way to do it is to canonicalize both to remove . and ../ etc. 
+
+across instances, the only way is to convert to an AFN (absolute file name)
+The AFN is a unique permanent name for the location
+
+FQAFN - fully qualified AFN: domain:afn
+FQLFN - fully qualified LFN: domain:lfn
+
+There probably needs to be some concept of nesting
+
+snapshots will generally represent LFNs, typically from the point of view of
+the PWD but their power is that they should NOT be foreced to contain AFNs -
+the snapshot could be  reconstructed anywhere and we'll leave it to the user
+to either feed a snapshot the AFNs or the LFNS.
+
+in the nested case, assume the following data is stored
+
+snap:testdir/snapshot.gfssnap/
+snap:testdir/snapshot.gfssnap/a
+snap:testdir/snapshot.gfssnap/b
+
+in this case, the LFN of the snapshot file itself is testdir/snapshot.gfssnap
+
+so what should be cached?
+
+technically the B file's only LFN inside the invocation is: snap:testdir/snapshot.gfssnap/b
+what is the AFN?
+I suppose it must be 
+/home/jgilbert/testdir/snapshot.gfssnap/b
+
+but what if snapshot.gifssnap moves?
+
+The funny thing in the case of a snapshot is that snapshot.gfssnap is 
+probably not going to change
+
+so you'd be good actually saying the AFN is: snap:423fe15a4757767bb4d2a04702f8572d3421179d/a/b
+
+If the snapshot changes, you'd automatically get "revocation" of those AFNs
+
+What about the remote case?
+
+normally i'd talk about files somewhere else like this:
+
+	jgilbert@auspice.net:backups/file-a
+
+	(which is really:)
+
+	jgilbert@auspice.net:/home/jgilbert/backups/file-a
+
+	or
+
+	jgilbert@auspice.net:/tmp/file-b
+
+from the perspective of the local cache on the sending side, the AFN is what?
+
+Ideally, you'd want to know 
+
+	jgilbert@auspice.net:. 
+
+		is the same as 
+
+	jgilbert@auspice.net:/home/jgilbert
+
+but how would i learn anything about that? feels like there is no clean way,
+and the system can deal with discrepencies even if it doesn't know this
+information. would be nice if there was a way to tell GFS that in the future
+
+ideally when i have a volume tagging process i can say
+
+	gfs volume.add.remote @GRYPHON jgilbert@auspice.net:myvolume
+
+	gfs init GRYPHON
+
+	gfs rsync my-photos/test @GRYPHON
+
+So if we use the GIT strategy of tagging, there is some symbolic link between GRYPHON 
+and a data structure with the connection information
+
+@GRYPHON becomes its own virtual path. Assuming that there are no overlaps
+@with other paths, or other volumes, the FQAFN would be remote:GRYPHON/my-
+@photos/test
+
+technically, the "remote" in this case is superflous because it can be
+instantly known that this is a remote path by decoding @GRYPHON. Also we'd
+want a way in the future to relocate @GRYPHON to a local path.
+
+so these alias constructs know
+	The handler (local, remote, volume, snapshot, etc)
+	The remote location if there is one
+
+technically, that means that every alias is a pointer to some object sitting in
+an object store (Either one that is "real and dedicate", or one that is "found" )
+
+this implies i can do the following
+
+	gfs alias snap:foo.snap @FOO
+
+	# creates a link saying that FOO -> 423fe15a4757767bb4d2a04702f8572d3421179d
+	# and also remembers that 423fe15...21179d is a snapshot
+
+	gfs ls @FOO/bar
+
+	# which as long as I can find 423fe15...21179d, i'll just reach into that snapshot
+
+But my stored FQAFNs.... Should they be:
+
+	snap:423fe15...21179d/a/b/c
+
+Or should they be
+
+	alias:@FOO/bar ?
+
+What if FOO changes in the future? The data that is closest to the "truth" is
+the first one. That is also the information that is most reusable. But the second
+strategy is probably better because @FOO presumably means something to the user
+and the user has some intent to refer to @FOO/bar in the future
+
+this raises another question even more fundamental. what if I do this?
+
+	gfs alias /home/jgilbert/backups @LOCAL_BAKS
+
+and say the content is like this
+
+	/home/jgilbert/backups/file1
+	/home/jgilbert/backups/file2
+	/home/jgilbert/backups/file3
+
+now I do a scan
+
+	gfs snapshot @LOCAL_BAKS
+
+Technically, I now have three universal names for these three files
+
+	fs:/home/jgilbert/backups/file1 -> checksum 123
+	snap:423fe15...21179d/file1     -> checksum 123
+	@LOCAL_BAKS/file1               -> checksum 123
+
+I think for the moment, all of these things are OK
+
+A snapshot basically acts like a local alias. and the snapshot is the most permanent thing
+
+if i were to list who has checksum 123, 
+
+I'd want to see 
+
+	snap:423fe15...21179d/file1
+	@LOCAL_BAKS/file1
+
+The first one I'd rather NOT see because it's expansion will have an identical expansion
+
+How does this work with objects? Lets assume that when an blob is stored, its checksum is identical to a file that was also stored with that hash.
+
+Implications
+
+	gfs checksum file1
+	-> 623fe15...24479d
+	# now we know this hash
+
+Next I can copy by hash
+
+	gfs copy blob:423fe15...21179d foo.txt
+
+I go through and find obj: anywhere I can, and copy it as a blob. 
+
+Another form of this:
+
+	gfs copy blob:423fe15...21179d foo/
+
+	# copies into foo/423fe15...21179d.blob
+
+But what is this idea of an object store? The object store theoretically has a name
+and a location on disk. And the contract is that anytime you copy a file there, its name is lost and it gets absorbed.
+
+	gfs copy foo.txt objstore:path/to/store
+	# takes foo.txt and places it in objstore:path/to/store/obj/42/423fe15...21179d
+
+	# the AFNs involved
+	# objstore:/home/jgilbert/path/to/store/obj/42/423fe15...21179d --> 423fe15...21179d
+
+Wait, so what is the point of storing objstore as the "domain" here? what
+information does it add to the system?
+
+Interesting pattern - in which cases does the AFN actually "need" a domain?
+
+	Doesn't matter for aliases, regular files (fs:)
+	but it does matter for remote
+	and it matters for snapshots (i think)
+	and its confusing for object stores
+
+for instance, what is the difference between 
+
+	objstore:/home/jgilbert/path/to/store/obj/42/423fe15...21179d
+		  fs:/home/jgilbert/path/to/store/obj/42/423fe15...21179d
+
+What data is gained by calling something an objectstore in the AFN?
+
+two obvservations now that i've written this out:
+
+1) AFNs really have only three core types:
+
+	fs paths: /home/jgilbert/la-la-la
+	containers: tarballs, snapshots, things that contain files and have an addressing scheme
+	aliases: which can theoretically cover the earlier two cases
+
+2) The meta-data requirements are different
+
+	fs paths: don't need to know anything
+	containers: need to know what expansion formula to use
+	aliases: may need to point to either fs, or containers, or remote things
+
+An alias is basically a container. But i need a level of indirection. The data in an alias
+could change (hostname updates, path updates), and the namespace has to be valid.
+
+so maybe the best term for a domain is a namespace
+
+a. one name space is limited by files on your computer - world of absolute pathnames
+b. another name space is basically ghosts that live under a single file-like-thing
+	theoretically that single file like thing could have different "views"
+c. another name space is aliases, which are ghosts that are referenced through a LUT
+
+the prefixes used on the command line could be better thought of as access strategies?
+
+consider a case of (b.) above.
+
+AFN: snap:423fe15...21179d/file1 
+
+but i might also have derrivative things
+
+AFN: gunzip:423fe15...21179d     -> whatever the hash is of the thing unziped
+AFN: gzip:423fe15...21179d    -> has of the thing zipped
+
+what if the gzip algorithim changes?
+
+well, each row is a ghost. so technically, each ghost has a lastFullHash date, 
+and if that gets too old, you'd have to repeat the operation.
+
+An alias can be said to always start with an AT
+
+@FOO/bar
+
+so lets consider a simple case of LS
+
+	gfs ls @FOO/bar
+
+	first, we make @FOO/bar a ghost G1
+	then user calls G1->getHash();
+	G1 is going to say, "wait, don't ask me, dereference me first!"
+	so G2 = G1->dereference();
+	two cases now
+		case 1: fs alias
+			G2 is going to be /home/foo/bar
+			so i give the information about G2 and ascribe it to G1
+		case 2: snapshot alias
+			G2 is going to be snap:423fe15...21179d/file1
+	Either way, G2 is something that i can ask a meaningful question about
+	there is actually a question if G1 should even get "stored" anywhere
+
+	in the case that i have no idea what snap:423fe15...21179d/file1 resolves as a hash
+
+	when i call obtain "snap:423fe15...21179d/file1"
+
+	the TK handler makes a virtual ghost with that name
+	G2->getHash()
+
+	will get passed to the "snap" FSE 
+
+	SNAP FSE says fine, get me an object named 423fe15...21179d
+	presumably this thing appears
+	and i slurp it in, and then i'll have my LFN cache, and i look up file1
+
+great lets take another case
+
+	gfs ls snap:foo.snap/file1
+	I obtain a ghost G1 for "snap:foo.snap/file1".
+	G1->getHash();
+		this will be a cache miss (obviously!)
+		needs to be some logic to deference rather than giving up early
+		so next I call G1->getFSE()
+		and the FSE call will make me a new explorer connected to foo.snap
+		if one doesn't exist already
+		this implies some sort of FSE cache or factory
+		Now I call FSE->getFullHash()
+			well, if i have an AFN cache, a forced conversion to AFN will give me an
+				opportunity to remember this answer since it AFN is snap:2343...43432/file1
+			but if not..
+			this routine will force enumeration of foo.snap, populating a LFN cache
+			all of the ghosts will be stored in the FSE maybe for use later
+			these ghosts should be marked as "immutable" somehow
+				i'll pull out the ghost, and extract the hash from it, and return to caller
+
+great, lets take another case
+
+	gfs checksum tar:foo.tar/file1
+
+	I obtain a ghost for G1 for "tar:foo.tar/file1"
+	I ask, is tar:foo.tar/file1 a directory?
+	the ghost code won't know yet,
+	so it will ask for a stat on tar:foo.tar/file1
+	get me a FSE for tar:foo.tar/file1
+	this will navigate to a cahce for tar:foo.tar FSE controller
+		i'll now generate an AFN and check it
+		but assuming that fails
+		I untar the file somewhere
+		i'll be generating LFNs that look like this
+			tar:foo.tar/a 
+			tar:foo.tar/file1
+		and i'll get the checksum of that file
+			i'll make ghosts for the things i find there 
+				and the call to checksum it will pass through to that ghost
+					ghost will call me asking for the checksu
+					i'll construct a new path with the temporary directory
+						and hash that file
+		if anyone asks for the AFN
+		ghost will call the FSE to get the AFN
+
+THis implies that canonocalization and rel2abs, cwd stuff all should live with the 
+FSE, not the ghost code!!!
+
+Lets revisit the alais case in more detail
+
+	gfs checksum @mainbackup/neepfile.txt
+
+	I obtain a ghost for "@mainbackup/neepfile.txt"
+	initially marked as virtual, b/c i don't know what it is.
+	first, i ask "are you an alias"?
+		ghost getFSE returns the alias handling FSE
+			fse->getFileType("@mainbackup/neepfile.txt")
+				FSE will say yes, you are an alias
+					not clear if FSE is a singleton thingy or one per alias
+					might be cleaner if each alias consiered to be its own FSE
+	now i say, G2 = G1->dereference();
+		ghost will call getFSE->dereference("@mainbackup/neepfile.txt")
+			FSE will go to its reference database
+				learn that "mainbackup" points to object 423fe15...21179d
+					so now I pull this object from store
+							TK->getGhostForHash( )
+						the object is going to say mainbackup = /Volumes/blah/bu
+						now FSE calls TK->obtainGhostFor "/Volumes/blah/bu/neepfile.txt"
+						return
+	great, now I have G2 = "/Volumes/blah/bu/neepfile.txt"
+	That clearly is just a regular FS path
+	so handled the usual way, (Generate pcip files, etc.)
+	not clear how the G2 information gets "absorbed into G1" and committed to disk
+
+another way to think about this is that maybe there is no explicit "dereference"
+instead, a ghost that knows it is an alias just passes all questions about itself
+to the other thing?
+but that would require a ton of proliferated code
+
+maybe the TK just gets aliases and dereferences them after the fact to keep things clean
+
+or there is a function on a ghost called g->absorbAttributesFromReferenceGhost()
+and this moves over the hash, size, stat and other information
+
+big question - is the file type of an alias always an alias?
+like a symlink?
+where you don't know if the symlink is a directory or a file?
+maybe its best if we do that
+unix seems to cope with that type of situation just fine
+
+
+we need to figure out semantics for the reference database
+we need to store two things permanently:
+
+obj and ref
+
+just like git
+
+we can do this in our working directory
+but it would be nice if this was all managed
+
+this also should be some sort of FSE
+
+objectstore
+
+and there is a $coreOBS that is my working directory of shit
+and i have an FSE complaint thing that manages it
+
+so if I construct a hash like blob:423fe15,
+G1 = tk->getGhostWithHash( "423fe15" )
+	this routine is going to get you the most local version it can
+	this may involve scanning various object stores it knows about
+		its going to eventually end up saying
+			$coreOBS->getGhostWithHash( "423fe15")
+			the core OBS is special
+			when you ask a object store FSE for a hashed thing
+			it doesn't have to scan its known ghosts
+			instead, it can actually just pick up the file
+			it turns that into a ghost
+			and someone should call "isAcceptaleCopy" to do a guard test on it
+
+if i construct an lfn like blob:423fe15
+G1  = TK->obtainGhostFromLFN( "blob:423fe15" );
+	I'll get the ghost right away (its virtual)
+	but the second anyone asks me to do something with it,
+	i'll get delegated to to a blob FSE
+	and the blob FSE knows to go back to truthkeeper
+	maybe blobs are ocnsidered aliases (e.g. caller must dereference them)
+
+thats sort of a nice way to handle it
+
+in fact, yes, lets do it that way
+
+maybe truthkeeper has a way when asked to do a getGhistWithHash
+of passing that work down to FSEs?
+
+there is also a ghostFromLFN strategy to think about
+TK first checks its cache
+if it can't find it there, it asks the relevant FSM
+which implies that a global function to find FSM for LFN
+this lives at the factory level
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
