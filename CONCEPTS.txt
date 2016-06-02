@@ -224,7 +224,7 @@ for each file in ghoststore
 			A2. There is a hash available in PILLAGE that is not claimed
 				-- Queue move PILLAGE -> fT, claim it
 			A2. There is a hash availble in ORPHAN that is not claimed
-				-- Queue clearance move ORPHAN -> fT (assign new location) - DONE
+				-- Queue clearance move ORPHAN -> fT (assign new location) - DONE  (What about case of a swap..?)
 			A3. There is a hash available in TARGET that is claimed
 				-- Queue local copy, done
 			A4. There is a hash available in AUX
@@ -249,6 +249,82 @@ action_remoteCopy( $s, $d )
 
 action_localCopy
 
+
+FileOpPlan
+	knows how to record activities
+	knows how to check for conflicts
+	knows how to start work and verify its proceeding as planned
+	fires actual actions over to the FSE in sequence
+	copy
+	move
+	copyIntoObjectFormat
+	
+We need to insist on a contract that STATs are repeated during full hash
+this is going to be done anyway by the OS
+also a guard if the file changes and the original stat and hash fall out of sync
+
+
+
+we need to not be in a situation where the fullhash has changed but
+the stat stays the same
+scenario - two ghosts pointing to same file
+ghost A has Ha and Sa (hash and stat)
+ghost B has Hb and Sa
+
+if Hb is later that Ha, we'd be confused - how could both stats be identical but the hash has changed?
+contract should be
+getStat
+getHash
+getStat
+
+if stat is the same both times, than take the timestamp and report it for both
+
+also implies the "learn" semantic should always be accompanied by a date
+and not generated inside the routines'
+
+
+(merge case)
+
+
+Revocation rules
+A new stat does not mean that a hash is out of date. The stat date should be used for resolving which of two stats is most accurate. 
+
+stat fields should be taken all or nothing. 
+
+The only cause for revoking a hash is when the size has changed or last modification date has changed. 
+
+The revocation should not be immediate. It can be lazy. Maybe an optional warning. But the next time anyone asks for a hash on that file, we'd be forced to get one. 
+
+Ghosts should never revoke other ghosts. Let that semantic rest with truth keeper. TK will just ask for incorporation in direction it wants. 
+
+If you ask for a ghost that has no authoritative record is should be marked as virtual. 
+
+One sanity check is that the virtual ghost should not be written to disk under normal cases. 
+
+
+
+virtual ghosts
+==============
+
+gfs ls a b c 
+
+will try to obtain equivilent of the following
+
+gfs ls fs:a fs:b fs:c
+
+but a b and c may not exist!
+
+until a successful stat, they should be marked as a status = v
+virtual should not get stored anywhere
+
+whereas if you do a gfs ls . in a directory that has a b and c
+
+in this case, a b c come from a scan, which by definition is not virtual
+see?
+
+
+
+
 so we create some virtual ghosts along the way
 every time the operation is done, we should commit them (take off their virtual flag?)
 
@@ -268,11 +344,29 @@ we could get things wrong but better for an offline situation
 gsf accept pushed-content-1234 is used to rearrange the tree
 
 maybe we have concept of a library
+technically snapshots, orphans, pushes, etc could all be objects
 
 GFS-library/objects
-GFS-library/files
+GFS-library/primay
 GFS-library/orphans
 GFS-library/pushes
+GFS-library/snapshots
+GFS-library/snapshots/Latest->xxx
+
+need a flag on a blob if is is a moved file, or just some junk that GFS maintained
+otherwise, cleanup on aisle three situation is shitty
+
+maybe object syntax is as simple as foo/bar/this@234abc32a993, 
+this syntax always means a file with this hash under that tree
+
+how do we create definitive names for things and spread them around?
+seems like git just stores things in namespace/xxx format
+
+refs/tags/xyz
+
+
+GFS objects
+
 
 
 
