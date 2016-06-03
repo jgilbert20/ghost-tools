@@ -1,0 +1,98 @@
+# Testing Architecture
+
+global symbol CP( "sdfsdf")
+codepath switch, saying that a case was reached or not reached
+and end of test should reveal out of the universe of codepaths what was hit. 
+
+each run should increment a runcount
+generate a unique name for that invocation
+and compare what it got this time to last time
+
+
+for this to work, all prints must become debugs
+and the debug flags must be promoted to top level things
+probably long time we did this anyway
+a --test-harness mode 
+	makes debug statements go to STDERR
+	should dump out run variables at the end
+
+
+
+
+# 000 - module
+# 000 - invoke
+so there is a file gfstest.out/run-000-000-YYYMMMDDD-HHHMMMSS.stdout
+so there is a file gfstest.out/run-000-000-YYYMMMDDD-HHHMMMSS.stderr
+
+
+
+
+after_run_do( sub { ck_reported_checksum_unchanged( 'file1' ) } );
+mkfile qw( /tmp/gfstest/file1 15 );
+mkfile qw( /tmp/gfstest/file2 20 );
+cd '/tmp/gfstest';
+run qw(gfs checksum file1)
+baseline_reported_checksum( 'file1' );
+run qw(gfs checksum /tmp/gfstest/file1);
+ck_reported_checksum_unchanged( 'file1' );
+cd '/';
+run qw(gfs checksum ./tmp/gfstest/file1);
+ck_reported_checksum_unchanged( 'file1' );
+cd( '/tmp' );
+run qw(gfs checksum /tmp/../tmp/gfstest/file1);
+ck_reported_checksum_unchanged( 'file1' );
+cd( '/tmp/gfstest' );
+run qw(gfs checksum file1/);
+ck_reported_checksum_unchanged( 'file1' );
+run qw(gfs checksum ./file1);
+ck_reported_checksum_unchanged( 'file1' );
+run qw(gfs checksum fs:root:file1);
+ck_reported_checksum_unchanged( 'file1' );
+run qw(gfs checksum fs:root:./file1);
+ck_reported_checksum_unchanged( 'file1' );
+run qw(gfs checksum fs:root:../tmp/file1);
+ck_reported_checksum_unchanged( 'file1' );
+ck_runstat( 'run_files_stat', 0 );
+ck_runstat( 'run_files_fullread', 0 );
+full_reset(); # clear all working variables, delete WD, delete caches, etc
+
+# Verify that GFS recognizes moved files within guardtime limits
+
+mkfile qw( /tmp/gfstest/file1 15 );
+mkfile qw( /tmp/gfstest/file2 20 );
+cd '/tmp/gfstest';
+gfs checksum file1
+gfs checksum file2
+mv file1 file2
+gfs checksum file2
+# now check that file2 checksum is not changed
+add guard time
+# now check that file2 checksum has changed
+gfs checksum file1
+verify it died file-not-found
+gfs snapshot . 
+verify file 1 is not in snapshot
+
+# change to above, except that file1 is explicity revoked
+# by an earlier call to checksum that fails
+
+mkfile qw( /tmp/gfstest/file1 15 );
+mkfile qw( /tmp/gfstest/file2 20 );
+cd '/tmp/gfstest';
+gfs checksum file1
+gfs checksum file2
+mv file1 file2
+gfs checksum file1
+# check error
+gfs checksum file2
+# now check that file2 checksum is not changed
+add guard time
+# now check that file2 checksum has changed
+gfs checksum file1
+verify it died file-not-found
+gfs snapshot . 
+verify file 1 is not in snapshot
+
+
+
+

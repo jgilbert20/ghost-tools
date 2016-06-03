@@ -1,0 +1,74 @@
+#!/usr/bin/perl
+
+use strict;
+use warnings;
+#use diagnostics -verbose;
+
+
+use File::Basename;
+use File::Spec;
+use File::Path;
+use File::Copy; 
+use Cwd;
+
+my $TESTSTATE_PWD = getcwd();
+
+
+sub mkdirs($)
+{
+    my $dir = shift;
+#    my $dirx = dirname $dir;
+
+    print "MKDIRS:[$dir]\n";
+    eval{ mkpath($dir,1) };
+    $@ and die "Couldn't create dir path: $! $@";
+    die "Did not find new path" if not -d $dir;
+
+   return 1;
+}
+
+sub mkfile($$)
+{
+	my $path = shift;
+	my $seed = shift;
+
+	mkdirs( dirname($path) );
+
+	open FILE, ">$path" or die "Cannot open $path: $!";
+	print FILE "$seed";
+	close FILE;
+}
+
+sub cd($)
+{
+	my $newpath = shift;
+	$TESTSTATE_PWD = $newpath;
+
+	die unless -e $TESTSTATE_PWD;
+	die unless -d $TESTSTATE_PWD;
+}
+
+sub run($)
+{	
+	my @c = @_;
+
+	my $i = 0;
+	my $runPrefix = "gfstest.run.$i";
+my $cmd = "( cd $TESTSTATE_PWD && @c ) > $runPrefix.stdout 2> $runPrefix.stderr";
+print "RUN:[$cmd]\n";
+
+	system( $cmd );
+
+}
+
+sub test_simplePathnames
+{
+	mkfile '/tmp/gfstest/file1', 15;
+	mkfile '/tmp/gfstest/file2', 20;
+	cd '/tmp/gfstest';
+	run "gfs checksum file1"
+#	baseline_reported_checksum( 'file1' );
+}
+
+
+test_simplePathnames();
