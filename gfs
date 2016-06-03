@@ -2,7 +2,8 @@
 
 use strict;
 use warnings;
-use diagnostics -verbose;
+use diagnostics;
+#use diagnostics -verbose;
 
 use Digest::SHA;
 use File::Basename;
@@ -23,6 +24,10 @@ use BerkeleyDB::Btree;
 # Gives us tied access to databases
 
 use MLDBM qw( BerkeleyDB::Hash Storable );
+
+# Key function prototypes
+
+sub debug($);
 
 # Major globals
 
@@ -68,7 +73,7 @@ my $OPT_GUARDTIME = undef;
 if( defined $OPT_GUARDTIME )
 {
 	$main::GUARD_TIME_SECONDS = $OPT_GUARDTIME;
-	print "Guard time set to: $main::GUARD_TIME_SECONDS\n";
+	debug "Guard time set to: $main::GUARD_TIME_SECONDS\n";
 }
 
 # Utility function to present relative time in a human readable way
@@ -102,8 +107,6 @@ sub expressRelativeTime
 }
 
 
-# Key function prototypes
-sub debug($);
 
 # Helper function that creates a nested path with lots of error checking
 
@@ -112,7 +115,7 @@ sub mkdirs
     my $dir = shift;
     my $dirx = dirname $dir;
 
-    # print "MKDIRS:[$dirx]\n";
+    # debug "MKDIRS:[$dirx]\n";
     eval{ mkpath($dirx,1) };
     $@ and die "Couldn't create dir path: $@";
     die "Did not find new path" if not -d $dirx;
@@ -180,7 +183,7 @@ sub debug ($)
 	return if not $GENERAL_DEBUG;
 	my $a = shift @_;
 	chomp $a;
-	print "DEBUG_LINE: " . $a . "\n";
+	print STDERR "D:" . $a . "\n";
 }
 
 
@@ -520,7 +523,7 @@ HERE
 sub doverb_writeSnapshot()
 {
 	my $tk = TruthKeeper::get();
-	my $targetGS = $tk->makeGhostsFromCommandLine( @ARGV );
+	my ($targetGS, $targetStash) = $tk->makeGhostsFromCommandLine( @ARGV );
 
 	my $i = $targetGS->getDescendingIterator();
 
@@ -528,7 +531,7 @@ sub doverb_writeSnapshot()
 
 	while( my $g = $i->next() )
 	{
-		print "Write Snapshot - Got Ghost: $g\n";
+		debug "Write Snapshot - Got Ghost: $g\n";
 
 		if( not $g->canHaveChildren() )
 		{
@@ -553,24 +556,23 @@ sub doverb_ls()
 {
 	my $tk = TruthKeeper::get();
 
-	my $targetGS = $tk->makeGhostsFromCommandLine( @ARGV );
+	my ($targetGS, $targetStash) = $tk->makeGhostsFromCommandLine( @ARGV );
 
-	foreach my $lfn (@ARGV)
+	foreach my $tuple (@$targetStash)
 	{
-		next unless -f $lfn;
-		$lfn = canonize($lfn);
-		my $g = $tk->obtainGhostForLFN($lfn);
+		my( $userFN, $fqlfn, $g ) = @$tuple;
+
 
 		my $fullHash = $g->fullHash() || '<not calculated>';
 		my $lastFullHash = $g->lastFullHash();
 
-		my $lfh = defined $lastFullHash ? strftime( "%c", localtime( $lastFullHash) ) : '<not calculated>';
+		my $lfh_string = defined $lastFullHash ? strftime( "%c", localtime( $lastFullHash) ) : '<not calculated>';
 
 		my $d = expressRelativeTime( $main::SCRIPT_START - $lastFullHash );
 
-		$lfh .= "($d)";
+		$lfh_string .= "($d)";
 
-		print "$fullHash\t$lfh\t$lfn\n";
+		print "$fullHash\t$lfh_string\t$userFN\n";
 	}
 }
 
@@ -582,15 +584,20 @@ sub doverb_ls()
 sub doverb_checksum()
 {
 	my $tk = TruthKeeper::get();
-	my $targetGS = $tk->makeGhostsFromCommandLine( @ARGV );
+	my ($targetGS, $targetStash) = $tk->makeGhostsFromCommandLine( @ARGV );
 	my $i = $targetGS->getDescendingIterator();
 
 	while( my $g = $i->next() )
 	{
-		print "Checksum - Got Ghost: $g\n";
+		my $lfn = shift; 
 
-		$g->getFullHash();
+
+
+		my $fullHash = $g->getFullHash();
 		$g->printDebug();
+
+		print +(join "\t", $fullHash, $g->lfn()), "\n";
+
 
 	}
 
@@ -623,8 +630,8 @@ sub doverb_lsdup()
 	my @source = @ARGV;
 
 	my $tk = TruthKeeper::get();
-	my $targetGS = $tk->makeGhostsFromCommandLine( $target );
-	my $sourceGS = $tk->makeGhostsFromCommandLine( @source );
+	my ($targetGS, $targetStash) = $tk->makeGhostsFromCommandLine( $target );
+	my ($sourceGS, $sourceStash) = $tk->makeGhostsFromCommandLine( @source );
 	my $i = $targetGS->getDescendingIterator();
 
 	my $dup_count = 0;
@@ -953,7 +960,7 @@ sub fullyQualifyLFN
 
 	$path = main::canonize( $path );
 
-	print "FULLY QUALIFY LFN:[$lfn] -> handler:[$handler] root:[$root] path:[$path]\n";
+	debug "FULLY QUALIFY LFN:[$lfn] -> handler:[$handler] root:[$root] path:[$path]\n";
 
 	return assembleLFN( $handler, $root, $path );
 }
@@ -963,6 +970,14 @@ package FilesystemExplorer::Snapshot;
 use File::Basename;
 use base qw(Class::Accessor);
 FilesystemExplorer::Snapshot->mk_accessors( qw( rootGhost rootGhostStore) );
+
+sub debug($)
+{
+	my $a = shift;
+	main::debug( "FSE/ss: " . $a );
+}
+
+
 
 sub new
 {
@@ -1027,6 +1042,14 @@ my $fseDebug = 0;
 
 # Return new FSE
 # CORE - any FSE must implement
+
+
+sub debug($)
+{
+	my $a = shift;
+	main::debug( "FSE/fs: " . $a );
+}
+
 
 sub new
 {
@@ -1158,6 +1181,12 @@ package FSEFactory;
 my $fseFactoryDebug = 0;
 my %fseForHandlerRoot;
 
+sub debug($)
+{
+	my $a = shift;
+	main::debug( "FSE-factory: " . $a );
+}
+
 sub getFSEHandlerForGhost
 {
 	my $class = shift;
@@ -1214,8 +1243,17 @@ my %ghostStoreForDescriptorLFN;
 
 my $tkdebug = 1;
 
-# Takes ghosts provided by a command line and 
-# blows out a fully qualified LFN
+sub debug($)
+{
+	my $a = shift;
+	main::debug( "TK: " . $a );
+}
+
+
+# Takes ghosts provided by a command line and  blows out a fully qualified LFN
+# and gets the ghosts returns a nice structure of data you'd need for iteration
+# on the command line: [provided ARGV, fully qualified ghost name, ghost]
+
 
 sub makeGhostsFromCommandLine
 {
@@ -1224,18 +1262,20 @@ sub makeGhostsFromCommandLine
 
 	my $gs = GhostStore->new();
 
+	my @stash = ();
+
 	foreach my $lfn (@stuff )
 	{
 		my $fqlfn = main::fullyQualifyLFN( $lfn );
 
-		print "Make Ghost Via CommandLine user provided lfn:[$lfn]->fqLFN:[$fqlfn] from command line to store\n";
+		debug "Make Ghost Via CommandLine user provided lfn:[$lfn]->fqLFN:[$fqlfn] from command line to store\n";
 		my $g = $self->obtainGhostForLFN($fqlfn);
 		$gs->addGhost( $g );
+		push @stash, [$lfn, $fqlfn, $g ];
 	}
 
-	return $gs;
+	return ($gs, \@stash);
 }
-
 
 sub ghostForLFN
 {
@@ -1263,14 +1303,11 @@ sub printInternallyTrackedLFN
 	my $ghostForLFN = $self->ghostForLFN();
 	foreach my $g (values %$ghostForLFN )
 	{
-		print "     ";
-		print $g->dirty() ? "YES" : "NO";
-		print "  ";
-		# print $g->printDebug();
-		print $g->lfn();
-		print "  ";
-		
-		print "\n";
+		debug ("     " 
+			 . ($g->dirty() ? "YES" : "NO")
+		     . "  "
+		 	 . $g->lfn()
+		     . "  " );
 
 	}
 	return;
@@ -1283,14 +1320,11 @@ sub printInternallyTrackedAFN
 	my $ghostForAFN = $self->ghostForAFN();
 	foreach my $g (values %$ghostForAFN )
 	{
-		print "     ";
-		print $g->dirty() ? "YES" : "NO";
-		print "  ";
-		# print $g->printDebug();
-		print $g->lfn();
-		print "  ";
-		print $g->absoluteLFN();
-		print "\n";
+		debug ("     " 
+			 . ($g->dirty() ? "YES" : "NO")
+		     . "  "
+		 	 . $g->absoluteLFN()
+		     . "  " );
 
 	}
 	return;
@@ -1300,24 +1334,24 @@ sub flush
 {
 	my $self = shift;
 
-#	print Dumper( $self );
+#	debug Dumper( $self );
 
-	print "TK: Beginning flush ---\n";
+	debug "TK: Beginning flush ---\n";
 
-	print "TK: Inventory of all internally tracked ---\n";
+	debug "TK: Inventory of all internally tracked ---\n";
 
 	$self->printInternallyTrackedLFN();
 
-	print "TK: Inventory of all internally tracked AFNs ---\n";
+	debug "TK: Inventory of all internally tracked AFNs ---\n";
 
 	$self->printInternallyTrackedAFN();
 
 
-	print "TK: Ghost Cache Writes ---\n";
+	debug "TK: Ghost Cache Writes ---\n";
 
 	$self->flushGhostDescriptorCache();
 
-	print "TK: Verify ---\n";
+	debug "TK: Verify ---\n";
 
 	$self->verifyNoDirtyGhostsRemain();
 }
@@ -1344,11 +1378,11 @@ sub verifyNoDirtyGhostsRemain
 	{
 		if( 0 )
 		{
-			print "   Verifying TK Ghost: ";
-			print $g->printDebug();
-			print "  ";
-			print $g->dirty() ? "YES" : "NO";
-			print "\n";
+			debug "   Verifying TK Ghost: ";
+			debug $g->printDebug();
+			debug "  ";
+			debug ($g->dirty() ? "YES" : "NO");
+			debug "\n";
 		}	
 		$error++ if $g->dirty();
 	}
@@ -1373,7 +1407,7 @@ sub flushDescriptorToDisk
 	my $self = shift;
 	my $lfn = shift; # LFN of the ghoststore
 
-	print "TK: Flushing ghoststore [$lfn] to disk\n" if $tkdebug;
+	debug "TK: Flushing ghoststore [$lfn] to disk\n" if $tkdebug;
 
 	if( not exists $ghostStoreForDescriptorLFN{$lfn} )
 	{
@@ -1390,7 +1424,7 @@ sub flushDescriptorToDisk
 	}
 	else
 	{
-		print "TK:   - Not needed, no dirty records\n" if $tkdebug;
+		debug "TK:   - Not needed, no dirty records\n" if $tkdebug;
 	}
 
 	map { $_->dirty(0) } $gs->getAllGhosts();
@@ -1405,7 +1439,7 @@ sub getGhostDescriptorFileForLFN($)
 	my $self = shift;
 	my $filename = shift;
 
-	# print "GDF: $filename\n";
+	# debug "GDF: $filename\n";
 
 	die "Assert: $filename should be a path" if not main::assert_regularpath( $filename );
 
@@ -1413,7 +1447,7 @@ sub getGhostDescriptorFileForLFN($)
 
  	my $dfn = File::Spec->catfile($dir, $DESCRIPTOR_FILENAME);
 
- 	# print "GDF [$dfn] for $filename\n";
+ 	# debug "GDF [$dfn] for $filename\n";
 
 	return $dfn;
 }
@@ -1439,9 +1473,9 @@ sub getGhostStoreForDescriptorFileCoveringFN
 
 		if( -e $gsfn )
 		{
-			print "Reading descriptor [$gsfn]\n" if $tkdebug;
+			debug "Reading descriptor [$gsfn]\n" if $tkdebug;
 			$gs->slurpDescriptor( $gsfn );
-			print "Incorporating stuff found in [$gsfn]\n" if $tkdebug;
+			debug "Incorporating stuff found in [$gsfn]\n" if $tkdebug;
 			$self->incorporateGhostStore( $gs );
 
 			# TODO
@@ -1463,7 +1497,7 @@ sub incorporateGhostStore
 	my $self = shift;
 	my $gs = shift;
 
-  # print Dumper( $self );
+  # debug Dumper( $self );
 
 	my @g = $gs->getAllGhosts();
 	foreach my $g (@g)
@@ -1471,7 +1505,7 @@ sub incorporateGhostStore
 		$self->incorporateGhostData( $g );
 	}
 
-  # print Dumper( $self );
+  # debug Dumper( $self );
 }
 
 # Takes everything we've learned from a ghost and incorporate it
@@ -1489,7 +1523,7 @@ sub incorporateGhostData
 	my $lfn = $g->lfn();
 	my $ghostForLFN = $self->ghostForLFN();
 
-	print "Incorporating ghost lfn:[$lfn] data $g (self=$self, glfn=$ghostForLFN)\n" if $icDebug;
+	debug "Incorporating ghost lfn:[$lfn] data $g (self=$self, glfn=$ghostForLFN)\n" if $icDebug;
 
 	if( exists $ghostForLFN->{$g->lfn()} )
 	{
@@ -1505,11 +1539,11 @@ sub incorporateGhostData
 			$base->lastFullHash( $g->lastFullHash() );
 			$base->fullHash( $g->fullHash() );
 			$base->dirty(1);
-			print "  Incorporate - Merger case - existing TK ghost updated\n" if $icDebug;
+			debug "  Incorporate - Merger case - existing TK ghost updated\n" if $icDebug;
 		}
 		else
 		{
-			print "  Incorporate -  Merger case - existing TK ghost was fine\n"  if $icDebug;
+			debug "  Incorporate -  Merger case - existing TK ghost was fine\n"  if $icDebug;
 		}
 
 		$g->isTKversion(0);
@@ -1518,7 +1552,7 @@ sub incorporateGhostData
 	}
 	else
 	{
-		print "  Incorporate -  Merger case - non-TK ghost we got is being declared the TK version\n" if $icDebug;
+		debug "  Incorporate -  Merger case - non-TK ghost we got is being declared the TK version\n" if $icDebug;
 
 		$self->registerTruthyGhost( $g );
 		#$ghostForLFN->{$g->lfn()} = $g;
@@ -1535,7 +1569,7 @@ sub registerTruthyGhost
 
 	my $lfn = $g->lfn();
 
-	print "Register Truthy Thing: [$lfn] -> $g\n" if $tkdebug;
+	debug "Register Truthy Thing: [$lfn] -> $g\n" if $tkdebug;
 
 	my $ghostForLFN = $self->ghostForLFN();
 	die "Collision [$lfn]" if exists $ghostForLFN->{$lfn};
@@ -1559,7 +1593,7 @@ sub obtainGhostForLFN
 	die "LFN is zero length" if ((length $lfn) < 1);
 	die "LFN is not a clean string!" if ref $lfn;
 
-	print "TK:Obtain: obtain f:[$lfn] ($handler)($root)($path)- requested\n" if $tkdebug;
+	debug "TK:Obtain: obtain f:[$lfn] ($handler)($root)($path)- requested\n" if $tkdebug;
 
 	my $ghostForLFN = $self->ghostForLFN();
 
@@ -1567,7 +1601,7 @@ sub obtainGhostForLFN
 
 	if( exists $ghostForLFN->{$lfn} )
 	{
-		print "TK:Obtain: obtain f:[$lfn] - found in cache\n" if $tkdebug;
+		debug "TK:Obtain: obtain f:[$lfn] - found in cache\n" if $tkdebug;
 		return $ghostForLFN->{$lfn};		
 	}
 
@@ -1582,7 +1616,7 @@ sub obtainGhostForLFN
 
 	my $gs = $self->getGhostStoreForDescriptorFileCoveringFN($path);
 	my $g = $gs->findGhostForLFN($lfn);
-	print "TK:Obtain: obtain f:[$lfn] pulled g:[$g] from ghost descriptor\n" if $tkdebug;
+	debug "TK:Obtain: obtain f:[$lfn] pulled g:[$g] from ghost descriptor\n" if $tkdebug;
 	
 	if( defined $g )
 	{
@@ -1593,7 +1627,7 @@ sub obtainGhostForLFN
 
 	# Wow, we've totally stuck out here - make a new thing
 
-	print( "TK:Obtain: Making new ghost for f:[$lfn]\n")  if $tkdebug;
+	debug( "TK:Obtain: Making new ghost for f:[$lfn]\n")  if $tkdebug;
 	$g = Ghost->make_private( $lfn );
 	# registers 
 	$self->incorporateGhostData( $g );
@@ -1603,7 +1637,7 @@ sub obtainGhostForLFN
 	$gs->addGhost( $g );
 	#$self->registerTruthyGhost( $g );
 
-	print "TK:Obtain: Made: $g\n" if $tkdebug;
+	debug "TK:Obtain: Made: $g\n" if $tkdebug;
 
 	return $g;
 }
@@ -1625,6 +1659,15 @@ package GhostIterator;
 use File::Basename;
 use base qw(Class::Accessor);
 GhostIterator->mk_accessors( qw(queue recurse parentGhoststore) );
+
+
+
+sub debug($)
+{
+	my $a = shift;
+	main::debug( "GI: " . $a );
+}
+
 
 my $GI_DEBUG = 0; 
 
@@ -1648,18 +1691,18 @@ sub next
 
 	if( ref $n )
 	{
-		print "GI: THUNK received --> $$n\n" if $GI_DEBUG;
+		debug "GI: THUNK received --> $$n\n" if $GI_DEBUG;
 		return $self->next();
 	}
 
 	# Check for the end-of-queue case
 	if( not defined $n )
 	{
-		print "GI iterator: Undef case - iterator over\n" if $GI_DEBUG;
+		debug "GI iterator: Undef case - iterator over\n" if $GI_DEBUG;
 		return undef;
 	}
 
-	# print "Next: Got [$n]\n";
+	# debug "Next: Got [$n]\n";
 
 	my $tk = TruthKeeper::get();
 	my $g = $tk->obtainGhostForLFN( $n );
@@ -1721,12 +1764,12 @@ sub nextRaw
 	my $tk = TruthKeeper::get();
 	my $g = $tk->obtainGhostForLFN( $c);
 
-	print "GI: Checking [$c]->[$g] for children\n" if $GI_DEBUG;
+	debug "GI: Checking [$c]->[$g] for children\n" if $GI_DEBUG;
 
 	# if the next thing is a directory, scan into the directory
 	if( $g->canHaveChildren() )
 	{
-		print "GI: Scan directory case\n" if $GI_DEBUG;
+		debug "GI: Scan directory case\n" if $GI_DEBUG;
 		$self->scanDir( $g );
 	}
 
@@ -1751,6 +1794,14 @@ use File::Basename;
 use POSIX;
 use base qw(Class::Accessor);
 GhostStore->mk_accessors( qw(lfnToGhost clean sizeToFNs) );
+
+
+sub debug($)
+{
+	my $a = shift;
+	main::debug( "GS: " . $a );
+}
+
 
 my $gsDebug = 0;
 
@@ -1795,7 +1846,7 @@ sub findGhostForLFN
 
 	if(exists $lfnToGhost->{$lfn} )
 	{
-		print "   Found inside ghoststore\n" if $gsDebug;
+		debug "   Found inside ghoststore\n" if $gsDebug;
  		return $lfnToGhost->{$lfn};
  	}
 
@@ -1812,7 +1863,7 @@ sub purifyAllGhostsToTK
 	{
 		if( $g->isTKversion() == 0 )
 		{
-			print "GhostStore: ***** PURIFY $g->lfn()\n" if $gsDebug;
+			debug "GhostStore: ***** PURIFY $g->lfn()\n" if $gsDebug;
 			my $n = $tk->obtainGhostForLFN( $g->lfn() );
 			$lfnToGhost->{$n->lfn()} = $n;
 		}
@@ -1837,7 +1888,7 @@ sub addGhost($)
 	warn "Something wrong lfn:$lfn" if $lfn eq ".";
 	warn "Something wrong lfn:$lfn" if $lfn eq "..";
 
-	print "GhostStore: Adding ghost $g (lfn=$lfn) (lfntoghosthash=$lfnToGhost gs_self=$self) ghoststore\n" if $gsDebug;
+	debug "GhostStore: Adding ghost $g (lfn=$lfn) (lfntoghosthash=$lfnToGhost gs_self=$self) ghoststore\n" if $gsDebug;
 
 	if( exists $lfnToGhost->{$g->lfn()} )
 	{
@@ -1856,7 +1907,7 @@ sub slurpDescriptor($)
 	my $self = shift;
 	my $fn = shift;
 
-	print "GhostStore: Slurping descriptor [$fn]\n" if $gsDebug;
+	debug "GhostStore: Slurping descriptor [$fn]\n" if $gsDebug;
 
 	die "Assert: $fn should be a path" if not main::assert_regularpath( $fn );
 
@@ -1897,7 +1948,7 @@ sub slurpSerializedStore
 	while( <FILE> )
 	{
 		chomp;
-		print "GhostStore: Slurping: [$_]\n" if $gsDebug;
+		debug "GhostStore: Slurping: [$_]\n" if $gsDebug;
 
 		if( /^###/ )
 		{
@@ -1907,11 +1958,11 @@ sub slurpSerializedStore
 		if( /^@@@\s*(\w+)\s*\=\s*(.*)/ )
 		{
 			my ($name, $value) = ($1,$2);
-			print "DESCRIPTOR: $name --> $value\n" if $gsDebug;
+			debug "DESCRIPTOR: $name --> $value\n" if $gsDebug;
 
 			if( $name eq 'version' )
 			{
-				print "Comparing version $SERIALIZATION_VERSION_NUMBER to [$value]\n" if $gsDebug;
+				debug "Comparing version $SERIALIZATION_VERSION_NUMBER to [$value]\n" if $gsDebug;
 
 				if( $SERIALIZATION_VERSION_NUMBER != ($value+0) )
 				{
@@ -1964,15 +2015,15 @@ sub writeAsDescriptor($)
 		if( $gsDebug )
 		{
 			my $lfn = $g->lfn();
-			print "    WAD: Write ($lfn):";
-			print $g->serialize( pathMode => "basename");
-			print "\n"
+			debug "    WAD: Write ($lfn):";
+			debug $g->serialize( pathMode => "basename");
+			debug "\n"
 		}
 	}
 
 	close( FILE );
 
-	print "    WAD: Wrote descriptor -> $fn\n" if $gsDebug;
+	debug "    WAD: Wrote descriptor -> $fn\n" if $gsDebug;
 
 	$main::run_descriptors_write++;
 }
@@ -2016,7 +2067,7 @@ sub writeSerializedToDisk($)
 
 	close( FILE );
 
-	print "Wrote snapshots -> $fn\n";
+	debug "Wrote snapshots -> $fn\n";
 }
 
 sub loadSizeCache
@@ -2028,7 +2079,7 @@ sub loadSizeCache
 
 	my $iterator = $self->getDescendingIterator();
 
-	print "GS-Generating size cache\n";
+	debug "GS-Generating size cache\n";
 
 	while( my $g = $iterator->next() )
 	{
@@ -2039,7 +2090,7 @@ sub loadSizeCache
 		if( $gsDebug )
 		{
 			my $lfn = $g->lfn();
-			print "GS - Size Cache lfn:[$lfn] -> $size\n" 
+			debug "GS - Size Cache lfn:[$lfn] -> $size\n" 
 		}
 
 		push @{$h->{$size}}, $g;
@@ -2096,7 +2147,7 @@ sub findAllDuplicates
 
 	return if @otherFN < 1;
 
-    print " -- Checking size duplicates size:[$size]\n" if $gsDebug;
+    debug " -- Checking size duplicates size:[$size]\n" if $gsDebug;
 
 	my @matches;
 
@@ -2111,9 +2162,9 @@ sub findAllDuplicates
 
 			if( $gsDebug )
 			{
-				print "     -- Checking size duplicates size:[$size]\n";
-				print "     ---> cfn:[$cFN]\n";
-				print "  vs ---> tfn:[$tFN]\n";
+				debug "     -- Checking size duplicates size:[$size]\n";
+				debug "     ---> cfn:[$cFN]\n";
+				debug "  vs ---> tfn:[$tFN]\n";
 				}	
 		}
 
@@ -2163,6 +2214,15 @@ use File::Basename;
 use base qw(Class::Accessor);
 
 use Cwd qw(abs_path); # best way to get these
+
+
+
+sub debug($)
+{
+	my $a = shift;
+	main::debug( "G: " . $a );
+}
+
 
 # GHOST_NEW_FIELD: Place 4/4 where you add new fields to ghosts
 
@@ -2216,9 +2276,9 @@ sub newFromSerialized($)
 
 	if( $serializeDebug )
 	{
-		print "Just deserialized: ";
-		print $self->printDebug();
-		print "\n";
+		debug "Just deserialized: ";
+		debug $self->printDebug();
+		debug "\n";
 	}	
 
 	return $self;
@@ -2275,7 +2335,7 @@ sub learnChildrenByLFN()
 
 	my @existingGhosts =  ref $self->children() ? @{$self->children()} : ();
 
-	print "Existing ghosts @existingGhosts\n" if $gChildDebug;
+	debug "Existing ghosts @existingGhosts\n" if $gChildDebug;
 
 	my %seenLFN;
 	my @newKids;
@@ -2287,10 +2347,10 @@ sub learnChildrenByLFN()
 
 	foreach my $lfn ( @lfns )
 	{
-		print "G: Learning child: lfn:[$lfn]\n" if $gChildDebug;
+		debug "G: Learning child: lfn:[$lfn]\n" if $gChildDebug;
 		if( exists $seenLFN{$lfn} )
 		{
-			print "G:   Child already registered\n" if $gChildDebug;
+			debug "G:   Child already registered\n" if $gChildDebug;
 		}
 
 		$seenLFN{$lfn}++;
@@ -2307,7 +2367,7 @@ sub learnChildrenByLFN()
 	{
 		if( $seenLFN{$lfn} < 1 )
 		{
-			print "G:   Child has disapeared\n" if $gChildDebug;
+			debug "G:   Child has disapeared\n" if $gChildDebug;
 			my $g = $self->tk()->obtainGhostForLFN( $lfn );
 			$g->learnDeleted($time);
 		}
@@ -2322,11 +2382,11 @@ sub canHaveChildren
 {
 	my $self = shift;
 
-	# print "Fetching type\n";
+	# debug "Fetching type\n";
 
 	my $type = $self->getType();
 
-	# print "Type is: $type\n";
+	# debug "Type is: $type\n";
 
 	# base case: no knowledge or hash
 
@@ -2359,7 +2419,7 @@ sub printDebug
 	# not technically a field but we should include this
 	my $type = $self->getType();
 
-	print "ghostDump: lfn:[$lfn] type:[$type] mode:[$mode] lFH:[$lastFullHash] full:[$fullHash] ldirscan:[$lastDirScan] lastfullstat:[$lastStat] size:[$size] mtime:[$mtime]\n";
+	debug "ghostDump: lfn:[$lfn] type:[$type] mode:[$mode] lFH:[$lastFullHash] full:[$fullHash] ldirscan:[$lastDirScan] lastfullstat:[$lastStat] size:[$size] mtime:[$mtime]\n";
 }
 
 sub isSameFilename
@@ -2376,23 +2436,23 @@ sub isSameFilename
 
 	if( 0 )
 	{
-		print "Checking if two files are the same filename:\n";
-		print "   me: [$fn1]\n";
-		print "   tg: [$fn2]\n";
+		debug "Checking if two files are the same filename:\n";
+		debug "   me: [$fn1]\n";
+		debug "   tg: [$fn2]\n";
 	  
 	  	my $cwd1 = abs_path( $fn1 );
 	  	my $cwd2 = abs_path( $fn2 );
 
-	 	print "Using Cwd Abs_path:\n"; 
-	  	print "   me: [$cwd1]\n";
-		print "   tg: [$cwd2]\n";
+	 	debug "Using Cwd Abs_path:\n"; 
+	  	debug "   me: [$cwd1]\n";
+		debug "   tg: [$cwd2]\n";
 
 	  	my $abs1 = File::Spec->rel2abs( $fn1 );
 	  	my $abs2 = File::Spec->rel2abs( $fn2 );
 
-	 	print "Using rel2abs:\n"; 
-	  	print "   me: [$abs1]\n";
-		print "   tg: [$abs2]\n";
+	 	debug "Using rel2abs:\n"; 
+	  	debug "   me: [$abs1]\n";
+		debug "   tg: [$abs2]\n";
 	}
 
 	die "Incomplete info self-size" if not defined $self->lfn();
@@ -2442,7 +2502,7 @@ sub serialize()
 
 	my $lfn = $self->lfn();
 
-	#print "Serialize $self\n";
+	#debug "Serialize $self\n";
 
 	if( exists $options{'pathMode'} and $options{'pathMode'} eq 'basename' )
 	{
@@ -2503,7 +2563,7 @@ sub make_private($)
 
 	my $self = $class->new();
 
-	# print "Ghost: Making ghost for lfn=[$lfn]\n";
+	# debug "Ghost: Making ghost for lfn=[$lfn]\n";
 
 	$self->lfn( $lfn );
 
@@ -2534,7 +2594,7 @@ sub hasAcceptableFullhash
 {
 	my $self = shift;
 
-#	print "Checking if I like my hash\n";
+#	debug "Checking if I like my hash\n";
 
 	return 0 if( not defined $self->fullHash() );
 	
@@ -2544,7 +2604,7 @@ sub hasAcceptableFullhash
 
 		if( $age > $main::GUARD_TIME_SECONDS )
 		{
-			print "Forcing hash recalculation (", main::expressRelativeTime( $age ), ")\n";
+			debug ( join '', "Forcing hash recalculation (", main::expressRelativeTime( $age ), ")\n");
 			return 0; 
 		}
 	}
@@ -2585,7 +2645,7 @@ sub hasAcceptableStat
 
 		if( $age > $main::GUARD_TIME_SECONDS )
 		{
-			print "Forcing recalculation (", main::expressRelativeTime( $age ), ")\n";
+			debug (join '', "Forcing recalculation (", main::expressRelativeTime( $age ), ")\n" );
 			return 0; 
 		}
 	}
