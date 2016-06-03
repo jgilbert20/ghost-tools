@@ -378,24 +378,38 @@ my temptation is to split them
 
 that decision would result in these definitions:
 
-LFN - local file name - whatever is colloquial inside that file system to
-describe something LFNs can never presume to be universally unique between
+LFN - local file name - whatever is colloquial to the USER to
+describe something. LFNs can never presume to be universally unique between
 invocations of GFS because they may be relative paths or tags/references may
-change
+change. But the user's maximal intent must be captured in the LFN.
 
-for instance fs:a depends on your CWD
-for a different PWD, fs:a could refer to a different file
+	for instance fs:a depends on your CWD
+	for a different PWD, fs:a could refer to a different file
 
-to determine if two LFNs are the same inside one running instance of GFS, 
-the only way to do it is to canonicalize both to remove . and ../ etc. 
+However, there are many different handlers.
+
+	/foo
+	fs:/foo
+	snap:foo.snap:file123
+	remote:jgilbert@auspice.net:file123
+
+In this case, the "LFN" is a composite of a handler, a root and a path. The
+user may provide some or all of these peices on the command line. We need to
+be be able  to intelligently construct the rest.
+
+LFN's can be fullqualified, which means fully specify the missing strings and
+to canonicalized the path.
+
+To determine if two LFNs are the same inside one running instance of GFS, the
+only way to do it is to canonicalize that path portion both to remove . and
+../ etc. Then you need you make sure to attach the ROOT and the HANDLER.
 
 across instances, the only way is to convert to an AFN (absolute file name)
 The AFN is a unique permanent name for the location
 
-FQAFN - fully qualified AFN: domain:afn
-FQLFN - fully qualified LFN: domain:lfn
+FQAFN - fully qualified AFN: handler:root:afn
+FQLFN - fully qualified LFN: handler:root:path (can be local)
 
-There probably needs to be some concept of nesting
 
 snapshots will generally represent LFNs, typically from the point of view of
 the PWD but their power is that they should NOT be foreced to contain AFNs -
@@ -404,13 +418,17 @@ to either feed a snapshot the AFNs or the LFNS.
 
 in the nested case, assume the following data is stored
 
-snap:testdir/snapshot.gfssnap/
-snap:testdir/snapshot.gfssnap/a
-snap:testdir/snapshot.gfssnap/b
+snap:testdir/snapshot.gfssnap:
+snap:testdir/snapshot.gfssnap:a
+snap:testdir/snapshot.gfssnap:b
 
 in this case, the LFN of the snapshot file itself is testdir/snapshot.gfssnap
 
-so what should be cached?
+
+
+
+
+# so what should be cached?
 
 technically the B file's only LFN inside the invocation is: snap:testdir/snapshot.gfssnap/b
 what is the AFN?
@@ -798,13 +816,6 @@ TK first checks its cache
 if it can't find it there, it asks the relevant FSM
 which implies that a global function to find FSM for LFN
 this lives at the factory level
-
-
-
-
-
-
-
 
 
 

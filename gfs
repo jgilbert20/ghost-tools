@@ -1,6 +1,8 @@
 #!/usr/bin/perl
 
 use strict;
+use warnings;
+# use diagnostics -verbose;
 
 use Digest::SHA;
 use File::Basename;
@@ -130,7 +132,7 @@ sub fileIsUsuallyIgnored
 	return 0 if( not $USUAL_IGNORE );
 
 	return 1 if $cfn =~ /\.DS_Store$/;
-	return 1 if $cfn =~ /\Thumbs.db$/;
+	return 1 if $cfn =~ /Thumbs.db$/;
 	return 1 if $cfn =~ /\.pcip_info$/;
 
 	return 0;
@@ -238,6 +240,8 @@ sub unbackslash ($) {
 sub gfs_escape($)
 {
 	my $v = shift;
+
+	return undef if not defined $v;
 
 	$v =~ s/:/\\c/gs;
 	$v =~ s/\@/\\a/gs;
@@ -462,28 +466,6 @@ sub handleVerb
 }
 
 
-# GFS relies on all paths being canonicalized so that
-# text matching occurs properly.
-# Otherwise ./foo and foo will not text match and it will appear
-# like they are different files. Any routines that brings in a "net new"
-# path to the system should convert it to a cpath.
-
-sub assert_cpath($)
-{
-	my $lfn = shift;
-	my $clfn = File::Spec->canonpath( $lfn );
-	die "$lfn ne $clfn" if $lfn ne $clfn; 
-}
-
-sub canonize($)
-{
-	my $lfn = shift;
-	my $clfn = File::Spec->canonpath( $lfn );
-
-	# print "Canonicalize: $lfn ---> $clfn\n";	
-
-	return $clfn;
-}
 
 
 sub doverb_help
@@ -787,6 +769,8 @@ sub isHardIgnore
 {
 	my $fn = shift;
 
+	die "Assert: $fn should be a path" if not main::assert_regularpath( $fn );
+
 	my $b = basename $fn;	
 
 	return 1 if $b =~ /$DESCRIPTOR_FILENAME$/;
@@ -795,35 +779,174 @@ sub isHardIgnore
 }
 
 
-package FSEFactory;
 
-sub getFSEHandlerForLFN
+# GFS relies on all paths being canonicalized so that
+# text matching occurs properly.
+# Otherwise ./foo and foo will not text match and it will appear
+# like they are different files. Any routines that brings in a "net new"
+# path to the system should convert it to a cpath.
+
+sub assert_cpath($)
 {
-	my $class = shift;
 	my $lfn = shift;
-
-	my $r = undef;
-
-	if( $lfn =~ /^snap:/ )
-	{
-		$r = 'FilesystemExplorer::Snapshot';
-	}	
-	else
-	{
-		$r = 'FilesystemExplorer::FS';
-	}
-
-	main::debug "FSEFactory: FSE handler for lfn:[$lfn] --> Class:[$r]";
-
-	return $r; 
+	my $clfn = File::Spec->canonpath( $lfn );
+	die "ASSERT CPATH FAILED: $lfn ne $clfn" if $lfn ne $clfn; 
 }
 
+sub assert_regularpath($)
+{
+	my $path = shift;
+
+
+	my $c = () = $path =~ m/\:/go;
+
+	print "Testing [$path] - got $c\n";
+
+
+	die "ASSERT regularpath [$path] - failed -- smells like a FQLFN" if( $c == 2 );
+
+	return 1; 
+}
+
+sub rewriteLFNPathToBasename
+{
+	my $lfn = shift;
+
+	my( $handler, $root, $path ) = parseFQLFN( $lfn );
+	my( $fn, $dir ) = fileparse( $path );
+	return assembleLFN( $handler, $root, $fn );
+}
+
+
+	sub rewriteLFNwithLeadingDirectory
+	{
+		my $lfn = shift;
+		my $leadingDir = shift;
+
+		my( $handler, $root, $path ) = parseFQLFN( $lfn );
+		$path = File::Spec->catfile( $leadingDir , $path );
+		$path = main::canonize( $path );
+		return assembleLFN( $handler, $root, $path);
+	}
+
+
+
+sub canonize($)
+{
+	my $lfn = shift;
+
+	assert_regularpath( $lfn );
+
+	my $clfn = File::Spec->canonpath( $lfn );
+
+	# print "Canonicalize: $lfn ---> $clfn\n";	
+
+	return $clfn;
+}
+
+
+
+
+
+sub assembleLFN
+{
+	my ($handler, $root, $path ) = @_;
+
+	die unless length $handler >0;
+	die unless length $root >0;
+	die unless defined $path;
+
+	return join ':', $handler, $root, $path;
+
+}
+
+
+sub parseFQLFN
+{
+	my $lfn = shift;
+
+	my @parts = split( ':', $lfn );
+
+	my ($handler, $root, $path ) = @parts;
+
+	die "assert: parseFQLFN [$lfn] - does not have 3 parts!" unless scalar(@parts) == 3;
+
+	# VERY POORLY IMPLEMENTED RIGHT NOW
+
+	#print "ParseLFN = [$lfn] -> handler:[$handler] root:[$root] lfn:[$path]\n";
+
+	return @parts; 
+}
+
+
+sub fullyQualifyLFN
+{
+	my $lfn = shift;
+
+	my @c = split( ':', $lfn );
+
+	my $handler;
+	my $root;
+	my $path;
+
+	# first handle the case of bareword stuff like ./quxx and bar or testa/file1.txt
+
+	print scalar @c;
+	print "\n";
+
+	if( scalar(@c) == 1 )
+	{
+		$handler = "fs";
+		$root = "root";
+		$path = $lfn;
+	}
+	elsif( @c < 3 )
+	{
+		# Yucky case - user has given us 2 things, what does he or she mean?
+		# first, lets see if the first thing is one of our keywords
+		# if so, we can usually assume the next part is the root
+
+		if( $c[0] =~ /^fs|snap|remote/ )
+		{
+			$handler = $c[0];
+			$root = $c[1];
+			$path = "";
+
+			warn "Interpolating LFN -- did you mean to leave off a path? Assuming your intent was handler:[$handler] root:[$root] path:[$path] ";
+		}
+		else
+		{
+			# In this case, best to assume that the first thing is the root
+			# but what handler to use?
+
+			$handler = "";
+			$root = $c[0];
+			$path = $c[1];
+
+			die "Cannot infer compound path - [$lfn] - please specify a handler";
+		}
+	}
+	elsif( @c > 3 )
+	{
+		die "Ambiguous - too many colons in this filename. (Sorry we don't like colons in filenames, at least not when provided on the command line)";
+	}
+	else
+	{
+		($handler, $root, $path ) = @c;
+	}
+
+	$path = main::canonize( $path );
+
+	print "FULLY QUALIFY LFN:[$lfn] -> handler:[$handler] root:[$root] path:[$path]\n";
+
+	return assembleLFN( $handler, $root, $path );
+}
 
 package FilesystemExplorer::Snapshot;
 
 use File::Basename;
 use base qw(Class::Accessor);
-FilesystemExplorer::Snapshot->mk_accessors( qw( rootGhost ) );
+FilesystemExplorer::Snapshot->mk_accessors( qw( rootGhost rootGhostStore) );
 
 sub new
 {
@@ -832,6 +955,33 @@ sub new
 
 	return $self;
 }
+
+sub loadRootIfNeeded
+{
+	my $self = shift;
+
+	my $rgs = $self->rootGhostStore();
+
+	return $rgs if ref $rgs;
+
+	$rgs = GhostStore->new();
+	$rgs->slurpSnapshot( $self->rootGhost()->lfn(), "SNAPSHOT" );
+	$self->rootGhostStore( $rgs );
+	return $rgs;
+}
+
+sub getStatSourceVerify
+{
+	my $self = shift;
+	my $lfn = shift;
+
+	my $rgs = $self->loadRootIfNeeded();
+
+	my ($size, $mtime, $mode);
+
+	return ($size, $mtime, $mode);
+}
+
 
 ##########
 # The FSE class handles low level access and coherency for a particular
@@ -876,17 +1026,19 @@ sub new
 sub getFullHashSourceVerify
 {
 	my $self = shift;
-	my $lfn = shift;
+	my $g = shift;
 
-	print "*** FULLHASH: $lfn\n";
+	my $path = $g->getPath();
+
+	print "*** FULLHASH: $path\n";
 
 	# TODO: examine use of stat
-	$main::run_bytes_fullread += -s $lfn;
+	$main::run_bytes_fullread += -s $path;
 
 	my $START_GTOD = [gettimeofday];
 
 	my $sha = Digest::SHA->new(1);
-	$sha->addfile( $lfn );
+	$sha->addfile( $path );
 	my $hexdigest = $sha->hexdigest();
 
 	$main::run_files_fullread++;
@@ -899,17 +1051,20 @@ sub getFullHashSourceVerify
 sub getStatSourceVerify
 {
 	my $self = shift;
-	my $lfn = shift;
+	my $g = shift;
 
-	print "*** STAT: $lfn\n";
+	my $path = $g->getPath();
+
+	print "*** STAT: $path\n";
 
 	$main::run_files_stat++;
 
-	my @statfields = stat($lfn);
+	my @statfields = stat($path);
 
-	die "Ghost [$lfn] failed stat - probably doesn't exist" if( @statfields == 0 );
-
-	return \@statfields; 
+	die "Ghost [$path] failed stat - probably doesn't exist: $! ($@)" if( @statfields == 0 );
+	my ($dev,$ino,$mode,$nlink,$uid,$gid,$rdev,$size,$atime,$mtime,$ctime,$blksize,$blocks) = @statfields; 
+	
+	return ($size, $mtime, $mode);
 }
 
 
@@ -921,18 +1076,19 @@ sub getImmediateChildren
 	my $self = shift;
 	my $parent = shift;
 
-	my $dir = $parent->lfn();
+	my $dir = $parent->getPath();
 
 	print "FSE:ScanDIR into dir:[$dir]\n" if $fseDebug;
 
 	#$dir =~ s/\/+$//;
 
-	opendir DIR, $dir or die "cannot descend into [$dir] #!";
+	opendir DIR, $dir or die "cannot descend into [$dir] for getImmediateChildren: $! $@";
 
 	$main::readdir_invokes++;
 
 	# drop . and .., sort directory
-	my @files = map {  main::canonize( File::Spec->catfile( $dir, $_ ) ) } 
+	my @files = map { "fs:root:" . $_ }
+	    map {  main::canonize( File::Spec->catfile( $dir, $_ ) ) } 
 		grep { !/^\.{1,2}$/ } 
 		grep { !main::isHardIgnore( $_ ) } 
 		sort { $a cmp $b } 
@@ -977,6 +1133,56 @@ sub getIterator()
 }
 
 
+
+
+package FSEFactory;
+
+# is container the right term for this?
+
+my %fseForHandlerRoot;
+
+sub getFSEHandlerForGhost
+{
+	my $class = shift;
+	my $g = shift;
+	my $lfn = $g->lfn();
+
+	# print "$lfn**\n";
+
+	my $r = undef;
+
+	my ($handler, $root, $path ) = main::parseFQLFN($lfn);
+
+	if( $lfn =~ /^snap/m )
+	{
+		my $key = $handler . ":" . $root;
+		my $class = "FilesystemExplorer::Snapshot";
+
+		## TODO - break this out into a cleaner function
+
+		if( exists $fseForHandlerRoot{$key} )
+		{
+			main::debug "Found existing handler for $key @ $class";
+			$r = $fseForHandlerRoot{$key};
+		}
+		else
+		{
+			main::debug "Making new handler for $key @ $class";
+			$r = $class->new();
+			$r->rootGhost($g);
+		}
+	}	
+	else
+	{
+		$r = $main::localFileSystemFSE;
+	}
+
+	main::debug "FSEFactory: FSE handler for lfn:[$lfn] --> Class:[$r]";
+
+	return $r; 
+}
+
+
 package TruthKeeper;
 
 use Data::Dumper;
@@ -990,6 +1196,9 @@ my %ghostStoreForDescriptorLFN;
 
 my $tkdebug = 0;
 
+# Takes ghosts provided by a command line and 
+# blows out a fully qualified LFN
+
 sub makeGhostsFromCommandLine
 {
 	my $self = shift;
@@ -999,8 +1208,10 @@ sub makeGhostsFromCommandLine
 
 	foreach my $lfn (@stuff )
 	{
-		print "Adding lfn:[$lfn] from command line to store\n";
-		my $g = $self->obtainGhostForLFN($lfn);
+		my $fqlfn = main::fullyQualifyLFN( $lfn );
+
+		print "Make Ghost Via CommandLine user provided lfn:[$lfn]->fqLFN:[$fqlfn] from command line to store\n";
+		my $g = $self->obtainGhostForLFN($fqlfn);
 		$gs->addGhost( $g );
 	}
 
@@ -1142,6 +1353,8 @@ sub getGhostDescriptorFileForLFN($)
 
 	# print "GDF: $filename\n";
 
+	die "Assert: $filename should be a path" if not main::assert_regularpath( $filename );
+
 	my( $fn, $dir ) = fileparse( $filename );
 
  	my $dfn = File::Spec->catfile($dir, $DESCRIPTOR_FILENAME);
@@ -1258,10 +1471,12 @@ sub obtainGhostForLFN
 	my $self = shift;
 	my $lfn = shift;
 
+	my( $handler, $root, $path ) = main::parseFQLFN( $lfn );
+
 	die "LFN is zero length" if ((length $lfn) < 1);
 	die "LFN is not a clean string!" if ref $lfn;
 
-	print "TK:Obtain: obtain f:[$lfn] - requested\n" if $tkdebug;
+	print "TK:Obtain: obtain f:[$lfn] ($handler)($root)($path)- requested\n" if $tkdebug;
 
 	my $ghostForLFN = $self->ghostForLFN();
 
@@ -1278,8 +1493,13 @@ sub obtainGhostForLFN
 	# TODO when time comes, implement global cache
 
 	# Next look in local descriptor
+	# TODO, this is sort of wrong -- the ghost store is useless for certain types of LFNS
+	# really only things pretaining to file system should hit descriptor
+	# refactor to move to FSE
 
-	my $gs = $self->getGhostStoreForDescriptorFileCoveringFN($lfn);
+
+
+	my $gs = $self->getGhostStoreForDescriptorFileCoveringFN($path);
 	my $g = $gs->findGhostForLFN($lfn);
 	print "TK:Obtain: obtain f:[$lfn] pulled g:[$g] from ghost descriptor\n" if $tkdebug;
 	return $g if( defined $g );
@@ -1287,11 +1507,11 @@ sub obtainGhostForLFN
 	# Wow, we've totally stuck out here - make a new thing
 
 	print( "TK:Obtain: Making new ghost for f:[$lfn]\n")  if $tkdebug;
-	my $g = Ghost->make_private( $lfn );
+	$g = Ghost->make_private( $lfn );
 	$self->incorporateGhostData( $g );
 	$g->dirty(1);
 	$g->isTKversion(1);
-	my $gs = $self->getGhostStoreForDescriptorFileCoveringFN( $lfn );
+	$gs = $self->getGhostStoreForDescriptorFileCoveringFN( $path );
 	$gs->addGhost( $g );
 
 	print "TK:Obtain: Made: $g\n" if $tkdebug;
@@ -1548,13 +1768,41 @@ sub slurpDescriptor($)
 
 	print "GhostStore: Slurping descriptor [$fn]\n" if $gsDebug;
 
+	die "Assert: $fn should be a path" if not main::assert_regularpath( $fn );
+
 	my( $parsedFn, $dir ) = fileparse( $fn );
 
 	my $treebase = $dir; 
 
+	$self->slurpSerializedStore( filename => $fn,
+								 treeRoot => $treebase );
+
+	# At this point, our ghosts are not linked to the TK, they are just versions of possible truth
+
+	$main::run_descriptors_read++;
+}
+
+sub slurpSnapshot
+{
+	my $self = shift;
+	my $fn = shift;
+	my $root = shift;
+
+	$self->slurpSerializedStore( filename => $fn,
+								 snapshotRoot => $root );
+}
+
+
+sub slurpSerializedStore
+{
+	my $self = shift;
+	my %opt = @_;
+
+	my $fn = $opt{filename} or die "Filename not provided to slurp!";
+
 	my %seen;
 
-	open( FILE, "<$fn") or die "Cannot open $fn to read descriptor";
+	open( FILE, "<$fn") or die "Cannot open $fn to slurpSerializedStore";
 
 	while( <FILE> )
 	{
@@ -1573,7 +1821,7 @@ sub slurpDescriptor($)
 
 			if( $name eq 'version' )
 			{
-				print "Comparing version $SERIALIZATION_VERSION_NUMBER to [$value]\n";
+				print "Comparing version $SERIALIZATION_VERSION_NUMBER to [$value]\n" if $gsDebug;
 
 				if( $SERIALIZATION_VERSION_NUMBER != ($value+0) )
 				{
@@ -1584,7 +1832,7 @@ sub slurpDescriptor($)
 			next;
 		}
 
-		my $g = Ghost->newFromSerialized( $_, treeRoot => $treebase );
+		my $g = Ghost->newFromSerialized( $_, %opt );
 		$g->isTKversion(0);
 		$self->addGhost( $g );
 
@@ -1592,11 +1840,10 @@ sub slurpDescriptor($)
 	}
 
 	close( FILE );
-
-	# At this point, our ghosts are not linked to the TK, they are just versions of possible truth
-
-	$main::run_descriptors_read++;
 }
+
+
+
 
 
 sub writeAsDescriptor($)
@@ -1606,7 +1853,7 @@ sub writeAsDescriptor($)
 
 	my $lfnToGhost = $self->lfnToGhost();
 
-	open( FILE, ">$fn") or die "Cannot open $fn to write descriptor";
+	open( FILE, ">$fn") or die "Cannot open file[$fn] to write descriptor: $!";
 
 	my $date = strftime( "%c", localtime() );
 
@@ -1655,7 +1902,7 @@ sub writeSerializedToDisk($)
 {
 	my $self = shift;
 	my $fn = shift;
-	my %options = shift;
+	my %options = @_;
 
 	my $lfnToGhost = $self->lfnToGhost();
 
@@ -1833,7 +2080,7 @@ Ghost->mk_accessors( qw(lfn lastFullHash size mode fullHash
 	dirty isTKversion lastDirScan lastStat mtime lastEnumerated firstStat fileStatus
 	 children) );
 
-my $serializeDebug = 0;
+my $serializeDebug = 1;
 
 sub newFromSerialized($)
 {
@@ -1853,9 +2100,11 @@ sub newFromSerialized($)
 	{
 		my $root = $options{'treeRoot'};
 
-		$serialLFN = File::Spec->catfile( $root , $serialLFN );
-		$serialLFN = main::canonize( $serialLFN );
+		$serialLFN = main::rewriteLFNwithLeadingDirectory( $serialLFN, $root );
+
 	}
+
+
 
 	# GHOST_NEW_FIELD: Place 1/4 where you add new fields to ghosts
 
@@ -1869,9 +2118,9 @@ sub newFromSerialized($)
 	$self->lastEnumerated( shift @a );
 	$self->firstStat( shift @a );
 	$self->fileStatus( shift @a );
+	$self->mtime( shift @a );
 
 	$self->dirty( 0 );
-	$self->mtime( shift @a );
 	$self->isTKversion( 0 );
 
 	if( $serializeDebug )
@@ -1889,7 +2138,15 @@ sub newFromSerialized($)
 
 sub getFSE
 {
-	return $main::localFileSystemFSE;
+	my $self = shift;
+	my $lfn = $self->lfn();
+	die unless defined $lfn;
+
+	my $fse = FSEFactory->getFSEHandlerForGhost( $self );
+
+
+
+	return $fse; 
 }
 
 sub getChildren()
@@ -1929,9 +2186,7 @@ sub learnChildrenByLFN()
 
 	# Ideally, we call getChildren and do some sort of "merge"
 
-	my @existingGhosts = ();
-
-	@{$self->children()} if( defined $self->children() );
+	my @existingGhosts = @{$self->children()} if( defined $self->children() );
 
 	my %seenLFN;
 	my @newKids;
@@ -2012,7 +2267,7 @@ sub printDebug
 	# not technically a field but we should include this
 	my $type = $self->getType();
 
-	print "ghostDump: lfn:[$lfn] type:[$type] mode:[$mode] lFH:[$lastFullHash] full:[$fullHash] lds:[$lastDirScan] lastfullstat:[$lastStat] size:[$size] mtime:[$mtime]\n";
+	print "ghostDump: lfn:[$lfn] type:[$type] mode:[$mode] lFH:[$lastFullHash] full:[$fullHash] ldirscan:[$lastDirScan] lastfullstat:[$lastStat] size:[$size] mtime:[$mtime]\n";
 }
 
 sub isSameFilename
@@ -2097,11 +2352,9 @@ sub serialize()
 
 	#print "Serialize $self\n";
 
-	if( $options{'pathMode'} eq 'basename' )
+	if( exists $options{'pathMode'} and $options{'pathMode'} eq 'basename' )
 	{
-			my( $fn, $dir ) = fileparse( $lfn );
-			# print "    Serialization has truncated $lfn -> $fn (pathMode)\n";
-			$lfn = $fn;
+		$lfn = main::rewriteLFNPathToBasename( $lfn )
 
 	}
 
@@ -2114,20 +2367,42 @@ sub serialize()
 			  $self->fullHash(),
 			  $self->lastDirScan(),
 			  $self->lastStat(),
-			  $self->mtime(),
 			  $self->lastEnumerated(),
 			  $self->firstStat(),
-			  $self->fileStatus()
+			  $self->fileStatus(),
+			  $self->mtime()
 			  );
 
 	@s = map {main::gfs_escape($_)} @s;
 
-	my $s = join ':', @s;
+	my $s = join ':', map { defined $_ ? $_ : '' } @s;
 
 	return $s;
 }
 
 # as of refactor, only TK is really allowed to called this
+
+sub getHandler
+{
+	my $self = shift;
+	my ($handler, $root, $path ) = main::parseFQLFN( $self->lfn() );
+	return $handler;
+}
+
+sub getRoot
+{
+	my $self = shift;
+	my ($handler, $root, $path ) = main::parseFQLFN( $self->lfn() );
+	return $root;
+}
+
+sub getPath
+{
+	my $self = shift;
+	my ($handler, $root, $path ) = main::parseFQLFN( $self->lfn() );
+	return $path;
+}
+
 
 sub make_private($)
 {
@@ -2212,6 +2487,7 @@ sub hasAcceptableStat
 
 	return 0 if( not defined $self->size() );
 	return 0 if( not defined $self->mtime() );
+	return 0 if( not defined $self->mode() );
 
 	if( defined $main::GUARD_TIME_SECONDS )
 	{
@@ -2349,7 +2625,7 @@ sub learnFullHash
 	my $time = shift;
 	my $hash = shift;
 
-	# TODO - merger case here
+	# TODO - merger and revocation case here
 
 	$self->lastFullHash( $time );
 	$self->fullHash( $hash );
@@ -2365,7 +2641,7 @@ sub getFullHashSourceVerify
 
 	die "Full hash not implemented for directories" if( $self->canHaveChildren() );
 
-	my $fullhash = $self->getFSE()->getFullHashSourceVerify( $lfn );
+	my $fullhash = $self->getFSE()->getFullHashSourceVerify( $self );
  	$self->learnFullHash( $time, $fullhash );
 
 	return $fullhash;
@@ -2380,7 +2656,7 @@ sub learnStat
 	my $mtime = shift;
 	my $mode = shift; 
 
-	# TODO - merger case here!!
+	# TODO - merger and revocation case here
 
 	$self->size($size);
 	$self->mtime($mtime);
@@ -2398,10 +2674,8 @@ sub getStatSourceVerify
 
 	my $lfn = $self->lfn();
 
-	my $fields = $self->getFSE()->getStatSourceVerify( $lfn );
-
-	my ($dev,$ino,$mode,$nlink,$uid,$gid,$rdev,$size,$atime,$mtime,$ctime,$blksize,$blocks) = @$fields; 
-	 
+	my ($size, $mtime, $mode) = $self->getFSE()->getStatSourceVerify( $self );
+ 
 	$self->learnStat( $time, $size, $mtime, $mode );
 
 	return undef;
