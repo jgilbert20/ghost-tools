@@ -12,6 +12,7 @@ use File::Copy;
 use Time::HiRes qw( CLOCK_REALTIME gettimeofday tv_interval);
 use Getopt::Long;
 use POSIX; # needed for time formating
+use Cwd qw(abs_path); # best way to get absolute paths
 
 # Database Layer
 
@@ -806,6 +807,14 @@ sub assert_regularpath($)
 	return 1; 
 }
 
+sub rewriteLFNPathAbsolute
+{
+	my $lfn = shift;
+	my( $handler, $root, $path ) = parseFQLFN( $lfn );
+	$path = abs_path( $path );
+	return assembleLFN( $handler, $root, $path );
+}
+
 # Takes an LFN and removes the leading directory from the path component
 
 sub rewriteLFNPathToBasename
@@ -872,12 +881,13 @@ sub parseFQLFN
 {
 	my $lfn = shift;
 
-	my @parts = split( ':', $lfn );
+#	my @parts = split( ':', $lfn );
+	my (@parts) = ( $lfn =~ m/^(\w+)\:([^:]+)\:(.*)/ );
 
 	my ($handler, $root, $path ) = @parts;
 
 	die "assert: parseFQLFN [$lfn] - does not have 3 parts!" unless scalar(@parts) == 3;
-	#print "ParseLFN = [$lfn] -> handler:[$handler] root:[$root] lfn:[$path]\n";
+	# print "ParseLFN = [$lfn] -> handler:[$handler] root:[$root] lfn:[$path]\n";
 
 	return @parts; 
 }
@@ -897,8 +907,12 @@ sub fullyQualifyLFN
 
 	# first handle the case of bareword stuff like ./quxx and bar or testa/file1.txt
 
-	print scalar @c;
-	print "\n";
+	if( 0 )
+	{
+		print "fullyQualifyLFN: Testing for element count";
+		print scalar @c;
+		print "\n";
+	}
 
 	if( scalar(@c) == 1 )
 	{
@@ -1013,7 +1027,7 @@ use File::Basename;
 use base qw(Class::Accessor);
 FilesystemExplorer::FS->mk_accessors( qw(topLevelLFNs sizeToFNs) );
 
-my $fseDebug = 1;
+my $fseDebug = 0;
 
 # Return new FSE
 # CORE - any FSE must implement
@@ -1102,7 +1116,7 @@ sub getImmediateChildren
 
 	$main::readdir_entries += @files;
 
-	print( "FSE:ScanDIR Returned: ", (join ':', @files ), "\n" ) if $fseDebug;
+	print( "FSE:ScanDIR Returned: [", (join '],[', @files ), "]\n" ) if $fseDebug;
 
 	close DIR;
 
@@ -1145,6 +1159,7 @@ package FSEFactory;
 
 # is container the right term for this?
 
+my $fseFactoryDebug = 0;
 my %fseForHandlerRoot;
 
 sub getFSEHandlerForGhost
@@ -1168,12 +1183,12 @@ sub getFSEHandlerForGhost
 
 		if( exists $fseForHandlerRoot{$key} )
 		{
-			main::debug "Found existing handler for $key @ $class";
+			main::debug "Found existing handler for $key @ $class"  if $fseFactoryDebug;
 			$r = $fseForHandlerRoot{$key};
 		}
 		else
 		{
-			main::debug "Making new handler for $key @ $class";
+			main::debug "Making new handler for $key @ $class"  if $fseFactoryDebug;
 			$r = $class->new();
 			$r->rootGhost($g);
 		}
@@ -1183,7 +1198,7 @@ sub getFSEHandlerForGhost
 		$r = $main::localFileSystemFSE;
 	}
 
-	main::debug "FSEFactory: FSE handler for lfn:[$lfn] --> Class:[$r]";
+	main::debug "FSEFactory: FSE handler for lfn:[$lfn] --> Class:[$r]" if $fseFactoryDebug;
 
 	return $r; 
 }
@@ -1668,7 +1683,7 @@ use POSIX;
 use base qw(Class::Accessor);
 GhostStore->mk_accessors( qw(lfnToGhost clean sizeToFNs) );
 
-my $gsDebug = 1;
+my $gsDebug = 0;
 
 sub new
 {
@@ -2003,7 +2018,6 @@ sub findAllDuplicates
 	my $self = shift;
 	my $target = shift;
 
-
 	my $size = $target->getSize();
 
 	return () if $size < 1; 
@@ -2078,7 +2092,8 @@ package Ghost;
 
 use File::Basename;
 use base qw(Class::Accessor);
-use Cwd qw(abs_path);
+
+use Cwd qw(abs_path); # best way to get these
 
 # GHOST_NEW_FIELD: Place 4/4 where you add new fields to ghosts
 
@@ -2086,7 +2101,8 @@ Ghost->mk_accessors( qw(lfn lastFullHash size mode fullHash
 	dirty isTKversion lastDirScan lastStat mtime lastEnumerated firstStat fileStatus
 	 children) );
 
-my $serializeDebug = 1;
+my $serializeDebug = 0;
+my $gChildDebug = 0;
 
 sub newFromSerialized($)
 {
@@ -2162,16 +2178,12 @@ sub getChildren()
 	if( not defined $self->children() )
 	{
 		die "Corner case - someone didn't teach me my children";
-
 	}
-
 
 	if( not ref $self->children() )
 	{
 		die "Corner case - someone didn't teach me my children";
-
 	}
-
 
 	# TODO - should this be weak?
 	# if so, how to handle orphans?
@@ -2192,19 +2204,24 @@ sub learnChildrenByLFN()
 
 	# Ideally, we call getChildren and do some sort of "merge"
 
-	my @existingGhosts = @{$self->children()} if( defined $self->children() );
+	my @existingGhosts =  ref $self->children() ? @{$self->children()} : ();
+
+	print "Existing ghosts @existingGhosts\n" if $gChildDebug;
 
 	my %seenLFN;
 	my @newKids;
 
-	map { $seenLFN{ $_->getLFN() } = 0 } @existingGhosts;
+	foreach my $e (@existingGhosts)
+	{
+		 $seenLFN{ $e->lfn() } = 0;
+	}
 
 	foreach my $lfn ( @lfns )
 	{
-		print "G: Learning child: lfn:[$lfn]\n";
+		print "G: Learning child: lfn:[$lfn]\n" if $gChildDebug;
 		if( exists $seenLFN{$lfn} )
 		{
-			print "G:   Child already registered\n";
+			print "G:   Child already registered\n" if $gChildDebug;
 		}
 
 		$seenLFN{$lfn}++;
@@ -2221,7 +2238,7 @@ sub learnChildrenByLFN()
 	{
 		if( $seenLFN{$lfn} < 1 )
 		{
-			print "G:   Child has disapeared\n";
+			print "G:   Child has disapeared\n" if $gChildDebug;
 			my $g = $self->tk()->obtainGhostForLFN( $lfn );
 			$g->learnDeleted($time);
 		}
@@ -2314,7 +2331,7 @@ sub isSameFilename
 
 	# TODO: revisit if perl libraries give a better way to do this
 
-	return 1 if $self->abspath() eq $other->abspath();
+	return 1 if $self->absoluteLFN() eq $other->absoluteLFN();
 	return 0;
 }
 
@@ -2323,10 +2340,10 @@ sub isSameFilename
 # probably requires a ton of stats in cases where there are ..
 # but doesn't appear to be too onerous for usual path names
 
-sub abspath
+sub absoluteLFN
 {
 	my $self = shift;
-	return abs_path( $self->lfn() );
+	return main::rewriteLFNPathAbsolute($self->lfn());
 
 }
 
@@ -2641,8 +2658,6 @@ sub getFullHashSourceVerify
 	my $self = shift;
 	my $time = shift;
 
-	my $lfn = $self->lfn();
-
 	die "Full hash not implemented for directories" if( $self->canHaveChildren() );
 
 	my $fullhash = $self->getFSE()->getFullHashSourceVerify( $self );
@@ -2675,8 +2690,6 @@ sub getStatSourceVerify
 {
 	my $self = shift;
 	my $time = shift; 
-
-	my $lfn = $self->lfn();
 
 	my ($size, $mtime, $mode) = $self->getFSE()->getStatSourceVerify( $self );
  
