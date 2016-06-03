@@ -2,7 +2,7 @@
 
 use strict;
 use warnings;
-# use diagnostics -verbose;
+use diagnostics -verbose;
 
 use Digest::SHA;
 use File::Basename;
@@ -779,34 +779,34 @@ sub isHardIgnore
 }
 
 
-
-# GFS relies on all paths being canonicalized so that
-# text matching occurs properly.
-# Otherwise ./foo and foo will not text match and it will appear
-# like they are different files. Any routines that brings in a "net new"
-# path to the system should convert it to a cpath.
+# Sanity check that a path is indeed canonicalized 
+#
+# GFS relies on all paths being canonicalized so that text matching occurs
+# properly. Otherwise ./foo and foo will not text match and it will appear
+# like they are different files. Any routines that brings in a "net new" path
+# to the system should convert it to a cpath.
 
 sub assert_cpath($)
 {
 	my $lfn = shift;
+	assert_regularpath($lfn);
 	my $clfn = File::Spec->canonpath( $lfn );
 	die "ASSERT CPATH FAILED: $lfn ne $clfn" if $lfn ne $clfn; 
 }
 
+# Sanity check that in places where an operation is to work
+# on a regular path that it actually is one.
+
 sub assert_regularpath($)
 {
 	my $path = shift;
-
-
 	my $c = () = $path =~ m/\:/go;
-
-	print "Testing [$path] - got $c\n";
-
-
+	#print "Testing [$path] - got $c\n";
 	die "ASSERT regularpath [$path] - failed -- smells like a FQLFN" if( $c == 2 );
-
 	return 1; 
 }
+
+# Takes an LFN and removes the leading directory from the path component
 
 sub rewriteLFNPathToBasename
 {
@@ -817,19 +817,23 @@ sub rewriteLFNPathToBasename
 	return assembleLFN( $handler, $root, $fn );
 }
 
+# Takes an LFN and adds a leading directory portion onto the path
 
-	sub rewriteLFNwithLeadingDirectory
-	{
-		my $lfn = shift;
-		my $leadingDir = shift;
+sub rewriteLFNwithLeadingDirectory
+{
+	my $lfn = shift;
+	my $leadingDir = shift;
 
-		my( $handler, $root, $path ) = parseFQLFN( $lfn );
-		$path = File::Spec->catfile( $leadingDir , $path );
-		$path = main::canonize( $path );
-		return assembleLFN( $handler, $root, $path);
-	}
+	my( $handler, $root, $path ) = parseFQLFN( $lfn );
+	$path = File::Spec->catfile( $leadingDir , $path );
+	$path = main::canonize( $path );
+	return assembleLFN( $handler, $root, $path);
+}
 
 
+
+# Pass it a path (not a FQLFN) and you'll get the canonical version
+# which can be file compared
 
 sub canonize($)
 {
@@ -847,6 +851,7 @@ sub canonize($)
 
 
 
+# Assembles a FQLFN from its consituent parts
 
 sub assembleLFN
 {
@@ -861,6 +866,8 @@ sub assembleLFN
 }
 
 
+# Splits out a FQLFN into its three parts
+
 sub parseFQLFN
 {
 	my $lfn = shift;
@@ -870,14 +877,13 @@ sub parseFQLFN
 	my ($handler, $root, $path ) = @parts;
 
 	die "assert: parseFQLFN [$lfn] - does not have 3 parts!" unless scalar(@parts) == 3;
-
-	# VERY POORLY IMPLEMENTED RIGHT NOW
-
 	#print "ParseLFN = [$lfn] -> handler:[$handler] root:[$root] lfn:[$path]\n";
 
 	return @parts; 
 }
 
+# Does the gueswork of taking a partial user provided LFN and figuring
+# out the intent and fully qualifying it
 
 sub fullyQualifyLFN
 {
@@ -1480,7 +1486,7 @@ sub obtainGhostForLFN
 
 	my $ghostForLFN = $self->ghostForLFN();
 
-	main::assert_cpath( $lfn );
+	main::assert_cpath( $path );
 
 	if( exists $ghostForLFN->{$lfn} )
 	{
@@ -2410,8 +2416,6 @@ sub make_private($)
 	my $lfn = shift;
 
 	my $self = $class->new();
-
-	main::assert_cpath( $lfn );
 
 	# print "Ghost: Making ghost for lfn=[$lfn]\n";
 
