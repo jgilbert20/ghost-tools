@@ -2,29 +2,32 @@
 
 use strict;
 use warnings;
-#use diagnostics -verbose;
 
+#use diagnostics -verbose;
 
 use File::Basename;
 use File::Spec;
 use File::Path;
-use File::Copy; 
+use File::Copy;
 use Cwd;
 
 my $TESTSTATE_PWD = getcwd();
-
+my $TESTSTATE_LASTRUN_STD;
+my $TESTSTATE_LASTRUN_ERR;
+my $TESTSTATE_LAST_OUTPUT;
 
 sub mkdirs($)
 {
-    my $dir = shift;
-#    my $dirx = dirname $dir;
+	my $dir = shift;
 
-    print "MKDIRS:[$dir]\n";
-    eval{ mkpath($dir,1) };
-    $@ and die "Couldn't create dir path: $! $@";
-    die "Did not find new path" if not -d $dir;
+	# my $dirx = dirname $dir;
 
-   return 1;
+	print "MKDIRS:[$dir]\n";
+	eval { mkpath( $dir, 1 ) };
+	$@ and die "Couldn't create dir path: $! $@";
+	die "Did not find new path" if not -d $dir;
+
+	return 1;
 }
 
 sub mkfile($$)
@@ -32,7 +35,7 @@ sub mkfile($$)
 	my $path = shift;
 	my $seed = shift;
 
-	mkdirs( dirname($path) );
+	mkdirs(dirname($path) );
 
 	open FILE, ">$path" or die "Cannot open $path: $!";
 	print FILE "$seed";
@@ -49,15 +52,39 @@ sub cd($)
 }
 
 sub run($)
-{	
+{
 	my @c = @_;
 
 	my $i = 0;
 	my $runPrefix = "gfstest.run.$i";
-my $cmd = "( cd $TESTSTATE_PWD && @c ) > $runPrefix.stdout 2> $runPrefix.stderr";
-print "RUN:[$cmd]\n";
 
-	system( $cmd );
+	$TESTSTATE_LASTRUN_STD = "$runPrefix.stdout";
+	$TESTSTATE_LASTRUN_ERR = "$runPrefix.stderr";
+
+	my $cmd = "( cd $TESTSTATE_PWD && @c ) > $TESTSTATE_LASTRUN_STD 2> $TESTSTATE_LASTRUN_ERR";
+	print "RUN:[$cmd]\n";
+	system($cmd );
+
+	{
+		local $/ = undef;
+		local *FILE;
+		open FILE, "<$TESTSTATE_LASTRUN_STD";
+		$TESTSTATE_LAST_OUTPUT = <FILE>;
+		close FILE
+	}
+}
+
+sub baseline_reported_checksum
+{
+	my $k = shift;
+
+	print $TESTSTATE_LAST_OUTPUT;
+
+	die "failed to find CS" unless( $TESTSTATE_LAST_OUTPUT =~ /^([\w\/]+)\s+.*$k$/m );
+	
+	print "got: $1\n";
+
+	return $1; 
 
 }
 
@@ -66,9 +93,9 @@ sub test_simplePathnames
 	mkfile '/tmp/gfstest/file1', 15;
 	mkfile '/tmp/gfstest/file2', 20;
 	cd '/tmp/gfstest';
-	run "gfs checksum file1"
-#	baseline_reported_checksum( 'file1' );
-}
+	run "gfs checksum file1 file2";
 
+	baseline_reported_checksum( 'file1' );
+}
 
 test_simplePathnames();
