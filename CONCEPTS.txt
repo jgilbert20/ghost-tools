@@ -1,20 +1,8 @@
 
+# What is a ghost?
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-The basic object is a ghost. A ghost is a description of some object discovered "for real" in the filesystem somewhere. 
+The basic object is a ghost. A ghost is a description of some object
+discovered "for real" in the filesystem somewhere.
 
 Things we track for ghosts:
 
@@ -27,22 +15,85 @@ DT_DISC_OLD - oldest date of discovery
 DT_DISC_NEW - newest date of discovery
 LFN - one or more pathnames for ghosthash
 
-
 my $ghost = makeOrFindGhost( LFN );
 
 $GHOST->[FULLHASH];
 
 writeGhostDescriptor( path, GHOST );
 
-A .ghostdesc file is a list of the above entities of information.
+A .ghostdesc file is a list of the above entities of information. It is
+basically serialized ghosts which have very local basenames for paths. 
 
-The ghosttree is an abstraction around a collection of ghosts
-there can be different implementations
-the most basic one is just a hashing container that is as lazy as possible
+The ghoststore is an abstraction around a collection of ghosts there can be
+different implementations the most basic one is just a hashing container that
+is as lazy as possible.
 
-$GhostTree = getAllGhostsUnderPath();
 
-my @ghosts = GhostTree->ghostsForHash();
+# About LFNS
+
+LFN - local file name - whatever is colloquial to the USER to
+describe something. LFNs can never presume to be universally unique between
+invocations of GFS because they may be relative paths or tags/references may
+change. But the user's maximal intent must be captured in the LFN.
+
+	for instance fs:a depends on your CWD
+	for a different PWD, fs:a could refer to a different file
+
+However, there are many different handlers.
+
+	/foo
+	fs:/foo
+	snap:foo.snap:file123
+	remote:jgilbert@auspice.net:file123
+
+In this case, the "LFN" is a composite of a handler, a root and a path. The
+user may provide some or all of these peices on the command line. We need to
+be be able  to intelligently construct the rest.
+
+LFN's can be fullqualified, which means fully specify the missing strings and
+to canonicalized the path.
+
+To determine if two LFNs are the same inside one running instance of GFS, the
+only way to do it is to canonicalize that path portion both to remove . and
+../ etc. Then you need you make sure to attach the ROOT and the HANDLER.
+
+across instances, the only way is to convert to an AFN (absolute file name)
+The AFN is a unique permanent name for the location
+
+FQAFN - fully qualified AFN: handler:root:afn
+FQLFN - fully qualified LFN: handler:root:path (can be local)
+
+snapshots will generally represent LFNs, typically from the point of view of
+the PWD but their power is that they should NOT be foreced to contain AFNs -
+the snapshot could be  reconstructed anywhere and we'll leave it to the user
+to either feed a snapshot the AFNs or the LFNS.
+
+in the nested case, assume the following data is stored
+
+	snap:testdir/snapshot.gfssnap:
+	snap:testdir/snapshot.gfssnap:a
+	snap:testdir/snapshot.gfssnap:b
+
+in this case, the LFN of the snapshot file itself is testdir/snapshot.gfssnap
+
+So LFNs are designed to hold three peices of information, and together forms a
+unique namespace.
+
+
+# What is truth?
+
+Ghost is a description of the potential state of a file.
+
+Currently, contracts look like this
+
+- No obligation for a specific ghost to be up to date
+- Only the ghosts from the TK are guarnteed to be single source of truth
+- Ghosts find their FSE by looking at their handler value
+- Ghosts can be in any number of ghost stores
+- TruthKeeper should make all ghosts that are intended to hold present state
+- The only reason TK is not used to make ghosts is in cases where you are deliverably
+- TK holds all ghost pointers and knows if they are dirty or not
+- Generally, the FSE doesn't hold links back to ghosts except in cases where a ghost is a root (like a snapshot)
 
 
 +++++++++++
@@ -180,24 +231,8 @@ GS: Ghoststore
 				@matches->isDuplicateOf( $g )
 
 
-++++
 
-Everything-is-a-ghost refactor complete
-things still not really handled
-
-1) lsdup should work with snapshots
-2) findChildren should start with the files found in the descriptor, saving directory hashing
-3) we aren't handling the thunks, therefore directories aren't geting hashes
-4) support for identification of deleted files
-5) support for filesystems that may or may not be online - e.g. volumes that mount or unmount
-
-fields to add to ghosts lastEnumerated, firstStat, isDeleted, 
-
-
-isHardIgnore needs to have . and .. added (they are creeping in)
-
-++++++++
-
+###
 
 object store concepts
 
@@ -286,7 +321,8 @@ and not generated inside the routines'
 (merge case)
 
 
-Revocation rules
+# Revocation rules
+
 A new stat does not mean that a hash is out of date. The stat date should be used for resolving which of two stats is most accurate. 
 
 stat fields should be taken all or nothing. 
@@ -377,53 +413,6 @@ or do we split into a separate field like domain?
 my temptation is to split them
 
 that decision would result in these definitions:
-
-LFN - local file name - whatever is colloquial to the USER to
-describe something. LFNs can never presume to be universally unique between
-invocations of GFS because they may be relative paths or tags/references may
-change. But the user's maximal intent must be captured in the LFN.
-
-	for instance fs:a depends on your CWD
-	for a different PWD, fs:a could refer to a different file
-
-However, there are many different handlers.
-
-	/foo
-	fs:/foo
-	snap:foo.snap:file123
-	remote:jgilbert@auspice.net:file123
-
-In this case, the "LFN" is a composite of a handler, a root and a path. The
-user may provide some or all of these peices on the command line. We need to
-be be able  to intelligently construct the rest.
-
-LFN's can be fullqualified, which means fully specify the missing strings and
-to canonicalized the path.
-
-To determine if two LFNs are the same inside one running instance of GFS, the
-only way to do it is to canonicalize that path portion both to remove . and
-../ etc. Then you need you make sure to attach the ROOT and the HANDLER.
-
-across instances, the only way is to convert to an AFN (absolute file name)
-The AFN is a unique permanent name for the location
-
-FQAFN - fully qualified AFN: handler:root:afn
-FQLFN - fully qualified LFN: handler:root:path (can be local)
-
-
-snapshots will generally represent LFNs, typically from the point of view of
-the PWD but their power is that they should NOT be foreced to contain AFNs -
-the snapshot could be  reconstructed anywhere and we'll leave it to the user
-to either feed a snapshot the AFNs or the LFNS.
-
-in the nested case, assume the following data is stored
-
-snap:testdir/snapshot.gfssnap:
-snap:testdir/snapshot.gfssnap:a
-snap:testdir/snapshot.gfssnap:b
-
-in this case, the LFN of the snapshot file itself is testdir/snapshot.gfssnap
-
 
 
 

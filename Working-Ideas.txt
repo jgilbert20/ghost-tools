@@ -5,15 +5,29 @@ Working Ideas.txt
 
 Generally: Get copy|rsync working PERFECTLY then focus on automation and object stores
 
+- get LS working with snapshots
+	we should see new truth enter system (even if its not saved anywhere)
+	pulling in snapshot does not trigger a merge (or does it?)
+	when TK shuts down, have it write out every ghost with AFNs so we can do visual check
+	also there should be an AFN cache just to be sure logic is super tight
+	(e.g. check for collisions)
+
 - lsdup should work with snapshots
 - need to implement rsync
+- why is . getting stored in ghost descriptors when you do a lsdup .????
+- implement aliases properly (which means implementing a default object store)
+- make sure ls function is really working properly with @ARGV
 - findChildren should start with the files found in the descriptor, saving directory hashing
 - we aren't handling the thunks, therefore directories aren't geting hashes
+- ought to refactor obtainGhostForLFN() to hit a set of registered FSEs
 - support for identification of deleted files
 - support for filesystems that may or may not be online - e.g. volumes that mount or unmount
 - allow some places to avoid getting .gfs_ip files created
 - need to create a better escape/unescaping mechanism for basic serialization
 - implement database cache
+- look into revocation rules and get them all airtight
+- revisit how we get a full hash and how we synchronize time between stat and hash so 
+
 
 
 TODO: -G|guard - if a basic something hasn't been checked in this many days, check it again

@@ -1209,9 +1209,10 @@ use base qw(Class::Accessor);
 my $global_tk;
 
 my %ghostForLFN_private;
+my %ghostForAFN_private;
 my %ghostStoreForDescriptorLFN;
 
-my $tkdebug = 0;
+my $tkdebug = 1;
 
 # Takes ghosts provided by a command line and 
 # blows out a fully qualified LFN
@@ -1242,6 +1243,12 @@ sub ghostForLFN
 	return \%ghostForLFN_private;
 }
 
+sub ghostForAFN
+{
+	my $self = shift;
+	return \%ghostForAFN_private;
+}
+
 sub new
 {
 	my $class = shift;
@@ -1250,16 +1257,39 @@ sub new
 	return $self;
 }
 
-sub printInternallyTracked
+sub printInternallyTrackedLFN
 {
 	my $self = shift;
 	my $ghostForLFN = $self->ghostForLFN();
 	foreach my $g (values %$ghostForLFN )
 	{
-		print "   TKGhostDebug: ";
-		print $g->printDebug();
-		print "  ";
+		print "     ";
 		print $g->dirty() ? "YES" : "NO";
+		print "  ";
+		# print $g->printDebug();
+		print $g->lfn();
+		print "  ";
+		
+		print "\n";
+
+	}
+	return;
+}
+
+
+sub printInternallyTrackedAFN
+{
+	my $self = shift;
+	my $ghostForAFN = $self->ghostForAFN();
+	foreach my $g (values %$ghostForAFN )
+	{
+		print "     ";
+		print $g->dirty() ? "YES" : "NO";
+		print "  ";
+		# print $g->printDebug();
+		print $g->lfn();
+		print "  ";
+		print $g->absoluteLFN();
 		print "\n";
 
 	}
@@ -1274,7 +1304,14 @@ sub flush
 
 	print "TK: Beginning flush ---\n";
 
-	# $self->printInternallyTracked();
+	print "TK: Inventory of all internally tracked ---\n";
+
+	$self->printInternallyTrackedLFN();
+
+	print "TK: Inventory of all internally tracked AFNs ---\n";
+
+	$self->printInternallyTrackedAFN();
+
 
 	print "TK: Ghost Cache Writes ---\n";
 
@@ -1402,7 +1439,9 @@ sub getGhostStoreForDescriptorFileCoveringFN
 
 		if( -e $gsfn )
 		{
+			print "Reading descriptor [$gsfn]\n" if $tkdebug;
 			$gs->slurpDescriptor( $gsfn );
+			print "Incorporating stuff found in [$gsfn]\n" if $tkdebug;
 			$self->incorporateGhostStore( $gs );
 
 			# TODO
@@ -1416,6 +1455,8 @@ sub getGhostStoreForDescriptorFileCoveringFN
 		return $gs;
 	}
 }
+
+# Takes everything we've learned from a ghost store and calls incorporate
 
 sub incorporateGhostStore
 {
@@ -1433,18 +1474,22 @@ sub incorporateGhostStore
   # print Dumper( $self );
 }
 
+# Takes everything we've learned from a ghost and incorporate it
+# into our source of truth. 
+# as a side effect, this may end up registering new ghosts
+# as truthy.
 
 sub incorporateGhostData
 {
 	my $self = shift;
 	my $g = shift;
 
-	my $icDebug = 0;
+	my $icDebug = 1;
 
+	my $lfn = $g->lfn();
 	my $ghostForLFN = $self->ghostForLFN();
 
-
-	print "Incorporating ghost data $g (self=$self, glfn=$ghostForLFN)\n" if $icDebug;
+	print "Incorporating ghost lfn:[$lfn] data $g (self=$self, glfn=$ghostForLFN)\n" if $icDebug;
 
 	if( exists $ghostForLFN->{$g->lfn()} )
 	{
@@ -1460,11 +1505,11 @@ sub incorporateGhostData
 			$base->lastFullHash( $g->lastFullHash() );
 			$base->fullHash( $g->fullHash() );
 			$base->dirty(1);
-			print "  Incorporate - Merger case - existing ghost updated\n" if $icDebug;
+			print "  Incorporate - Merger case - existing TK ghost updated\n" if $icDebug;
 		}
 		else
 		{
-			print "  Incorporate -  Merger case - existing ghost was fine\n"  if $icDebug;
+			print "  Incorporate -  Merger case - existing TK ghost was fine\n"  if $icDebug;
 		}
 
 		$g->isTKversion(0);
@@ -1473,12 +1518,33 @@ sub incorporateGhostData
 	}
 	else
 	{
-		print "  Incorporate -  Merger case - new wins" if $icDebug;
+		print "  Incorporate -  Merger case - non-TK ghost we got is being declared the TK version\n" if $icDebug;
 
-		$ghostForLFN->{$g->lfn()} = $g;
+		$self->registerTruthyGhost( $g );
+		#$ghostForLFN->{$g->lfn()} = $g;
 		$g->isTKversion(1);
 		return $g;
 	}
+}
+
+
+sub registerTruthyGhost
+{
+	my $self = shift;
+	my $g = shift;
+
+	my $lfn = $g->lfn();
+
+	print "Register Truthy Thing: [$lfn] -> $g\n" if $tkdebug;
+
+	my $ghostForLFN = $self->ghostForLFN();
+	die "Collision [$lfn]" if exists $ghostForLFN->{$lfn};
+	$ghostForLFN->{$lfn} = $g;
+
+	my $afn = $g->absoluteLFN();
+	my $ghostForAFN = $self->ghostForAFN();
+	die "Collision [$afn]" if exists $ghostForAFN->{$afn};
+	$ghostForAFN->{$afn} = $g;
 }
 
 # Normal logic to get a ghost -- first check if we have it already
@@ -1514,22 +1580,28 @@ sub obtainGhostForLFN
 	# really only things pretaining to file system should hit descriptor
 	# refactor to move to FSE
 
-
-
 	my $gs = $self->getGhostStoreForDescriptorFileCoveringFN($path);
 	my $g = $gs->findGhostForLFN($lfn);
 	print "TK:Obtain: obtain f:[$lfn] pulled g:[$g] from ghost descriptor\n" if $tkdebug;
-	return $g if( defined $g );
+	
+	if( defined $g )
+	{
+		# registration occurs by getGhostStore
+		#$self->registerTruthyGhost( $g );
+		return $g 
+	}
 
 	# Wow, we've totally stuck out here - make a new thing
 
 	print( "TK:Obtain: Making new ghost for f:[$lfn]\n")  if $tkdebug;
 	$g = Ghost->make_private( $lfn );
+	# registers 
 	$self->incorporateGhostData( $g );
 	$g->dirty(1);
 	$g->isTKversion(1);
 	$gs = $self->getGhostStoreForDescriptorFileCoveringFN( $path );
 	$gs->addGhost( $g );
+	#$self->registerTruthyGhost( $g );
 
 	print "TK:Obtain: Made: $g\n" if $tkdebug;
 
@@ -1542,8 +1614,9 @@ sub obtainGhostForLFN
 
 ##########
 #
-# FilesystemIterator -- A helper for iterating over nested directories
-# Note: Does not use File::Find!
+# GhostIterator -- A helper for iterating over nested directories
+# Note: Does not use File::Find! Everything is done through
+# ghosts that request subdirectories so this is uber-clean. 
 #
 ####
 
@@ -1740,7 +1813,7 @@ sub purifyAllGhostsToTK
 		if( $g->isTKversion() == 0 )
 		{
 			print "GhostStore: ***** PURIFY $g->lfn()\n" if $gsDebug;
-			my $n = $tk->obtainGhostForLFN( $g->lfn );
+			my $n = $tk->obtainGhostForLFN( $g->lfn() );
 			$lfnToGhost->{$n->lfn()} = $n;
 		}
 	}
