@@ -848,10 +848,27 @@ sub assert_regularpath($)
 sub rewriteLFNPathAbsolute
 {
 	my $lfn = shift;
+	die unless defined $lfn;
 	my( $handler, $root, $path ) = parseFQLFN( $lfn );
+	die "only fs roots can be made into absolute paths" unless $root eq 'fs';
 	$path = abs_path( $path );
 	return assembleLFN( $handler, $root, $path );
 }
+
+sub rewriteLFNreplaceRoot
+{
+	my $lfn = shift;
+	my $new = shift;
+
+	die unless defined $lfn;
+	die unless defined $new; 
+
+	my( $handler, $root, $path ) = parseFQLFN( $lfn );
+	$root = $new;
+	return assembleLFN( $handler, $root, $path );
+}
+
+
 
 # Takes an LFN and removes the leading directory from the path component
 
@@ -1004,7 +1021,7 @@ package FilesystemExplorer::Snapshot;
 
 use File::Basename;
 use base qw(Class::Accessor);
-FilesystemExplorer::Snapshot->mk_accessors( qw( rootGhost rootGhostStore isFinalized) );
+FilesystemExplorer::Snapshot->mk_accessors( qw( dirty rootGhost rootGhostStore isFinalized deNovo) );
 
 sub debug($)
 {
@@ -1020,6 +1037,25 @@ sub new
 
 	return $self;
 }
+
+
+sub getAbsoluteLFNForGhost
+{
+	my $self = shift;
+	my $g = shift;
+
+	# The correct implementation would be to get the unique hash for this
+	# snapshot, whatever it is in the "root" component of the LFN. That unique
+	# hash code may change over time, so we are going to impose a rule that
+	# you can  only ask this kind of question if the snapshot is not dirty.
+	# Our callers will have to tolerate this
+
+	die "Absolute LFNs do not exist for snapshots while in a dirty state" if $self->dirty();
+
+	return main::rewriteLFNreplaceRoot( $g->lfn(), "HACKED_HASH_GOES_HERE");
+}
+
+
 
 sub storeGhost
 {
@@ -1042,7 +1078,7 @@ sub storeGhost
 	my( $handler, $root, $path ) = main::parseFQLFN( $g->lfn() );
 
 	$handler = "snap";
-	$root = "TOBENAMED";
+	$root = "root";
 
 	my $newLFN = main::assembleLFN( $handler, $root, $path );
 
@@ -1069,14 +1105,28 @@ sub finalize
 
 	$self->loadRootIfNeeded();
 
-	# TODO HACK
-	# technically should delegate to the FSE controller
-	$store->writeSnapshotToDisk( $self->rootGhost()->getRoot() );
+	# The rule for now is a snapshot FSE is not changed after its opened If
+	# you want to do that, you'd clone it to a new object So the FSE is either
+	# in a read state (deNovo = false) or in a making a new thing state
+	# (deNovo = TRUE).
 
-	foreach my $g ( $store->getAllGhosts() )
+	if( not $self->deNovo() )
 	{
-		$g->dirty(0);
+		debug "Snapshot is not new, no finalization performed.";
+	}
+	else
+	{
+		# TODO HACK
+		# technically should delegate to the FSE controller
+		$store->writeSnapshotToDisk( $self->rootGhost()->getRoot() );
 
+		foreach my $g ( $store->getAllGhosts() )
+		{
+			$g->dirty(0);
+
+		}
+
+		$self->dirty(0);
 	}
 
 	$self->isFinalized(1);
@@ -1109,22 +1159,29 @@ sub loadRootIfNeeded
 	return $rgs if ref $rgs;
 
 	$rgs = GhostStore->new();
-$self->rootGhostStore( $rgs );
+	$self->rootGhostStore( $rgs );
 
 	# Hack, probably should handle this with a FS ghost
 	if( -r $self->rootGhost()->getRoot()  )
 	{
-		$rgs->slurpSnapshot( $self->rootGhost()->getRoot(), "SNAPSHOT" );
-		
+		$rgs->slurpSnapshot( $self->rootGhost()->getRoot(), $self->rootGhost()->getRoot() );
+		# dirty flag is clean because we are consistent with source backed file
+		$self->dirty(0);
+		$self->deNovo(0);
 	}
 	else
 	{
-		warn "In that unusual case where we don't load a road()";
+		warn "In that unusual case where we don't load anything";
+		# dirty flag is TRUE because we are in an uncommitted state
+		$self->dirty(1);
+		$self->deNovo(1);
 	}
 
 	debug "Incorporating snapshot truth\n";
 
 	TruthKeeper::get()->incorporateGhostStore( $rgs );
+
+
 
 	return $rgs;
 }
@@ -1212,6 +1269,17 @@ sub new
 	return $self;
 }
 
+# CORE
+
+sub getAbsoluteLFNForGhost
+{
+	my $self = shift;
+	my $g = shift;
+
+	return main::rewriteLFNPathAbsolute($g->lfn());
+}
+
+# CORE
 
 sub getFullHashSourceVerify
 {
@@ -1237,6 +1305,8 @@ sub getFullHashSourceVerify
 
 	return( "SHA1/FULL/$hexdigest");
 }
+
+# CORE
 
 sub getStatSourceVerify
 {
@@ -1291,35 +1361,6 @@ sub getImmediateChildren
 	close DIR;
 
 	return @files;
-}
-
-sub setRoots()
-{
-		die "TODO No longer supported here - to remove";
-
-	my $self = shift;
-
-	$self->topLevelLFNs( [@_] );
-
-	foreach my $f ( @_ )
-	{
-		if( not -r $f )
-		{		
-			die "File [$f] is not a readable file or directory";
-		}
-	}
-}
-
-sub getIterator()
-{
-		die "TODO No longer supported here - to remove";
-
-	my $self = shift;
-
-	my $r = FilesystemIterator->new();
-	$r->queue( [ @{$self->topLevelLFNs()} ] );
-
-	return $r;
 }
 
 
@@ -1472,6 +1513,7 @@ sub printInternallyTrackedLFN
 {
 	my $self = shift;
 	my $ghostForLFN = $self->ghostForLFN();
+
 	foreach my $g (values %$ghostForLFN )
 	{
 		debug ("     " 
@@ -1479,7 +1521,8 @@ sub printInternallyTrackedLFN
 		     . "  "
 		 	 . $g->lfn()
 		     . "  " );
-	 debug( "          -> ". $g->makeDebugString() );
+
+		 debug( "          -> ". $g->makeDebugString() );
 	}
 	return;
 }
@@ -1495,8 +1538,8 @@ sub printInternallyTrackedAFN
 		     . "  "
 		 	 . $g->absoluteLFN()
 		     . "  " );
-		 debug( "          -> ". $g->makeDebugString() );
 
+		 debug( "          -> ". $g->makeDebugString() );
 	}
 	return;
 }
@@ -1516,7 +1559,6 @@ sub flush
 	debug "---- Inventory of all internally tracked AFNs ---\n";
 
 	$self->printInternallyTrackedAFN();
-
 
 	debug "---- Ghost Cache Writes ---\n";
 
@@ -1556,7 +1598,7 @@ sub verifyNoDirtyGhostsRemain
 			debug "\n";
 		}	
 
-
+		# TODO- unresolved design decision
 
 		if( $g->getHandler() eq 'snap')
 		{
@@ -1761,10 +1803,15 @@ sub registerTruthyGhost
 	die "Collision [$lfn]" if exists $ghostForLFN->{$lfn};
 	$ghostForLFN->{$lfn} = $g;
 
-	my $afn = $g->absoluteLFN();
-	my $ghostForAFN = $self->ghostForAFN();
-	die "Collision [$afn]" if exists $ghostForAFN->{$afn};
-	$ghostForAFN->{$afn} = $g;
+	# ghosts that are not real should never be attempted to convert to AFNs? is
+	# that true? they certainly shouldn't find their way into a persistent store.
+	# if that were true, the truthkeeper has to learns that it is actualized, and
+	# thats when it does and AFN test.
+
+	# my $afn = $g->absoluteLFN();
+	# my $ghostForAFN = $self->ghostForAFN();
+	# die "Collision [$afn]" if exists $ghostForAFN->{$afn};
+	# $ghostForAFN->{$afn} = $g;
 }
 
 # Normal logic to get a ghost -- first check if we have it already
@@ -2195,6 +2242,9 @@ sub slurpSerializedStore
 		}
 
 		my $g = Ghost->newFromSerialized( $_, %opt );
+
+
+
 		$g->isTKversion(0);
 		$self->addGhost( $g );
 
@@ -2529,6 +2579,16 @@ sub newFromSerialized($)
 		$serialLFN = main::rewriteLFNwithLeadingDirectory( $serialLFN, $root );
 	}
 
+	if( exists $options{snapshotRoot} )
+	{
+		my $newRoot = $options{snapshotRoot};
+
+		$serialLFN = main::rewriteLFNreplaceRoot( $serialLFN, $newRoot );
+
+
+	}
+
+
 	if( defined $options{'immutable'} && $options{'immutable'} )
 	{
 		$self->_immutable(1);
@@ -2773,7 +2833,10 @@ sub isSameFilename
 sub absoluteLFN
 {
 	my $self = shift;
-	return main::rewriteLFNPathAbsolute($self->lfn());
+
+	# this should really delegate down to the FSE
+
+	return $self->getFSE()->getAbsoluteLFNForGhost($self);
 
 }
 

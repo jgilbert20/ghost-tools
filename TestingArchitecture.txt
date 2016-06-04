@@ -26,6 +26,11 @@ make sure we can ls the thing
 make sure snapshot does or does not invalidate other things when its being built
 
 
+Another great test:
+
+gfs snapshot quxx
+gfs ls snap:snapshot-5803.out:quxx
+
 
 
 ++++++++++++++++++++

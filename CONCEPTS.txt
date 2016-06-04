@@ -67,8 +67,45 @@ on it later.  so who is supposed to write it to disk?
 
 
 
+# root renames on snapshot loads
+
+a strange corner case - you write out a snapshot, a bunch of ghosts.  what is
+the proper root of the snapshot file? Its actually not clear what that should
+be. for instance:
+
+	gfs snapshot foo bar -> snapshot123.snap
+
+	gfs ls snap:snapshot123.snap:foo snap:snapshot123.snap:bar
+
+	cp snapshot123.snap jeremy.snap
+
+	gfs ls snap:jeremy.snap:foo
+
+Technically, the root here was just a transitory thing. Its basically an local
+relative filename. 
+
+Design decision: The written version will always just be "root". 
+
+but on LOADs, we'll rewrite the LFNs/root so they make sense to the user.
 
 
+# Dealing with the obnoxiousness of absolute paths and snapshots
+
+We decided earlier that the permanent root of a snapshot is the hash of the file
+that stores it. This seems to work well for git(1). But what happens with the 
+framework wants an absolute LFN before its written? Current design decision is
+this is not allowed.
+
+this is a pretty wide ranging issue, turns out. Say I invoke the following
+
+	gfs ls snap:snapshot-5803.out:quxx
+
+technically, "snap:snapshot-5803.out:quxx" will trigger creation of a FSE 
+all of these ghosts are sort of not real.
+
+ghosts that are not real should never be attempted to convert to AFNs? is that true?
+they certainly shouldn't find their way into a persistent store.
+if that were true, the truthkeeper learns that it is actualized. 
 
 
 
