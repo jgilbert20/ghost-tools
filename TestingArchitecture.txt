@@ -31,6 +31,18 @@ Another great test:
 gfs snapshot quxx
 gfs ls snap:snapshot-5803.out:quxx
 
+# snapshot a snapshot
+gfs snapshot snap:snapshot-5803.out 
+
+what happens if you snapshot over an existing one?
+corner cases needed to be handled
+
++++++++
+
+load some snapshots 
+and then load newer snapshots over those
+and check that the reconciliation / resolving tests are working properly
+
 
 
 ++++++++++++++++++++

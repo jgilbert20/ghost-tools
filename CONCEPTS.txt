@@ -5,7 +5,284 @@ for instance, in the case of a snapshot
 
 virtual - we don't know if its "real" or not. its a taint check basically
 
-things you pass on the command line should start out virtual
+things you pass on the command line should start out virtual. If we cannot look them up from a truth store, it should bomb out.
+
+there are a few cases to consider
+
+	gfs checksum fs:root:filea
+
+		a) filea hits some cache already created
+		b) filea doesn't, but when we call g->exists()?, its verified
+		c) filea used to exist, but doesn't any longer - when is this figureed out?
+
+	gfs checksum snap:snapfile:filea
+
+		c) filea is not in the snapshot
+
+so the g->exists() semantic is basically - does the FSE "own" this thing?
+if the ghost is immutable, it exists by definition
+maybe we want the rule to be that we never pass the check to the FSE?
+
+what if the actual file has disappeared?
+
+g->exists() goes to FSE and says "do i have you?"
+FSE::snapshot checks its cache, returns true if the ghost's LFN is inside
+FSE::fs checks its cache 
+
+maybe we need to have different levels of existence testing()?
+
+exists()
+existsSourceVerify()
+
+i think if the user bothers to list something, we can take it as a given  that
+its OK to actually source verify it.  To not do that could cause a lot of
+problems -- for isntance, if there were a global cache, user could ask to LS
+things that were long gone and never be the wiser not expected behavior... so we
+can't do that.
+
+So do we pass these functions some sort of time override? We only need one
+existence check per invocation (i think.)
+
+maybe exists( <timespec> )?
+
+as soon as something passes the exists test, it should be a candidate for global
+caching
+
+If a file is marked as deleted, exists() should return false. But of course, a
+source verify on a deleted file needs to be sure that there is not a file
+there already. I think we make a new ghost for that file. And we call isSameAs(),
+and first that will check the stat.
+
+the question is how should the caller be aware of the deleted file in this
+subcase? i've got a ghost, and maybe i think its a deleted thing. i call
+exists() to make sure it really is deleted and instead i get a true. should my
+ghost now change? probably overthinking this case.
+
+if you have a ghost and its marked as deleted. you soruce verify it, and its
+there. refresh its stat, and mark it found. if the hash changes, so be it.
+maybe the immutable flag plays a role here. if immutable, we can't source
+verify it. 
+
+so resolution: basically, exists() can source verify, and it source verifies
+by doing a stat. That stat will bring in new knowlege, and may change flags on
+things to bring the ghost to a point where it is consistent with reality.
+
+so what if we have a ghost and our purpose is to test if it conforms to reality?
+well, the answer would be to create a new ghost with that LFN and verify that one.
+not sure why you'd want this, but it probably will come up. suggests a semantic where you can ask a ghost to "checkDiscrepencies" and you get a new ghost back with the actual state.
+
+now another thing has occured to me -what do we do about FSE proliferation?
+
+technically, more than one FSE can be operative on a local file system at a time.
+
+does it matter who or what finalizes these things?
+
+we need to recheck the LSDUP semantics and make sure getFSE() isn't going to get 
+completely confused. my guess is that because the ::FS is so thin, it probably doesn't 
+matter.  it stores very little state relateive to the ::Snapshiot
+
+but this is an issue when it comes to moving the ghost descriptor code. 
+
+i think we need to make sure that all fs:root ghosts always get the global FS when they ask questions about themselves. And I think this is what the code does now.
+
+
+# thoughts on the absolute ghost cache (AGC)
+
+## Problem 1
+
+THe absolute cache is an interesting beast and has some peculuarities I need
+to work through. First of all, how should it interact with .gfs_ip files? Say
+I look for an ghost record and hit the AGC. There is no opportunity for state
+to flow up from the .gfs_ip cache into the AGC. And if there is a dirty
+record, we'll have to spontaneously make sure that the gfs_ip is loaded, which
+itself may disrupt known state..
+
+## Problem 2
+
+When serializing to the AGC, we will write the filenames by asking the ghost
+to represent them in an absolute way. There are at least two transformations
+we can expect:
+
+	1- The filenames will go to absolute
+	2- snapshot roots will get converted to ^234abcdfef things
+
+Now when those AGCs are retrieved, at what point do we "convert" them into
+their local versions? Do we ever need to do this?
+
+Lets say we leave them as absolutes. This will mean that anyone who calls
+lfn() will see something they may not recognize. But the behavior of the
+software may be correct anyway -- its not going to be fed "wrong" information,
+just getting data in an unexpected form.
+
+Maybe a better way to think about the AGC is that it is an overarching store
+used to populate certain peices of information. If I want a ghost of ./a/test-
+file1, I make it and it says local all of its life. But as a pre-loading step,
+to "get me started", one source of truth about it is to copy data over from
+the AGC. But we can do that with a bunch of "learn" optimizations. I can
+g->learnFromOtherGhost(), and when I do that, I just check the AFNs are the
+same. If they are, the data is safe to transfer over. The learning algorithim
+will be smart to either keep or discard things.
+
+My preference is to deal with .gfs_ip files at termination of the program, so 
+lets let the dirty handler take that. 
+
+SO we need really good learn semantics. Maybe we should write those down.
+
+In the case of snapshot, I start with snap:foo:filea. Lets say I want to
+operate on that file to do an LS. I'll make a ghost representing
+snap:foo:filea. The AFN convert will see it as a ^234db pointer (forcing a
+checksum of the file along the way, which is an separate thing), and therefore
+we'll potentially hit the global cache, not even reading the file directly.
+
+So decision stands: the AFNs will never directly enter the pool.
+
+# Learn semantics: Time to get these right
+
+There are two different kinds of stat overrides. Some stat overrides imply
+immediately that the file is different, or are such a warning sign that they
+cannot be ignored.
+
+	- The size has changed (hash by definition cannot be the same)
+
+Other stat overrides merely suggest suspicion.
+
+	- Modification date changes
+	- Inode has changed
+	- Creation date has changed
+
+
+Entity(truth name / time name)
+
+statA/B - A=size B=everything else
+hash - hash
+
+
+
+
+
+A(statA/A/1) <- A(statB/B/1) = ERROR
+
+	Error. Times are identical. 
+
+A(statA/A/2) <- A(statB/B/1) = A(statA/A/2)
+
+	Newer stat in learner remains over older one from teacher
+
+A(statA/A/2) <- A(statB/B/1) = A(statA/A/2)
+
+	Newer stat in learner remains over older one from teacher
+
+A(statA/A/2) <- A(statB/B/1) = A(statA/A/2)
+
+	Newer stat in learner remains over older one from teacher
+
+A(statA/A/1) <- A(statB/B/2) = A(statB/B/2)
+
+	Newer stat from teacher enters learner 
+
+Simple cases, old replacing new (as a compound step)
+
+	A(statA/A/1,hashA/1) <- A(statB/B/2,hashB/2) = A(statB/B/2,hashB/2)
+
+Simple case, older data is is ignored
+
+	A(statA/A/3,hashA/3) <- A(statB/B/2,hashB/2) = A(statA/A/3,hashA/3)
+	
+Stat B is different, hashB is different	
+
+	A(statA/A/1,hashA/1) <- A(statB/B/2,hashB/1) = ERROR - two conflicting hashes w/ same timestamp
+
+	A(statA/1,hashA/2) <- A(statB/B/2,hashB/1) = IMPOSSIBLE - 
+		A would never have a stat older than the snapapshot
+
+Harder case, B is more recently stated, but has older hash. Size same
+
+	A(statA/X/2,hashA/2) <- A(statB/X/3,hashB/1) = A(statB/X/3,hashA/2)
+	# take stat B as a refresh, allow the older hash to live on
+
+	A(statA/X/2,hashA/2) <- A(statB/Y/3,hashB/1) = A(statB/Y/3,<revoked>)
+
+Now break down into smaller logical steps
+
+	A(statA/X/2,hashA/2) <- A(statB/X/3) = A(statB/X/3,hashA/2)
+	# allow the B to come in
+
+	A(statA/X/2,hashA/2) <- A(statB/Y/3) = A(statB/Y/3,<revoked>)
+	# Hash "revocation" case
+
+	A(statA/X/2,hashA/2) <- A(hashB/3) = A(statB/Y/3,hashB/3)
+	# new has enters as long as its same or newer than the stat on A
+
+Now try it without an explicit recovcation - can it work?
+
+	A(statA/X/2,hashA/2) <- A(statB/Y/4) = A(statB/Y/4,hashA/2)**
+	# Hash "revocation" case, A is now dirty
+
+	A(statB/Y/4,hashA/2)** <- A(hashB/3) = A(statB/Y/4,hashA/2)**
+
+	# Entry of a hash older that stat, but newer than hash. Allow it. 
+
+The revocation plays a role here -- it conveys information.  In the case that
+the hash and the stat date are identical, we know the ghost is maximally
+correct. If the stat date is newer, we cannot distinguish between the case
+that innocent data came along and really corrupting data came aloing.
+
+Theoretically, there is nothing "wrong" with keeping the old hash.
+Technically, the information is out of date and caller could decide. But we've
+lost the change to tell the caller just how badly out of date that information
+is.
+
+I think the optimal policy then is to signal this case with recovcation.. If I
+ask a ghost for a hash, its the best knowledge of the ghost's current state.
+If I learn that my data is wrong, i'm failing in the contract even if I return
+the "best known."
+
+Basiclaly, the best known hash of a ghost who has received a size change is no
+hash at all.
+
+# The rules in summary now that we have them
+
+RULE #1: A stat can never be older than the hash in a given ghost. 
+Cause for immediate program termination.
+
+RULE #2: Two peices of information with the same date must be the same, otherwise ERROR
+
+RULE #3: The date corresponding to the size is lockstep with the date on rest of the stat
+
+RULE #4: A new provided hash will be accepted into a learner as long as its date is newer than both the hash and the stat
+
+RULE #5: A new stat that represents a change in size should invalidate the
+existing hash, unless the hash has the exact same date as the stat. (If the existing
+hash is newer than the incoming stat, but older than the existing stat, we
+have a logical violation of RULE #1)
+
+
+
+
+
+
+
+
+
+
+
+
+## Entries vs. ghosts
+
+An entry is a thing that exists somewhere for the name. A ghost is a view
+about state of an entry. There can be many conceptual ghosts pointing at the
+same entry. When I call the truthkeeper, my request is to get the most recent
+(or best) ghost for that entry. 
+
+
+
+
+
+
+
+
+
+
 
 things that are not virtual are 'confirmed'.
 
@@ -107,6 +384,8 @@ ghosts that are not real should never be attempted to convert to AFNs? is that
 true? they certainly shouldn't find their way into a persistent store. if that
 were true, the truthkeeper has to learns that it is actualized, and thats when
 it does and AFN test.
+
+
 
 
 

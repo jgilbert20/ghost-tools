@@ -1,6 +1,12 @@
 Working Ideas.txt
 
 
+- make sure undef is really clear in serialization/deserialization
+- finish implementing learn()
+- fix the incorporation logic code. 
+
+
+
 # Priorities
 
 Generally: Get copy|rsync working PERFECTLY then focus on automation and object stores
@@ -15,8 +21,9 @@ Generally: Get copy|rsync working PERFECTLY then focus on automation and object 
 - now we need to have a world where we can do a recursive descent into a snapshot
   in a clean way
 
-
-
+WORKS              gfs ls snap:snapshot-9247.out:a/filea1 
+DOESNT WORK:       gfs ls snap:snapshot-9247.out:a
+needs better error gfs ls snap:snapshot-9247.out:a/doesnotexist
 
 - lsdup should work with snapshots
 - need to implement rsync

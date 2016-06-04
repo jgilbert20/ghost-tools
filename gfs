@@ -99,7 +99,7 @@ sub expressRelativeTime
 	if( $seconds > 120)
 	{
 		$seconds /= 60;
-		my $r = sprintf( "%0.4s secs", $seconds );
+		my $r = sprintf( "%0.4s min", $seconds );
 		return $r;
 	}
 
@@ -605,10 +605,11 @@ sub doverb_ls()
 		my $lfh_string = (defined $lastFullHash) ? strftime( "%c", localtime( $lastFullHash) ) : '<not calculated>';
 
 		my $d = (defined $lastFullHash) ? expressRelativeTime( $main::SCRIPT_START - $lastFullHash ) : "x";
+		my $type = $g->getType() || '?';
 
 		$lfh_string .= "($d)";
 
-		print +(join "\t", $fullHash,$lfh_string,$userFN) . "\n";
+		print +(join "\t", $type,$fullHash,$lfh_string,$userFN) . "\n";
 	}
 }
 
@@ -1258,9 +1259,10 @@ sub finalize
 {
 	my $self = shift;
 
-	debug "Shutdown $self.. - no action taken.\n";
+	# in practice, this is not always called. It may not have entered the FSE
+	# cache. i'm not sure yet if that is an issue or not.
 
-
+	debug "Shutdown $self.. - no action taken.";
 }
 
 sub new
@@ -1399,6 +1401,15 @@ sub shutdown
 	}
 }
 
+# sub getGlobalFSHandler
+# {
+# 	return $main::localFileSystemFSE if defined $main::localFileSystemFSE;
+
+# 	my $r = $main::localFileSystemFSE = new FilesystemExplorer::FS();
+# 	$fseForHandlerRoot{"fs:root"} = $r;
+# 	return $r;
+# }
+
 sub getFSEHandlerForGhost
 {
 	my $class = shift;
@@ -1457,9 +1468,9 @@ my %ghostForLFN_private;
 my %ghostForAFN_private;
 my %ghostStoreForDescriptorLFN;
 
-my $icDebug = 0;
-my $tkdebug = 0;
-my $tkflushdebug = 0;
+my $icDebug = 1;
+my $tkdebug = 1;
+my $tkflushdebug = 1;
 
 sub debug($)
 {
@@ -2754,18 +2765,18 @@ sub makeDebugString
 	# Warning: Don't fire of any  "getXXX" here
 	no warnings;
 
-	my $lfn = $self->lfn();
-	my $lastFullHash = $self->lastFullHash();
-	my $size = $self->size();
-	my $mode = $self->mode();
-	my $fullHash = $self->fullHash();
-	my $lastDirScan = $self->lastDirScan() || '<none>';
-	my $lastStat = $self->lastStat();
-	my $mtime = $self->mtime();
-	my $lastEnumerated = $self->lastEnumerated();
-	my $firstStat = $self->firstStat();
-	my $fileStatus = $self->fileStatus();
-	my $immutable = $self->_immutable();
+	my $lfn 			= defined( $self->lfn() ) 		? $self->lfn() : "undef";
+	my $lastFullHash 	= defined( $self->lastFullHash() ) 		? $self->lastFullHash() : "undef";
+	my $size 			= defined( $self->size() ) 		? $self->size() : "undef";
+	my $mode 			= defined( $self->mode() ) 		? $self->mode() : "undef";
+	my $fullHash 		= defined( $self->fullHash() ) 		? $self->fullHash() : "undef";
+	my $lastDirScan 	= defined( $self->lastDirScan() ) 		? $self->lastDirScan() || '<none>' : "undef";
+	my $lastStat 		= defined( $self->lastStat() ) 		? $self->lastStat() : "undef";
+	my $mtime 			= defined( $self->mtime() ) 		? $self->mtime() : "undef";
+	my $lastEnumerated 	= defined( $self->lastEnumerated() ) 		? $self->lastEnumerated() : "undef";
+	my $firstStat 		= defined( $self->firstStat() ) 		? $self->firstStat() : "undef";
+	my $fileStatus 		= defined( $self->fileStatus() ) 		? $self->fileStatus() : "undef";
+	my $immutable 		= defined( $self->_immutable() ) 		? $self->_immutable() : "undef";
 
 	# not technically a field but we should include this
 	my $type = $self->extractTypeFromMode( $mode );
@@ -2957,6 +2968,7 @@ sub hasAcceptableFullhash
 
 		if( $age > $main::GUARD_TIME_SECONDS )
 		{
+			CODEPATH( "Hash too old, recheck forced" );
 			debug ( join '', "Forcing hash recalculation (", main::expressRelativeTime( $age ), ")\n");
 			return 0; 
 		}
@@ -2979,7 +2991,16 @@ sub getFullHash
 	}
 	else
 	{
-		return $self->getFullHashSourceVerify( time() );
+		# The key strategy here is to stat the file twice before and after.
+		# This ensures that the file isn't changing underneath us
+
+		my $t = time();
+
+		$self->getStatSourceVerify( $t );
+		$self->getFullHashSourceVerify( $t );
+		$self->getStatSourceVerify( $t );
+
+		return $self->fullHash(); 
 	}
 }
 
@@ -3000,6 +3021,7 @@ sub hasAcceptableStat
 
 		if( $age > $main::GUARD_TIME_SECONDS )
 		{
+			CODEPATH( "Hash too old, recheck forced" );
 			debug (join '', "Forcing recalculation (", main::expressRelativeTime( $age ), ")\n" );
 			return 0; 
 		}
@@ -3061,6 +3083,58 @@ sub verifyGhostIsMutable
 	die "Mutable operation attempted on immutable ghost!" if $self->isImmutable();
 }
 
+###########
+# The Learning Rules for Ghosts
+#
+# A set of rules govorn how new information is learned from an outside source.
+# All truth state merger information happens here. The core rules have been worked
+# out in a mini-proof in the CONCEPTS.txt document. 
+#
+# RULE #1: A stat can never be older than the hash in a given ghost. 
+# Cause for immediate program termination.
+# 
+# RULE #2: Two peices of information with the same date must be the same, otherwise ERROR
+# 
+# RULE #3: The date corresponding to the size is lockstep with the date on rest of the stat. Correlary -- all stat information must travel together
+# 
+# RULE #4: A new provided hash will be accepted into a learner as long as its date is newer than both the hash and the stat
+# 
+# RULE #5: A new stat that represents a change in size should invalidate the
+# existing hash, unless the hash has the exact same date as the stat. (If the existing
+# hash is newer than the incoming stat, but older than the existing stat, we
+# have a logical violation of RULE #1)
+#
+# RULE #6: New stat overrides old stat
+#
+# Policy: same information with a new date does not normally force dirtyness
+# unless it is a hash, because the hash is expensive
+#
+
+
+
+
+
+
+
+# Should undelete the file
+
+sub learnPresent
+{
+	my $self = shift;
+	my $time = shift; 
+
+	$self->verifyGhostIsMutable();
+
+	# TODO: implement field
+}
+
+sub CODEPATH($)
+{	
+	my $p = shift; 
+	print "CODEPATH: $p\n";
+}
+
+
 # Dirscan means that we have seen the ghost in a directory scan
 # TODO also update a "firstSeen" field.
 # If deleted, this should undelete by delegating to learnPresent
@@ -3082,17 +3156,162 @@ sub learnDirscan
 	$self->learnPresent( $time );
 }
 
-# Should undelete the file
 
-sub learnPresent
+sub learnStat
 {
 	my $self = shift;
-	my $time = shift; 
+	my $time = shift;
+
+	die "learnStat() did not get a time argument" unless defined $time;
+	die "incoming information newer than current time" if $time > time();
+
+	my $size = shift;
+	my $mtime = shift;
+	my $mode = shift; 
+
+	# RULE3: ALl stat informaiton must travel together. 
+
+	die "learn() got partial stat (violates RULE#3)" if not defined $size;
+	die "learn() got partial stat (violates RULE#3)" if not defined $mtime;
+	die "learn() got partial stat (violates RULE#3)" if not defined $mode;
 
 	$self->verifyGhostIsMutable();
 
+	# RULE1: t(stat) > t(hash) or BOMB
 
-	# TODO: implement field
+	if( (defined $self->lastFullHash()) && ($time < $self->lastFullHash() ))
+	{
+		die "RULE 1: RULE1: t(stat) > t(hash) or BOMB";
+	}
+
+	# RULE2: incoming information with same date as existing information must be same
+
+	if( (defined $self->lastStat()) and ($time == $self->lastStat() ))
+	{
+		die "Rule2: Info with same date must match existing" unless $self->size() == $size;
+		die "Rule2: Info with same date must match existing" unless $self->mtime() == $mtime;
+		die "Rule2: Info with same date must match existing" unless $self->mode() == $mode;
+	}
+
+	# RULE #5: A new stat that represents a change in size should invalidate the
+	# existing hash, unless the hash has the exact same date as the stat. (If the existing
+	# hash is newer than the incoming stat, but older than the existing stat, we
+	# have a logical violation of RULE #1)
+
+	if( (defined $self->size()) && ($self->size() != $size))
+	{
+		$self->lastFullHash(undef);
+		$self->fullHash(undef);
+
+		CODEPATH( "revokehash with new size" );
+	}
+
+	if( (defined $self->lastStat()) and ($time < $self->lastStat() ))
+	{
+
+		CODEPATH( "ignored older incoming stat" );
+		return;
+	}
+
+
+
+	my $anythingHasChanged = 0;
+
+	if( 
+		(not defined $self->lastStat()) or 
+		(not defined $self->size()) or 
+		(not defined $self->mtime()) or 
+		(not defined $self->mode()) 
+		)
+	{
+		$anythingHasChanged = 1; 
+	}
+	else
+	{
+		$anythingHasChanged = 1 if( $self->size() != $size );
+		$anythingHasChanged = 1 if( $self->mtime() != $mtime );
+		$anythingHasChanged = 1 if( $self->mode() != $mode );
+	}
+
+	if( (defined $self->lastStat()) and ($time > $self->lastStat() ))
+	{
+		CODEPATH( "Newer stat information accepted");
+		return; 
+	}	
+
+	$self->size($size);
+	$self->mtime($mtime);
+	$self->mode($mode);
+
+	$self->lastStat( $time );
+
+	if(( $anythingHasChanged == 0 ) and ($time > $self->lastStat() ))
+	{
+		CODEPATH( "new stat did not mark dirty" );
+	}
+
+
+
+	$self->dirty(1) if $anythingHasChanged;
+}
+
+sub learnFullHash
+{
+	my $self = shift;
+	my $time = shift;
+	my $hash = shift;
+
+	die unless defined $time;
+	die unless defined $hash;
+
+	die "incoming information newer than current time" if $time > time();
+
+	$self->verifyGhostIsMutable();
+
+	# RULE 1: A stat can never be older than the hash in a given ghost
+
+	if( defined $self->lastFullHash() and defined $self->lastStat() )
+	{	
+		die "stat cannot be older than hash (assert)" unless $self->lastFullHash() <= $self->lastStat();
+	}	
+
+	# Check rule 1 and rule 2
+
+	if( defined $self->lastFullHash() )
+	{
+		# RULE 1: A stat can never be older than the hash in a given ghost
+
+		die "stat cannot be older than hash" unless $self->lastFullHash() <= $time;
+	
+		# Rule 2: New information with same date must be same information
+
+		if( $self->lastFullHash() == $time )
+		{
+			die "Rule 2 violation" unless  $self->fullHash() eq $hash; 
+		}
+	}
+
+	# Avoid doing anything if the hash is older
+
+	if( (defined $self->lastFullHash()) and ($time < $self->lastFullHash() ))
+	{
+		CODEPATH( "Ignored older hash");
+		return; 
+	}	
+
+	if( (defined $self->fullHash()) and ($hash ne $self->fullHash() ))
+	{
+		CODEPATH( "Newer hash information accepted"); 
+	}
+
+	if( !(defined $self->fullHash()))
+	{
+		CODEPATH( "First hash information accepted"); 
+	}		
+
+	$self->lastFullHash( $time );
+	$self->fullHash( $hash );
+	$self->dirty(1);
 }
 
 # Deleted means that we did not see the ghost
@@ -3139,20 +3358,6 @@ sub getType
 	return $self->extractTypeFromMode( $mode );
 }
 
-sub learnFullHash
-{
-	my $self = shift;
-	my $time = shift;
-	my $hash = shift;
-
-	$self->verifyGhostIsMutable();
-
-	# TODO - merger and revocation case here
-
-	$self->lastFullHash( $time );
-	$self->fullHash( $hash );
-	$self->dirty(1);
-}
 
 sub getFullHashSourceVerify
 {
@@ -3167,27 +3372,6 @@ sub getFullHashSourceVerify
 	return $fullhash;
 }
 
-sub learnStat
-{
-	my $self = shift;
-	my $time = shift;
-
-	my $size = shift;
-	my $mtime = shift;
-	my $mode = shift; 
-
-	$self->verifyGhostIsMutable();
-
-	# TODO - merger and revocation case here
-
-	$self->size($size);
-	$self->mtime($mtime);
-	$self->mode($mode);
-
-	$self->lastStat( $time );
-
-	$self->dirty(1);
-}
 
 sub getStatSourceVerify
 {
