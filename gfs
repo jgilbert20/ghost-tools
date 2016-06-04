@@ -543,7 +543,7 @@ sub doverb_writeSnapshot()
 			$g->forceCharacterization();
 		}
 
-		$g->printDebug();
+		# $g->printDebug();
 
 		$targetFSE->storeGhost($g);
 
@@ -558,6 +558,7 @@ sub doverb_writeSnapshot()
 
 sub doverb_writeSnapshot_old()
 {
+	die"";
 	my $tk = TruthKeeper::get();
 	my ($targetGS, $targetStash) = $tk->makeGhostsFromCommandLine( @ARGV );
 
@@ -596,7 +597,7 @@ sub doverb_ls()
 	{
 		my( $userFN, $fqlfn, $g ) = @$tuple;
 
-		$g->printDebug();
+		# $g->printDebug();
 
 		my $fullHash = $g->fullHash() || '<not calculated>';
 		my $lastFullHash = $g->lastFullHash();
@@ -629,7 +630,7 @@ sub doverb_checksum()
 
 
 		my $fullHash = $g->getFullHash();
-		$g->printDebug();
+		# $g->printDebug();
 
 		print +(join "\t", $fullHash, $g->lfn()), "\n";
 
@@ -873,8 +874,6 @@ sub rewriteLFNreplaceRoot
 	return assembleLFN( $handler, $root, $path );
 }
 
-
-
 # Takes an LFN and removes the leading directory from the path component
 
 sub rewriteLFNPathToBasename
@@ -898,8 +897,6 @@ sub rewriteLFNwithLeadingDirectory
 	$path = main::canonize( $path );
 	return assembleLFN( $handler, $root, $path);
 }
-
-
 
 # Pass it a path (not a FQLFN) and you'll get the canonical version
 # which can be file compared
@@ -1017,7 +1014,7 @@ sub fullyQualifyLFN
 
 	$path = main::canonize( $path );
 
-	debug "FULLY QUALIFY LFN:[$lfn] -> handler:[$handler] root:[$root] path:[$path]\n";
+	# debug "FULLY QUALIFY LFN:[$lfn] -> handler:[$handler] root:[$root] path:[$path]\n";
 
 	return assembleLFN( $handler, $root, $path );
 }
@@ -1027,6 +1024,8 @@ package FilesystemExplorer::Snapshot;
 use File::Basename;
 use base qw(Class::Accessor);
 FilesystemExplorer::Snapshot->mk_accessors( qw( dirty rootGhost rootGhostStore isFinalized deNovo) );
+
+my $fseSnapshotDebug = 0;
 
 sub debug($)
 {
@@ -1117,7 +1116,7 @@ sub finalize
 
 	if( not $self->deNovo() )
 	{
-		debug "Snapshot is not new, no finalization performed.";
+		debug "Snapshot is not new, no finalization performed." if $fseSnapshotDebug;
 	}
 	else
 	{
@@ -1182,7 +1181,7 @@ sub loadRootIfNeeded
 		$self->deNovo(1);
 	}
 
-	debug "Incorporating snapshot truth\n";
+#	debug "Incorporating snapshot truth\n" if $tkdebug;
 
 	TruthKeeper::get()->incorporateGhostStore( $rgs );
 
@@ -1375,7 +1374,7 @@ package FSEFactory;
 
 # is container the right term for this?
 
-my $fseFactoryDebug = 1;
+my $fseFactoryDebug = 0;
 my %fseForHandlerRoot;
 
 sub debug($)
@@ -1390,12 +1389,12 @@ sub shutdown
 
 	# TODO - odd exception if the local FSE handler is not here, right?
 
-	debug( "-- Shutting down FSE Factory");
+	debug( "-- Shutting down FSE Factory") if $fseFactoryDebug;
 
 	foreach my $key ( keys %fseForHandlerRoot )
 	{
 		my $fse = $fseForHandlerRoot{$key};
-		debug( "Sending finalization call to $fse");
+		debug( "Sending finalization call to $fse") if $fseFactoryDebug;
 		$fse->finalize();
 	}
 }
@@ -1458,7 +1457,9 @@ my %ghostForLFN_private;
 my %ghostForAFN_private;
 my %ghostStoreForDescriptorLFN;
 
-my $tkdebug = 1;
+my $icDebug = 0;
+my $tkdebug = 0;
+my $tkflushdebug = 0;
 
 sub debug($)
 {
@@ -1485,7 +1486,10 @@ sub makeGhostsFromCommandLine
 	{
 		my $fqlfn = main::fullyQualifyLFN( $lfn );
 
-		debug "Make Ghost Via CommandLine user provided lfn:[$lfn]->fqLFN:[$fqlfn] from command line to store\n";
+		debug "Make Ghost Via CommandLine user provided ".
+			"lfn:[$lfn]->fqLFN:[$fqlfn] from command line to store\n"
+			if $tkdebug;
+
 		my $g = $self->obtainGhostForLFN($fqlfn);
 		$gs->addGhost( $g );
 		push @stash, [$lfn, $fqlfn, $g ];
@@ -1555,21 +1559,21 @@ sub flush
 
 #	debug Dumper( $self );
 
-	debug "---- Beginning flush ---\n";
+	debug "---- Beginning flush ---\n" if $tkflushdebug;;
 
-	debug "---- Inventory of all internally tracked ---\n";
+	debug "---- Inventory of all internally tracked ---\n" if $tkflushdebug;;
 
-	$self->printInternallyTrackedLFN();
+	$self->printInternallyTrackedLFN() if $tkflushdebug;
 
-	debug "---- Inventory of all internally tracked AFNs ---\n";
+	debug "---- Inventory of all internally tracked AFNs ---\n" if $tkflushdebug;;
 
-	$self->printInternallyTrackedAFN();
+	$self->printInternallyTrackedAFN() if $tkflushdebug;
 
-	debug "---- Ghost Cache Writes ---\n";
+	debug "---- Ghost Cache Writes ---\n" if $tkflushdebug;
 
 	$self->flushGhostDescriptorCache();
 
-	debug "---- Verify ---\n";
+	debug "---- Verify ---\n" if $tkflushdebug;
 
 	$self->verifyNoDirtyGhostsRemain();
 }
@@ -1748,8 +1752,6 @@ sub incorporateGhostData
 {
 	my $self = shift;
 	my $g = shift;
-
-	my $icDebug = 1;
 
 	my $lfn = $g->lfn();
 	my $ghostForLFN = $self->ghostForLFN();
@@ -2060,6 +2062,7 @@ use POSIX;
 use base qw(Class::Accessor);
 GhostStore->mk_accessors( qw(lfnToGhost clean sizeToFNs) );
 
+my $gsDebug = 0;
 
 sub debug($)
 {
@@ -2067,8 +2070,6 @@ sub debug($)
 	main::debug( "GS: " . $a );
 }
 
-
-my $gsDebug = 1;
 
 sub new
 {
@@ -2492,7 +2493,7 @@ Ghost->mk_accessors( qw(lfn lastFullHash size mode fullHash
 	dirty isTKversion lastDirScan lastStat mtime lastEnumerated firstStat fileStatus
 	 children _immutable _debugID) );
 
-my $serializeDebug = 1;
+my $serializeDebug = 0;
 my $gChildDebug = 0;
 
 
@@ -2582,8 +2583,6 @@ sub newFromSerialized($)
 		my $newRoot = $options{snapshotRoot};
 
 		$serialLFN = main::rewriteLFNreplaceRoot( $serialLFN, $newRoot );
-
-
 	}
 
 
@@ -2611,8 +2610,8 @@ sub newFromSerialized($)
 
 	if( $serializeDebug )
 	{
-		debug "Just deserialized: ";
-		$self->printDebug();
+		debug "Just deserialized: ".$self->makeDebugString();
+		
 	}	
 
 	return $self;
