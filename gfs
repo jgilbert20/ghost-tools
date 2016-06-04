@@ -1600,13 +1600,17 @@ sub verifyNoDirtyGhostsRemain
 
 		# TODO- unresolved design decision
 
-		if( $g->getHandler() eq 'snap')
+		if($g->dirty())
 		{
-			debug "Wierd straggler case - I haven't figured out yet who, if anyone flushes this type of object.";
-		}
-		else
-		{
-			$error++ if $g->dirty();
+			if( $g->getHandler() eq 'snap')
+			{	
+				my $lfn = $g->lfn();
+				debug "Wierd straggler case - I haven't figured out yet who, if anyone flushes this type of object.: $lfn";
+			}
+			else
+			{
+				$error++;
+			}
 		}
 	}
 
@@ -2286,9 +2290,7 @@ sub writeAsDescriptor($)
 		if( $gsDebug )
 		{
 			my $lfn = $g->lfn();
-			debug "    WAD: Write ($lfn):";
-			debug $g->serialize( pathMode => "basename");
-			debug "\n"
+			debug "    WAD: Write ($lfn):".  $g->serialize( pathMode => "basename");
 		}
 	}
 
