@@ -856,7 +856,7 @@ sub rewriteLFNPathAbsolute
 	my $lfn = shift;
 	die unless defined $lfn;
 	my( $handler, $root, $path ) = parseFQLFN( $lfn );
-	die "only fs roots can be made into absolute paths" unless $root eq 'fs';
+	die "only fs roots can be made into absolute paths ($lfn)-($root)" unless $handler eq 'fs';
 	$path = abs_path( $path );
 	return assembleLFN( $handler, $root, $path );
 }
