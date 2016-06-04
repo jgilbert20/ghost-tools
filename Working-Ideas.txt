@@ -12,6 +12,12 @@ Generally: Get copy|rsync working PERFECTLY then focus on automation and object 
 	also there should be an AFN cache just to be sure logic is super tight
 	(e.g. check for collisions)
 
+- now we need to have a world where we can do a recursive descent into a snapshot
+  in a clean way
+
+
+
+
 - lsdup should work with snapshots
 - need to implement rsync
 - why is . getting stored in ghost descriptors when you do a lsdup .????

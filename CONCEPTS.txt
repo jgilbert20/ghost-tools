@@ -103,9 +103,10 @@ this is a pretty wide ranging issue, turns out. Say I invoke the following
 technically, "snap:snapshot-5803.out:quxx" will trigger creation of a FSE 
 all of these ghosts are sort of not real.
 
-ghosts that are not real should never be attempted to convert to AFNs? is that true?
-they certainly shouldn't find their way into a persistent store.
-if that were true, the truthkeeper learns that it is actualized. 
+ghosts that are not real should never be attempted to convert to AFNs? is that
+true? they certainly shouldn't find their way into a persistent store. if that
+were true, the truthkeeper has to learns that it is actualized, and thats when
+it does and AFN test.
 
 
 

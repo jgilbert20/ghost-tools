@@ -845,6 +845,11 @@ sub assert_regularpath($)
 	return 1; 
 }
 
+# Returns a fully cleaned up absolute path name for this file
+# Initial testing has shown this handles foo/../../ properly, etc
+# probably requires a ton of stats in cases where there are ..
+# but doesn't appear to be too onerous for usual path names
+
 sub rewriteLFNPathAbsolute
 {
 	my $lfn = shift;
@@ -1692,7 +1697,6 @@ sub getGhostStoreForDescriptorFileCoveringFN
 	}
 	else
 	{
-
 		# must revisit TODO - the point of this cache is that it shouldn't get too big
 		# die "Overflow!" if ((keys %ghostStoreForDescriptorLFN) > 100);
 
@@ -1750,7 +1754,7 @@ sub incorporateGhostData
 	my $lfn = $g->lfn();
 	my $ghostForLFN = $self->ghostForLFN();
 
-my $DID = $g->debugID();
+	my $DID = $g->debugID();
 	#debug "Incorporating ghost lfn:[$lfn] ptr:[$DID] (self=$self, glfn=$ghostForLFN)\n" if $icDebug;
 	debug "Incorporating ghost lfn:[$lfn] ptr:[$DID]\n" if $icDebug;
 
@@ -1845,6 +1849,7 @@ sub obtainGhostForLFN
 	# Next look for in global cache (if present)
 	# TODO when time comes, implement global cache
 
+	# X X X X X X X X 
 
 	# Next look in local descriptor
 	# TODO, this is sort of wrong -- the ghost store is useless for certain types of LFNS
@@ -1912,9 +1917,6 @@ sub obtainGhostForLFN
 }
 
 
-
-
-
 ##########
 #
 # GhostIterator -- A helper for iterating over nested directories
@@ -1929,14 +1931,11 @@ use File::Basename;
 use base qw(Class::Accessor);
 GhostIterator->mk_accessors( qw(queue recurse parentGhoststore) );
 
-
-
 sub debug($)
 {
 	my $a = shift;
 	main::debug( "GI: " . $a );
 }
-
 
 my $GI_DEBUG = 0; 
 
@@ -2044,9 +2043,6 @@ sub nextRaw
 
 	return $c;
 }
-
-
-
 
 
 
@@ -2827,19 +2823,11 @@ sub isSameFilename
 	return 0;
 }
 
-# Returns a fully cleaned up absolute path name for this file
-# Initial testing has shown this handles foo/../../ properly, etc
-# probably requires a ton of stats in cases where there are ..
-# but doesn't appear to be too onerous for usual path names
 
 sub absoluteLFN
 {
 	my $self = shift;
-
-	# this should really delegate down to the FSE
-
 	return $self->getFSE()->getAbsoluteLFNForGhost($self);
-
 }
 
 sub isDuplicateOf
@@ -2852,7 +2840,7 @@ sub isDuplicateOf
 
 	return 0 if( $self->getSize() ne $other->getSize() );
 
-#    die "Incomplete info self full hash" if not defined $self->fullHash();
+#   die "Incomplete info self full hash" if not defined $self->fullHash();
 #	die "Incomplete info other full hash " if not defined $other->fullHash();
 
 
@@ -2873,7 +2861,6 @@ sub serialize()
 	if( exists $options{'pathMode'} and $options{'pathMode'} eq 'basename' )
 	{
 		$lfn = main::rewriteLFNPathToBasename( $lfn )
-
 	}
 
 	# GHOST_NEW_FIELD: Place 3/4 where you add new fields to ghosts
@@ -2939,7 +2926,6 @@ sub make_private($)
 sub make
 {
 	die "Assert - old code, warning!!";
-
 }
 
 # Forces the key fields to be loaded if they aren't already known
@@ -3073,9 +3059,7 @@ sub getMTime
 sub verifyGhostIsMutable
 {
 	my $self = shift;
-
 	die "Mutable operation attempted on immutable ghost!" if $self->isImmutable();
-
 }
 
 # Dirscan means that we have seen the ghost in a directory scan
@@ -3156,8 +3140,6 @@ sub getType
 	return $self->extractTypeFromMode( $mode );
 }
 
-
-
 sub learnFullHash
 {
 	my $self = shift;
@@ -3219,7 +3201,6 @@ sub getStatSourceVerify
 
 	return undef;
 }
-
 
 ###
 
