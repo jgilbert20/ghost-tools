@@ -17,13 +17,23 @@ a --test-harness mode
 	should dump out run variables at the end
 
 
+++++++++++++++++++
 
+make sure ls never forces a rehash
+make sure that when decending and getting stats, ls finds changed file sizes that lead to revoked hashes
+snapshot something
+make sure we can ls the thing
+make sure snapshot does or does not invalidate other things when its being built
+
+
+
+
+++++++++++++++++++++
 
 # 000 - module
 # 000 - invoke
 so there is a file gfstest.out/run-000-000-YYYMMMDDD-HHHMMMSS.stdout
 so there is a file gfstest.out/run-000-000-YYYMMMDDD-HHHMMMSS.stderr
-
 
 
 

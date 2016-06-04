@@ -1,4 +1,79 @@
 
+
+immutable - basically means the ghost's truth state cannot change
+for instance, in the case of a snapshot
+
+virtual - we don't know if its "real" or not. its a taint check basically
+
+things you pass on the command line should start out virtual
+
+things that are not virtual are 'confirmed'.
+
+they could be deleted, present, missing, etc
+
+but to not be virtual, someone somewhere has to either deserialize them
+from the past, or find them authoritatively on disk 
+
+that way we don't contaminate the pool of ghosts
+
+if the program that the user is asking to run cannot track down a confirmed ghost,
+they can decide what to do (it's basically a file not found.)
+
+
+
+# How do ghost work when they cross into the world of snapshots?
+
+hah, interesting issue: what ghosts shpuld we pull from a snapshot? its
+written as a bunch of fs:root: things... so  pulling them straight out of the
+file contaminates the truth store.
+
+but really, as a snapshot, we need to load it as virtualized objects, in their
+world now, they are in a different name space
+
+raises another question: boundary case -if you snapshot a snapshot, what
+should happen? - i think the right thing is to either save a snapshot with
+rewritten LFNs or to change the LFNs when loading
+
+DECISION: I think its more correct to do on writing, e.g. -> convert  to snapshot LFNs
+during the write operation
+
+this requires new FSE semantics
+should we think of a snapshot operation as a push into a filesystem?
+
+YES
+
+make a ghost for the snapshot-to-be
+mkae FSE
+FSE->addObject( $g );
+	clone the ghost and re-write the LFN
+	make them immutable
+FSE->finalize();
+
+we probably will need similiar semantics on object stores
+
+
+
+# Interesting hanging chad around ghosts
+
+say you want to write a snapshot to a new place. you get a ghost for
+[snap:snapshot-5419.out:] and get the FSE to write to it. You store some
+objects in it, and finalize the FSE. But there is a significant gap - what is
+the purpose of [snap:snapshot-5419.out:]? Does it need to be finalized?
+
+it is technically a valid path. its a valid thing in the world. its the head
+position of a snapshot. its even been read and written to a few times. the
+ghost represents a real thing, and you could potentially even want to do an LS
+on it later.  so who is supposed to write it to disk?
+
+
+
+
+
+
+
+
+
+
 # What is a ghost?
 
 The basic object is a ghost. A ghost is a description of some object
@@ -80,7 +155,7 @@ So LFNs are designed to hold three peices of information, and together forms a
 unique namespace.
 
 
-# What is truth?
+# What is truth? What is the single source of truth?
 
 Ghost is a description of the potential state of a file.
 
@@ -94,6 +169,51 @@ Currently, contracts look like this
 - The only reason TK is not used to make ghosts is in cases where you are deliverably
 - TK holds all ghost pointers and knows if they are dirty or not
 - Generally, the FSE doesn't hold links back to ghosts except in cases where a ghost is a root (like a snapshot)
+
+
+# design ideas for object stores
+object store concepts
+
+a blob always has the hash of the file it saves - the header (everything up to the first null) can be anything
+
+
+# Revocation rules and timing
+
+
+we need to not be in a situation where the fullhash has changed but
+the stat stays the same
+scenario - two ghosts pointing to same file
+ghost A has Ha and Sa (hash and stat)
+ghost B has Hb and Sa
+
+if Hb is later that Ha, we'd be confused - how could both stats be identical but the hash has changed?
+contract should be
+getStat
+getHash
+getStat
+
+if stat is the same both times, than take the timestamp and report it for both
+
+also implies the "learn" semantic should always be accompanied by a date
+and not generated inside the routines'
+
+(merge case)
+
+A new stat does not mean that a hash is out of date. The stat date should be used for resolving which of two stats is most accurate. 
+
+stat fields should be taken all or nothing. 
+
+The only cause for revoking a hash is when the size has changed or last modification date has changed. 
+
+The revocation should not be immediate. It can be lazy. Maybe an optional warning. But the next time anyone asks for a hash on that file, we'd be forced to get one. 
+
+Ghosts should never revoke other ghosts. Let that semantic rest with truth keeper. TK will just ask for incorporation in direction it wants. 
+
+If you ask for a ghost that has no authoritative record is should be marked as virtual. 
+
+One sanity check is that the virtual ghost should not be written to disk under normal cases. 
+
+
 
 
 +++++++++++
@@ -234,9 +354,6 @@ GS: Ghoststore
 
 ###
 
-object store concepts
-
-a blob always has the hash of the file it saves - the header (everything up to the first null) can be anything
 
 ++++
 
@@ -299,43 +416,6 @@ this is going to be done anyway by the OS
 also a guard if the file changes and the original stat and hash fall out of sync
 
 
-
-we need to not be in a situation where the fullhash has changed but
-the stat stays the same
-scenario - two ghosts pointing to same file
-ghost A has Ha and Sa (hash and stat)
-ghost B has Hb and Sa
-
-if Hb is later that Ha, we'd be confused - how could both stats be identical but the hash has changed?
-contract should be
-getStat
-getHash
-getStat
-
-if stat is the same both times, than take the timestamp and report it for both
-
-also implies the "learn" semantic should always be accompanied by a date
-and not generated inside the routines'
-
-
-(merge case)
-
-
-# Revocation rules
-
-A new stat does not mean that a hash is out of date. The stat date should be used for resolving which of two stats is most accurate. 
-
-stat fields should be taken all or nothing. 
-
-The only cause for revoking a hash is when the size has changed or last modification date has changed. 
-
-The revocation should not be immediate. It can be lazy. Maybe an optional warning. But the next time anyone asks for a hash on that file, we'd be forced to get one. 
-
-Ghosts should never revoke other ghosts. Let that semantic rest with truth keeper. TK will just ask for incorporation in direction it wants. 
-
-If you ask for a ghost that has no authoritative record is should be marked as virtual. 
-
-One sanity check is that the virtual ghost should not be written to disk under normal cases. 
 
 
 

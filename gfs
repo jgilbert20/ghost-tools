@@ -394,6 +394,8 @@ sub main()
 	# tools and recheck everything
 	
 
+	FSEFactory->shutdown();
+
 	$tk->flush();
 
 	if( $OPT_STATS )
@@ -527,6 +529,40 @@ sub doverb_writeSnapshot()
 
 	my $i = $targetGS->getDescendingIterator();
 
+	my $targetFilename = "snapshot-$$.out";
+	my $targetLFN = assembleLFN( "snap", $targetFilename, "" );
+	my $targetRoot = $tk->obtainGhostForLFN( $targetLFN );
+	my $targetFSE = FSEFactory->getFSEHandlerForGhost( $targetRoot );
+
+	while( my $g = $i->next() )
+	{
+		debug "Write Snapshot - Got Ghost: [$g]\n";
+
+		if( not $g->canHaveChildren() )
+		{
+			$g->forceCharacterization();
+		}
+
+		$g->printDebug();
+
+		$targetFSE->storeGhost($g);
+
+		# $store->addGhost( $g );
+	}
+
+	$targetFSE->finalize();
+
+	# $store->writeSnapshotToDisk( "snapshot-$$.out");
+}
+
+
+sub doverb_writeSnapshot_old()
+{
+	my $tk = TruthKeeper::get();
+	my ($targetGS, $targetStash) = $tk->makeGhostsFromCommandLine( @ARGV );
+
+	my $i = $targetGS->getDescendingIterator();
+
 	my $store = GhostStore->new();
 
 	while( my $g = $i->next() )
@@ -537,11 +573,9 @@ sub doverb_writeSnapshot()
 		{
 			$g->forceCharacterization();
 		}
-		
 
 		$g->printDebug();
 		$store->addGhost( $g );
-
 	}
 
 	$store->writeSnapshotToDisk( "snapshot-$$.out");
@@ -562,17 +596,18 @@ sub doverb_ls()
 	{
 		my( $userFN, $fqlfn, $g ) = @$tuple;
 
+		$g->printDebug();
 
 		my $fullHash = $g->fullHash() || '<not calculated>';
 		my $lastFullHash = $g->lastFullHash();
 
-		my $lfh_string = defined $lastFullHash ? strftime( "%c", localtime( $lastFullHash) ) : '<not calculated>';
+		my $lfh_string = (defined $lastFullHash) ? strftime( "%c", localtime( $lastFullHash) ) : '<not calculated>';
 
-		my $d = expressRelativeTime( $main::SCRIPT_START - $lastFullHash );
+		my $d = (defined $lastFullHash) ? expressRelativeTime( $main::SCRIPT_START - $lastFullHash ) : "x";
 
 		$lfh_string .= "($d)";
 
-		print "$fullHash\t$lfh_string\t$userFN\n";
+		print +(join "\t", $fullHash,$lfh_string,$userFN) . "\n";
 	}
 }
 
@@ -969,7 +1004,7 @@ package FilesystemExplorer::Snapshot;
 
 use File::Basename;
 use base qw(Class::Accessor);
-FilesystemExplorer::Snapshot->mk_accessors( qw( rootGhost rootGhostStore) );
+FilesystemExplorer::Snapshot->mk_accessors( qw( rootGhost rootGhostStore isFinalized) );
 
 sub debug($)
 {
@@ -978,13 +1013,91 @@ sub debug($)
 }
 
 
-
 sub new
 {
 	my $class = shift;
 	my $self = $class->SUPER::new();
 
 	return $self;
+}
+
+sub storeGhost
+{
+	my $self = shift;
+	my $g = shift;
+
+	my $DID = $g->debugID();
+	debug "Storing ghost $DID";
+
+	# FOR NOW, we'll assume that snapshots are pretty immuatble, 
+	# but clearly there is no reason for them to be so
+
+	# die if defined $self->rootGhostStore();
+
+	my $copy = $g->clone();
+
+	# TODO not clear if this is a boundary violation SOC issue
+	$copy->_immutable(1);
+
+	my( $handler, $root, $path ) = main::parseFQLFN( $g->lfn() );
+
+	$handler = "snap";
+	$root = "TOBENAMED";
+
+	my $newLFN = main::assembleLFN( $handler, $root, $path );
+
+	$copy->lfn( $newLFN );
+
+	# this is definitely a truthy thing
+	# TODO boundary issue, what if user's new name for the snapshot overwrites an existing 
+	# snapshot name??? what is "correct"
+	TruthKeeper::get()->registerTruthyGhost( $copy );
+
+	$self->rootGhostStore()->addGhost( $copy );
+
+	return $copy; 
+}
+
+
+sub finalize
+{
+	my $self = shift;
+
+	return if $self->isFinalized();
+
+	my $store = $self->rootGhostStore();
+
+	$self->loadRootIfNeeded();
+
+	# TODO HACK
+	# technically should delegate to the FSE controller
+	$store->writeSnapshotToDisk( $self->rootGhost()->getRoot() );
+
+	foreach my $g ( $store->getAllGhosts() )
+	{
+		$g->dirty(0);
+
+	}
+
+	$self->isFinalized(1);
+}
+
+
+
+# I'm still working out the right meaning exactly, but when you ask a FSE for
+# a ghost like this, I think it's supposed to mean you want one that is fully
+# truth enabled, not just any crappy ghost. we may need to rename this
+# function once we know how the semantic should be honored
+
+sub findGhostForLFN
+{
+	my $self = shift;
+	my $lfn = shift;
+
+	$self->loadRootIfNeeded();
+
+	return $self->rootGhostStore()->findGhostForLFN( $lfn ); 
+
 }
 
 sub loadRootIfNeeded
@@ -996,9 +1109,36 @@ sub loadRootIfNeeded
 	return $rgs if ref $rgs;
 
 	$rgs = GhostStore->new();
-	$rgs->slurpSnapshot( $self->rootGhost()->lfn(), "SNAPSHOT" );
-	$self->rootGhostStore( $rgs );
+$self->rootGhostStore( $rgs );
+
+	# Hack, probably should handle this with a FS ghost
+	if( -r $self->rootGhost()->getRoot()  )
+	{
+		$rgs->slurpSnapshot( $self->rootGhost()->getRoot(), "SNAPSHOT" );
+		
+	}
+	else
+	{
+		warn "In that unusual case where we don't load a road()";
+	}
+
+	debug "Incorporating snapshot truth\n";
+
+	TruthKeeper::get()->incorporateGhostStore( $rgs );
+
 	return $rgs;
+}
+
+sub getFullHashSourceVerify
+{
+	my $self = shift;
+	my $lfn = shift;
+
+	die "getFullHashSourceVerify - Snapshots are immutable - should not have reached this point\n";
+
+	# my $rgs = $self->loadRootIfNeeded();
+
+	# return ($size, $mtime, $mode);
 }
 
 sub getStatSourceVerify
@@ -1006,11 +1146,14 @@ sub getStatSourceVerify
 	my $self = shift;
 	my $lfn = shift;
 
-	my $rgs = $self->loadRootIfNeeded();
+	die "getStatSourceVerify - Snapshots are immutable - should not have reached this point\n";
 
-	my ($size, $mtime, $mode);
 
-	return ($size, $mtime, $mode);
+	# my $rgs = $self->loadRootIfNeeded();
+
+	# my ($size, $mtime, $mode);
+
+	# return ($size, $mtime, $mode);
 }
 
 
@@ -1050,6 +1193,14 @@ sub debug($)
 	main::debug( "FSE/fs: " . $a );
 }
 
+sub finalize
+{
+	my $self = shift;
+
+	debug "Shutdown $self.. - no action taken.\n";
+
+
+}
 
 sub new
 {
@@ -1178,13 +1329,29 @@ package FSEFactory;
 
 # is container the right term for this?
 
-my $fseFactoryDebug = 0;
+my $fseFactoryDebug = 1;
 my %fseForHandlerRoot;
 
 sub debug($)
 {
 	my $a = shift;
 	main::debug( "FSE-factory: " . $a );
+}
+
+sub shutdown
+{
+	my $self = shift;
+
+	# TODO - odd exception if the local FSE handler is not here, right?
+
+	debug( "-- Shutting down FSE Factory");
+
+	foreach my $key ( keys %fseForHandlerRoot )
+	{
+		my $fse = $fseForHandlerRoot{$key};
+		debug( "Sending finalization call to $fse");
+		$fse->finalize();
+	}
 }
 
 sub getFSEHandlerForGhost
@@ -1199,21 +1366,23 @@ sub getFSEHandlerForGhost
 
 	my ($handler, $root, $path ) = main::parseFQLFN($lfn);
 
+	my $key = $handler . ":" . $root;
+
 	if( $lfn =~ /^snap/m )
 	{
-		my $key = $handler . ":" . $root;
+		
 		my $class = "FilesystemExplorer::Snapshot";
 
 		## TODO - break this out into a cleaner function
 
 		if( exists $fseForHandlerRoot{$key} )
 		{
-			main::debug "Found existing handler for $key @ $class"  if $fseFactoryDebug;
+			debug "Found existing handler for $key @ $class"  if $fseFactoryDebug;
 			$r = $fseForHandlerRoot{$key};
 		}
 		else
 		{
-			main::debug "Making new handler for $key @ $class"  if $fseFactoryDebug;
+			debug "Making new handler for $key @ $class"  if $fseFactoryDebug;
 			$r = $class->new();
 			$r->rootGhost($g);
 		}
@@ -1223,7 +1392,9 @@ sub getFSEHandlerForGhost
 		$r = $main::localFileSystemFSE;
 	}
 
-	main::debug "FSEFactory: FSE handler for lfn:[$lfn] --> Class:[$r]" if $fseFactoryDebug;
+	debug "FSEFactory: FSE handler for lfn:[$lfn] --> Class:[$r]" if $fseFactoryDebug;
+
+	$fseForHandlerRoot{$key} = $r;
 
 	return $r; 
 }
@@ -1308,11 +1479,10 @@ sub printInternallyTrackedLFN
 		     . "  "
 		 	 . $g->lfn()
 		     . "  " );
-
+	 debug( "          -> ". $g->makeDebugString() );
 	}
 	return;
 }
-
 
 sub printInternallyTrackedAFN
 {
@@ -1325,6 +1495,7 @@ sub printInternallyTrackedAFN
 		     . "  "
 		 	 . $g->absoluteLFN()
 		     . "  " );
+		 debug( "          -> ". $g->makeDebugString() );
 
 	}
 	return;
@@ -1336,22 +1507,22 @@ sub flush
 
 #	debug Dumper( $self );
 
-	debug "TK: Beginning flush ---\n";
+	debug "---- Beginning flush ---\n";
 
-	debug "TK: Inventory of all internally tracked ---\n";
+	debug "---- Inventory of all internally tracked ---\n";
 
 	$self->printInternallyTrackedLFN();
 
-	debug "TK: Inventory of all internally tracked AFNs ---\n";
+	debug "---- Inventory of all internally tracked AFNs ---\n";
 
 	$self->printInternallyTrackedAFN();
 
 
-	debug "TK: Ghost Cache Writes ---\n";
+	debug "---- Ghost Cache Writes ---\n";
 
 	$self->flushGhostDescriptorCache();
 
-	debug "TK: Verify ---\n";
+	debug "---- Verify ---\n";
 
 	$self->verifyNoDirtyGhostsRemain();
 }
@@ -1384,7 +1555,17 @@ sub verifyNoDirtyGhostsRemain
 			debug ($g->dirty() ? "YES" : "NO");
 			debug "\n";
 		}	
-		$error++ if $g->dirty();
+
+
+
+		if( $g->getHandler() eq 'snap')
+		{
+			debug "Wierd straggler case - I haven't figured out yet who, if anyone flushes this type of object.";
+		}
+		else
+		{
+			$error++ if $g->dirty();
+		}
 	}
 
 	die "Dirty ghosts remain unflushed!! assert" if $error > 0;
@@ -1523,7 +1704,9 @@ sub incorporateGhostData
 	my $lfn = $g->lfn();
 	my $ghostForLFN = $self->ghostForLFN();
 
-	debug "Incorporating ghost lfn:[$lfn] data $g (self=$self, glfn=$ghostForLFN)\n" if $icDebug;
+my $DID = $g->debugID();
+	#debug "Incorporating ghost lfn:[$lfn] ptr:[$DID] (self=$self, glfn=$ghostForLFN)\n" if $icDebug;
+	debug "Incorporating ghost lfn:[$lfn] ptr:[$DID]\n" if $icDebug;
 
 	if( exists $ghostForLFN->{$g->lfn()} )
 	{
@@ -1536,14 +1719,16 @@ sub incorporateGhostData
 
 		if( $base->lastFullHash() < $g->lastFullHash() )
 		{
+			die if $base->isImmutable();
+
 			$base->lastFullHash( $g->lastFullHash() );
 			$base->fullHash( $g->fullHash() );
 			$base->dirty(1);
-			debug "  Incorporate - Merger case - existing TK ghost updated\n" if $icDebug;
+			debug "  Incorporate - Merger case - existing TK ghost updated (base=$base)\n" if $icDebug;
 		}
 		else
 		{
-			debug "  Incorporate -  Merger case - existing TK ghost was fine\n"  if $icDebug;
+			debug "  Incorporate -  Merger case - existing TK ghost was fine\n" if $icDebug;
 		}
 
 		$g->isTKversion(0);
@@ -1569,7 +1754,8 @@ sub registerTruthyGhost
 
 	my $lfn = $g->lfn();
 
-	debug "Register Truthy Thing: [$lfn] -> $g\n" if $tkdebug;
+	my $DID = $g->debugID();
+	debug "Register Truthy Thing: [$lfn] -> $DID\n" if $tkdebug;
 
 	my $ghostForLFN = $self->ghostForLFN();
 	die "Collision [$lfn]" if exists $ghostForLFN->{$lfn};
@@ -1606,38 +1792,70 @@ sub obtainGhostForLFN
 	}
 
 	# Next look for in global cache (if present)
-
 	# TODO when time comes, implement global cache
+
 
 	# Next look in local descriptor
 	# TODO, this is sort of wrong -- the ghost store is useless for certain types of LFNS
 	# really only things pretaining to file system should hit descriptor
 	# refactor to move to FSE
 
-	my $gs = $self->getGhostStoreForDescriptorFileCoveringFN($path);
-	my $g = $gs->findGhostForLFN($lfn);
-	debug "TK:Obtain: obtain f:[$lfn] pulled g:[$g] from ghost descriptor\n" if $tkdebug;
-	
-	if( defined $g )
+	if( $handler eq "fs" )
 	{
-		# registration occurs by getGhostStore
-		#$self->registerTruthyGhost( $g );
-		return $g 
+		my $gs = $self->getGhostStoreForDescriptorFileCoveringFN($path);
+		my $g = $gs->findGhostForLFN($lfn);
+
+		my $DID = ref $g ? $g->debugID() : 'Not found';
+		debug "TK:Obtain: obtain f:[$lfn] pulled g:[$DID] from ghost descriptor\n" if $tkdebug;
+		
+		if( defined $g )
+		{
+			# note: registration already occured by getGhostStore...FN()
+			return $g 
+		}
 	}
 
+	# If this LFN is pointing to a container object, I think this is the
+	# right place in the logic to force a load. This logic needs to be more
+	# carefully considered.
+
+	if( $handler eq "snap" )
+	{
+		debug "Obtain: container object load case" if $tkdebug; 
+		
+		my $g = Ghost->make_private( $lfn );
+		# should this have been a virtual ghost?
+
+		my $fse = FSEFactory->getFSEHandlerForGhost( $g );
+		my $r = $fse->findGhostForLFN( $lfn );
+
+		if( defined $r )
+		{
+			# note: registration already occured by getGhostStore...FN()
+			return $r; 
+		}
+	}
+
+
 	# Wow, we've totally stuck out here - make a new thing
+	# when we get to this point, how do we decide if this guy is going to be virtual
+	# or if its going to be real?
 
 	debug( "TK:Obtain: Making new ghost for f:[$lfn]\n")  if $tkdebug;
-	$g = Ghost->make_private( $lfn );
+	my $g = Ghost->make_private( $lfn );
 	# registers 
 	$self->incorporateGhostData( $g );
 	$g->dirty(1);
 	$g->isTKversion(1);
-	$gs = $self->getGhostStoreForDescriptorFileCoveringFN( $path );
-	$gs->addGhost( $g );
-	#$self->registerTruthyGhost( $g );
 
-	debug "TK:Obtain: Made: $g\n" if $tkdebug;
+	if( $handler eq "fs" )
+	{
+		my $gs = $self->getGhostStoreForDescriptorFileCoveringFN( $path );
+		$gs->addGhost( $g );
+	}
+
+	my $DID = $g->debugID();
+	debug "TK:Obtain: Made: $DID\n" if $tkdebug;
 
 	return $g;
 }
@@ -1803,7 +2021,7 @@ sub debug($)
 }
 
 
-my $gsDebug = 0;
+my $gsDebug = 1;
 
 sub new
 {
@@ -1888,7 +2106,9 @@ sub addGhost($)
 	warn "Something wrong lfn:$lfn" if $lfn eq ".";
 	warn "Something wrong lfn:$lfn" if $lfn eq "..";
 
-	debug "GhostStore: Adding ghost $g (lfn=$lfn) (lfntoghosthash=$lfnToGhost gs_self=$self) ghoststore\n" if $gsDebug;
+	my $DID = $g->debugID();
+	debug "GhostStore: Adding ghost $DID (lfn=$lfn) to ghoststore\n" if $gsDebug;
+	#debug "GhostStore: Adding ghost $DID (lfn=$lfn) (lfntoghosthash=$lfnToGhost gs_self=$self) ghoststore\n" if $gsDebug;
 
 	if( exists $lfnToGhost->{$g->lfn()} )
 	{
@@ -1930,6 +2150,7 @@ sub slurpSnapshot
 	my $root = shift;
 
 	$self->slurpSerializedStore( filename => $fn,
+								 immutable => 1, 
 								 snapshotRoot => $root );
 }
 
@@ -2053,8 +2274,8 @@ sub writeSerializedToDisk($)
 
 	print FILE "### This is a snapshot, written by the tool $0\n";
 	print FILE "### File written on $date\n";
-	print FILE "### It is a record of all of the files stored at a point in time\n";
-	print FILE "### The gfs tool can use this to reconstruct this file tree later\n";
+	print FILE "### It is a record of all of the files stored under a tree at a single point in time\n";
+	print FILE "### The gfs tool can use this to reconstruct this specific file tree later\n";
 	print FILE "### \n";
 	print FILE "@@@ version = $SERIALIZATION_VERSION_NUMBER\n";
 	print FILE "### \n";
@@ -2217,21 +2438,75 @@ use Cwd qw(abs_path); # best way to get these
 
 
 
+# GHOST_NEW_FIELD: Place 4/4 where you add new fields to ghosts
+
+Ghost->mk_accessors( qw(lfn lastFullHash size mode fullHash 
+	dirty isTKversion lastDirScan lastStat mtime lastEnumerated firstStat fileStatus
+	 children _immutable _debugID) );
+
+my $serializeDebug = 1;
+my $gChildDebug = 0;
+
+
+my $GHOST_DEBUG_ID = 100000; 
+
+
+sub new
+{
+	my $class = shift;
+	my $self = $class->SUPER::new();
+
+	$self->_debugID( $GHOST_DEBUG_ID++ );
+
+	return $self;
+}
+
+sub clone
+{
+	my $self = shift;
+
+	my $c = $self->new();
+
+	$c->pullValuesFromGhost( $self );
+	
+	return $c;
+}
+
+sub pullValuesFromGhost
+{
+	my $self = shift;
+	my $target = shift;
+
+	# GHOST_NEW_FIELD: Place 5/5 where you add new fields to ghosts
+
+	$self->lfn( 		 $target->lfn() );
+	$self->lastFullHash( $target->lastFullHash() );
+	$self->size( 		 $target->size() );
+	$self->mode( 		 $target->mode() );
+	$self->fullHash( 	 $target->fullHash() );
+	$self->lastDirScan(  $target->lastDirScan() );
+	$self->lastStat( 		$target->lastStat() );
+	$self->lastEnumerated( 		$target->lastEnumerated() );
+	$self->firstStat( 		$target->firstStat() );
+	$self->fileStatus( 		$target->fileStatus() );
+	$self->mtime( 		$target->mtime() );
+
+	$self->dirty( 0 );
+	$self->isTKversion( 0 );
+}
+
+
 sub debug($)
 {
 	my $a = shift;
 	main::debug( "G: " . $a );
 }
 
-
-# GHOST_NEW_FIELD: Place 4/4 where you add new fields to ghosts
-
-Ghost->mk_accessors( qw(lfn lastFullHash size mode fullHash 
-	dirty isTKversion lastDirScan lastStat mtime lastEnumerated firstStat fileStatus
-	 children) );
-
-my $serializeDebug = 0;
-my $gChildDebug = 0;
+sub debugID()
+{
+	my $self = shift;
+	return $self->_debugID();
+}
 
 sub newFromSerialized($)
 {
@@ -2252,10 +2527,12 @@ sub newFromSerialized($)
 		my $root = $options{'treeRoot'};
 
 		$serialLFN = main::rewriteLFNwithLeadingDirectory( $serialLFN, $root );
-
 	}
 
-
+	if( defined $options{'immutable'} && $options{'immutable'} )
+	{
+		$self->_immutable(1);
+	}
 
 	# GHOST_NEW_FIELD: Place 1/4 where you add new fields to ghosts
 
@@ -2277,12 +2554,20 @@ sub newFromSerialized($)
 	if( $serializeDebug )
 	{
 		debug "Just deserialized: ";
-		debug $self->printDebug();
-		debug "\n";
+		$self->printDebug();
 	}	
 
 	return $self;
 
+}
+
+
+
+sub isImmutable
+{
+	my $self = shift;
+
+	return $self->_immutable();
 }
 
 # getFSE - returns whatever FSE object is best for this thing
@@ -2294,9 +2579,6 @@ sub getFSE
 	die unless defined $lfn;
 
 	my $fse = FSEFactory->getFSEHandlerForGhost( $self );
-
-
-
 	return $fse; 
 }
 
@@ -2402,24 +2684,43 @@ sub printDebug
 {
 	my $self = shift;
 
+	debug $self->makeDebugString();
+
+}
+
+sub makeDebugString
+{
+	my $self = shift;
+
 	# GHOST_NEW_FIELD: Place 2/4 where you add new fields to ghosts
+
+	# Warning: Don't fire of any  "getXXX" here
+	no warnings;
 
 	my $lfn = $self->lfn();
 	my $lastFullHash = $self->lastFullHash();
 	my $size = $self->size();
 	my $mode = $self->mode();
 	my $fullHash = $self->fullHash();
-	my $lastDirScan = $self->lastDirScan();
+	my $lastDirScan = $self->lastDirScan() || '<none>';
 	my $lastStat = $self->lastStat();
 	my $mtime = $self->mtime();
 	my $lastEnumerated = $self->lastEnumerated();
 	my $firstStat = $self->firstStat();
 	my $fileStatus = $self->fileStatus();
+	my $immutable = $self->_immutable();
 
 	# not technically a field but we should include this
-	my $type = $self->getType();
+	my $type = $self->extractTypeFromMode( $mode );
+	# my $type = $self->getType();
 
-	debug "ghostDump: lfn:[$lfn] type:[$type] mode:[$mode] lFH:[$lastFullHash] full:[$fullHash] ldirscan:[$lastDirScan] lastfullstat:[$lastStat] size:[$size] mtime:[$mtime]\n";
+my $debugID = $self->_debugID();
+
+	return "ghostDump($debugID): lfn:[$lfn] type:[$type] mode:[$mode] lFH:[$lastFullHash] ".
+	"full:[$fullHash] ldirscan:[$lastDirScan] lastfullstat:[$lastStat] size:[$size]".
+	" mtime:[$mtime] immutable[$immutable]";
+
+
 }
 
 sub isSameFilename
@@ -2594,6 +2895,8 @@ sub hasAcceptableFullhash
 {
 	my $self = shift;
 
+	return 1 if $self->isImmutable();
+
 #	debug "Checking if I like my hash\n";
 
 	return 0 if( not defined $self->fullHash() );
@@ -2635,6 +2938,8 @@ sub hasAcceptableStat
 {
 	my $self = shift;
 
+	return 1 if $self->isImmutable();
+
 	return 0 if( not defined $self->size() );
 	return 0 if( not defined $self->mtime() );
 	return 0 if( not defined $self->mode() );
@@ -2650,10 +2955,8 @@ sub hasAcceptableStat
 		}
 	}
 
-
 	return 1;
 }
-
 
 # TODO factor out hasAcceptable patttern into "bringStatToDateIfNeeded()"
 
@@ -2702,6 +3005,14 @@ sub getMTime
 	}	
 }
 
+sub verifyGhostIsMutable
+{
+	my $self = shift;
+
+	die "Mutable operation attempted on immutable ghost!" if $self->isImmutable();
+
+}
+
 # Dirscan means that we have seen the ghost in a directory scan
 # TODO also update a "firstSeen" field.
 # If deleted, this should undelete by delegating to learnPresent
@@ -2710,6 +3021,8 @@ sub learnDirscan
 {
 	my $self = shift;
 	my $time = shift; 
+
+	$self->verifyGhostIsMutable();
 
 	$self->lastDirScan( $time );
 
@@ -2728,6 +3041,9 @@ sub learnPresent
 	my $self = shift;
 	my $time = shift; 
 
+	$self->verifyGhostIsMutable();
+
+
 	# TODO: implement field
 }
 
@@ -2738,6 +3054,8 @@ sub learnDeleted
 {
 	my $self = shift;
 	my $time = shift; 
+
+	$self->verifyGhostIsMutable();
 
 	$self->lastDirScan( $time );
 
@@ -2752,8 +3070,12 @@ sub extractTypeFromMode
 	my $self = shift;
 	my $mode = shift;
 
+	return undef if( not defined $mode );
+
 	return 'f' if S_ISREG($mode);
 	return 'd' if S_ISDIR($mode);
+
+	return undef;
 }
 
 sub isFile
@@ -2769,11 +3091,15 @@ sub getType
 	return $self->extractTypeFromMode( $mode );
 }
 
+
+
 sub learnFullHash
 {
 	my $self = shift;
 	my $time = shift;
 	my $hash = shift;
+
+	$self->verifyGhostIsMutable();
 
 	# TODO - merger and revocation case here
 
@@ -2803,6 +3129,8 @@ sub learnStat
 	my $size = shift;
 	my $mtime = shift;
 	my $mode = shift; 
+
+	$self->verifyGhostIsMutable();
 
 	# TODO - merger and revocation case here
 
