@@ -212,13 +212,15 @@ sub CODEPATH($)
 
 sub reportCodepaths
 {
+	return if( not keys %codepathCount > 0 );
+
+	print "--\n";
+	print "Codepaths:\n";
+
 	foreach my $p (sort keys %codepathCount )
 	{
 		print "$codepathCount{$p}\t$p\n";
-
 	}
-
-
 }
 
 sub init
@@ -661,6 +663,34 @@ sub doverb_checksum()
 ## 	B6. There is a hash available in COPYLIST
 ## 		-- Queue local copy, don## 
 
+
+## Core test cases
+##
+## Assemble target such that it has
+##
+## File0 - An immoveable file
+## File1 - A   # file in right place
+## File2 - B   # file needs a rename nad has to get out of the way
+## File6 - F   # orphaned in the new tree
+## File-x1 - J # pure swap case
+## File-x2 - I # pure swap case
+##
+## Move into it
+##
+## dir1/File3 - C # input t
+## dir2/File3 - D # input file that overlaps other input file
+## dir1/File4 - E # input file that that is a net new hash
+## dir1/File1 - A # target file already in the right place
+## dir1/File8 - E # two input files with same hash (trigger local move, 1x copy)
+## dir1/File2 - H # net new file overwriting a existing file who is needed elsewhere 
+## dir1/File5 - B # needs to pull fom the orphan
+## dir1/File-x1 - I # pure swap case
+## dir1/File-x2 - J # pure swap case 
+
+
+
+## TODO add a swap
+
 sub doverb_rsync()
 {
 	my $target = pop @ARGV;
@@ -672,6 +702,11 @@ sub doverb_rsync()
 	my $i = $sourceGS->getDescendingIterator();
 
 	my( $targetUserFN, $targetFqlfn, $targetGhost ) = @{$targetStash->[0]};
+
+	if( not $targetGhost->exists() )
+	{
+		die "Cannot find target!";
+	}
 
 	die unless $targetGhost->canHaveChildren();
 
@@ -1073,6 +1108,24 @@ sub fullyQualifyLFN
 	return assembleLFN( $handler, $root, $path );
 }
 
+
+# Stat 
+
+sub statModeGen_error
+{	
+	my $errno = shift; 
+	return "ERR/" . $errno;
+}
+
+sub statModeParse_isError
+{
+	my $stat = shift;
+	return 1 if $stat =~ /^ERR/;
+	return 0; 
+}
+
+
+
 package FilesystemExplorer::Snapshot;
 
 use File::Basename;
@@ -1085,7 +1138,6 @@ sub debug($)
 	my $a = shift;
 	main::debug( "FSE/ss: " . $a );
 }
-
 
 sub new
 {
@@ -1378,11 +1430,19 @@ sub getStatSourceVerify
 
 	my @statfields = stat($path);
 
-	die "Ghost [$path] failed stat - probably doesn't exist: $! ($@)" if( @statfields == 0 );
+	if( @statfields == 0 )
+	{
+		my $errcode = $! + 0;
+		print "DEBUG: $! = $errcode\n";
+		return (undef, undef, main::statModeGen_error($errcode));
+	}
+
+	# die "Ghost [$path] failed stat - probably doesn't exist: $! ($@)" ;
 	my ($dev,$ino,$mode,$nlink,$uid,$gid,$rdev,$size,$atime,$mtime,$ctime,$blksize,$blocks) = @statfields; 
 	
 	return ($size, $mtime, $mode);
 }
+
 
 
 # Return LFNs of immediate children
@@ -2312,8 +2372,6 @@ sub slurpSerializedStore
 
 		my $g = Ghost->newFromSerialized( $_, %opt );
 
-
-
 		$g->isTKversion(0);
 		$self->addGhost( $g );
 
@@ -3024,12 +3082,19 @@ sub forceCharacterization
 sub hasAcceptableFullhash
 {
 	my $self = shift;
+	my $timeguard = shift;
 
 	return 1 if $self->isImmutable();
 
 #	debug "Checking if I like my hash\n";
 
 	return 0 if( not defined $self->fullHash() );
+
+	if( defined $timeguard && $self->lastStat() < $timeguard )
+	{
+		CODEPATH( "invalidating fullHash due to timeguard" );
+		return 0;
+	}
 	
 	if( defined $main::GUARD_TIME_SECONDS )
 	{
@@ -3077,12 +3142,17 @@ sub getFullHash
 sub hasAcceptableStat
 {
 	my $self = shift;
+	my $timeguard = shift;
 
 	return 1 if $self->isImmutable();
 
-	return 0 if( not defined $self->size() );
-	return 0 if( not defined $self->mtime() );
-	return 0 if( not defined $self->mode() );
+	return 0 if( not defined $self->lastStat() );
+
+	if( defined $timeguard && $self->lastStat() < $timeguard )
+	{
+		CODEPATH( "invalidating stat due to timeguard" );
+		return 0;
+	}
 
 	if( defined $main::GUARD_TIME_SECONDS )
 	{
@@ -3174,10 +3244,27 @@ sub exists()
 		return 1; 
 	}
 
-
-
+	return $self->getStatPresence();
 }
 
+
+sub getStatPresence
+{	
+	my $self = shift;
+	my $time = shift;  # ok to be undefined
+
+	if( not $self->hasAcceptableStat($time) )
+	{
+		$self->getStatSourceVerify( time() );
+	}
+
+	if( main::statModeParse_isError( $self->mode() ) )
+	{
+		return 0; 
+	}
+
+	return 1; 
+}
 
 
 # ghosts nee 
@@ -3206,6 +3293,8 @@ sub exists()
 #
 # RULE #6: New stat overrides old stat
 #
+# RULE #7: A dead stat (ERR) always revokes the hash and blanks out size and XXX
+
 # Policy: same information with a new date does not normally force dirtyness
 # unless it is a hash, because the hash is expensive
 #
@@ -3292,9 +3381,13 @@ sub learnStat
 
 	# RULE3: ALl stat informaiton must travel together. 
 
-	die "learn() got partial stat (violates RULE#3)" if not defined $size;
-	die "learn() got partial stat (violates RULE#3)" if not defined $mtime;
 	die "learn() got partial stat (violates RULE#3)" if not defined $mode;
+
+	if( not main::statModeParse_isError( $mode ) )
+	{
+		die "learn() got partial stat (violates RULE#3)" if not defined $size;
+		die "learn() got partial stat (violates RULE#3)" if not defined $mtime;
+	}
 
 	$self->verifyGhostIsMutable();
 
@@ -3312,6 +3405,16 @@ sub learnStat
 		die "Rule2: Info with same date must match existing" unless $self->size() == $size;
 		die "Rule2: Info with same date must match existing" unless $self->mtime() == $mtime;
 		die "Rule2: Info with same date must match existing" unless $self->mode() == $mode;
+	}
+
+	# RULE #6: Error stats revoke all other fields
+
+	if( main::statModeParse_isError( $mode ) )
+	{
+		$self->lastFullHash(undef);
+		$self->fullHash(undef);
+
+		CODEPATH( "revoke hash due to stat error" );		
 	}
 
 	# RULE #5: A new stat that represents a change in size should invalidate the
@@ -3432,8 +3535,10 @@ sub learnFullHash
 	$self->dirty(1);
 }
 
-# Deleted means that we did not see the ghost
-# on a recent scan. Mark as deleted and set deleteDate.
+# Deleted means that we did not see the ghost on a recent scan. Mark as
+# deleted and set deleteDate.
+
+# TODO change semantics, this is not sort of like an confimed negative
 
 sub learnDeleted
 {
@@ -3456,6 +3561,8 @@ sub extractTypeFromMode
 	my $mode = shift;
 
 	return undef if( not defined $mode );
+
+	return '_' if main::statModeParse_isError( $mode );
 
 	return 'f' if S_ISREG($mode);
 	return 'd' if S_ISDIR($mode);

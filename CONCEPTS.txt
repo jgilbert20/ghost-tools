@@ -1,8 +1,16 @@
 # Existence
 
 A stat on a file either has to tell you that the file has certain information,
-or that it DOESN't have this information (e.g. the file doesn't exists). How
-should this data be passed back up the chain? 
+or that it DOESN't have this information (e.g. the file doesn't exists). A
+third option is that we cannot know (e.g permission issue.) How should this
+data be passed back up the chain?
+
+Simplest way I can think of is a modification to the stat rules. One of the
+returned fields is basically a status, which can be considered a code of these
+three situations. THe other parameters should be undef'ed. But that raises a
+contradition - we'd have undefined data and a valid stat date.
+
+Simplest Solution: Size is undef, mtime is undef, mode is "DELETED" or "NOACCESS"
 
 
 
@@ -393,7 +401,7 @@ existing hash, unless the hash has the exact same date as the stat. (If the exis
 hash is newer than the incoming stat, but older than the existing stat, we
 have a logical violation of RULE #1)
 
-
+RULE #6: A dead stat (ERR) always revokes the hash and blanks out size and XXX
 
 
 
