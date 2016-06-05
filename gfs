@@ -621,6 +621,8 @@ sub doverb_checksum()
 	my ($targetGS, $targetStash) = $tk->makeGhostsFromCommandLine( @ARGV );
 	my $i = $targetGS->getDescendingIterator();
 
+
+
 	while( my $g = $i->next() )
 	{
 		my $lfn = shift; 
@@ -636,6 +638,29 @@ sub doverb_checksum()
 
 
 
+
+## A. There is a file fT already sitting at TARGET at this filename
+## 	A1. The hash of fT is correct - its what we want
+## 		-- Mark TARGET fT as claimed, no action needed, go to next file
+## 	A2. The hash is not correct
+## 		-- Mark as orphaned, select new orphaning location - during clearance MOVE phase (will be moved out first)
+## 		-- Flow down to Case B
+## B. There is no file at the remote location in TARGET tree at that filename, or the file in TARGET is marked orphaned
+## 	B1. There is no hash ANYWHERE at TARGET, PILLAGE, AUX, COPY or ORPHAN
+## 		-- Queue for remote copy, function done
+## 	B2. There is a hash available in PILLAGE that is not claimed
+## 		-- Queue move PILLAGE -> fT, claim it
+## 	B2. There is a hash availble in ORPHAN that is not claimed
+## 		-- Queue clearance move ORPHAN -> fT (assign new location) - DONE  (What about case of a swap..?)
+## 	B3. There is a hash available in TARGET that is claimed
+## 		-- Queue local copy, done
+## 	B4. There is a hash available in AUX
+## 		-- Queue local copy, done
+## 	B5. There is a hash available in PILLAGE that is claimed
+## 		-- Queue local copy, done
+## 	B6. There is a hash available in COPYLIST
+## 		-- Queue local copy, don## 
+
 sub doverb_rsync()
 {
 	my $target = pop @ARGV;
@@ -646,12 +671,32 @@ sub doverb_rsync()
 	my ($sourceGS, $sourceStash) = $tk->makeGhostsFromCommandLine( @source );
 	my $i = $sourceGS->getDescendingIterator();
 
+	my( $targetUserFN, $targetFqlfn, $targetGhost ) = @{$targetStash->[0]};
+
+	die unless $targetGhost->canHaveChildren();
+
+	my ($targetHandler, $targetRoot, $targetPath)  = $targetGhost->getLFNcompontents();
+
 	while( my $g = $i->next() )
 	{
-		my $lfn = $g->getPath(); 
-		my $newPath = "$target";
+		my $sourceLFN = $g->lfn();
+		my $sourcePath = $g->getPath(); 
+		my $basename = basename $g->getPath();
+		my $newPath = File::Spec->catfile( $targetPath, $basename );
+		my $newLFN = main::assembleLFN( $targetHandler, $targetRoot, $newPath );
 
-		print "[$lfn] -> [$newPath]\n";
+		print "[$sourcePath] -> [$newPath]\n";
+		# print "[$sourceLFN] -> [$newLFN]\n";
+
+		# Check case where file is already at our destination
+
+		my $targetGhost = $tk->obtainGhostForLFN( $newLFN );
+
+		if( $targetGhost->exists() )
+		{
+			print "Exists\n";
+		}
+
 
 	}
 }
@@ -1076,7 +1121,7 @@ sub storeGhost
 
 	debug "Storing ghost $DID" if $gsDebug;
 
-	# FOR NOW, we'll assume that snapshots are pretty immuatble, 
+	# FOR NOW, we'll assume that snapshots are pretty immuteable, 
 	# but clearly there is no reason for them to be so
 
 	# die if defined $self->rootGhostStore();
@@ -1268,7 +1313,7 @@ sub finalize
 	# in practice, this is not always called. It may not have entered the FSE
 	# cache. i'm not sure yet if that is an issue or not.
 
-	debug "Shutdown $self.. - no action taken.";
+	debug "Shutdown $self.. - no action taken." if $fseDebug;
 }
 
 sub new
@@ -2936,6 +2981,12 @@ sub getPath
 	return $path;
 }
 
+sub getLFNcompontents
+{
+	my $self = shift;
+	my ($handler, $root, $path ) = main::parseFQLFN( $self->lfn() );
+	return ($handler, $root, $path);
+}
 
 sub make_private($)
 {
@@ -3102,6 +3153,37 @@ sub verifyGhostIsMutable
 }
 
 ###########
+# Tests for existence
+#
+# The exists() semantic tells you definitively if the file is present or not within
+# the window of knowledge of the time range given.
+#
+# 
+
+
+
+sub exists()
+{
+	my $self = shift;
+	my $time = shift;
+
+
+	if( $self->isImmutable() )
+	{
+		warn "Untested case of exists on something immutable()";
+		return 1; 
+	}
+
+
+
+}
+
+
+
+# ghosts nee 
+
+
+###########
 # The Learning Rules for Ghosts
 #
 # A set of rules govorn how new information is learned from an outside source.
@@ -3136,7 +3218,7 @@ sub learnFromGhost
 
 	die unless ref $g; 
 
-	ODEPATH( "ghost merging" );
+	CODEPATH( "ghost merging" );
 
 	if( defined $g->lastStat() )
 	{

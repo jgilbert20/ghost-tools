@@ -1,4 +1,139 @@
+# Existence
 
+A stat on a file either has to tell you that the file has certain information,
+or that it DOESN't have this information (e.g. the file doesn't exists). How
+should this data be passed back up the chain? 
+
+
+
+
+
+
+
+# RSYNC Emulation
+
+## What does RSync Do?
+
+Rsync has some quirks I'd like to recreate. First, it doesn't matter if target
+is there or not, it gets created. Secondly, the trailing slash seems to be irrelevant
+to the target.
+
+	rsync -av /bar/foo quxx target
+		target/foo
+		target/quxx
+
+	rsync -av /bar/foo quxx target/
+		target/foo
+		target/quxx
+
+
+The -R switch means that the entire provided path is taken as the root for the transfer
+
+	rsync -av -R /bar/foo quxx target
+		target/bar/foo
+		target/quxx
+
+	rsync -r dirA dirB destination
+		destination/dirA/..
+		destination/dirB/..
+
+
+
+A trailing slash basically means treat the passed argument as a collection of files
+
+	rsync -r dir-a/ dir-b destination
+		destination/filea1
+		destination/filea2
+		destination/filea3
+		destination/dirB/fileb1	
+		destination/dirB/fileb2	
+		destination/dirB/fileb3
+
+Using this -R switch turns off the trailing slash behavior too
+
+	rsync -r -R dir-a/ dir-b destination
+		destination/dirA/filea1
+		destination/dirA/filea2
+		destination/dirA/filea3
+		destination/dirB/fileb1	
+		destination/dirB/fileb2	
+		destination/dirB/fileb3
+
+This creates some counter-intuitive behavior when the user is thinking about true mirrors
+
+	rsync -r -R dir-a dir-b destination/dir-a
+		destination/dir-a/dir-a/filea1
+		destination/dir-a/dir-a/filea2
+		destination/dir-a/dir-a/filea3
+
+Because presumably you wanted it to make dir-a "look the same".
+
+So in short, a trailing slash on TARGET is ignored
+And a trailing slash on a SOURCE is only relevant if -R is off
+
+
+## Translation to the gfs(1) tool
+
+Lets say that foodir is a directory.
+
+	gfs ls foodir 
+	-> one result, representing the entry of foodir itself
+
+	gfs ls foodir/
+	-> a result for every entry under foodir
+
+My guess is that its better to emulate the rsync(1) usage than the ls(1) usage
+since most of the time you're handling directories of things.
+
+## Playing devil's advocate on this decision
+
+Devil's advocate.. Lets say you do a sync operation
+
+	gfs sync foodir bardir
+
+What is more logical? Would you want to think that foodir and bardir should
+look the same afterwards? Or would you think that foodir should be synced
+underneath bardir? After all, both are entries, and a sync operation suggests
+that one should look like the other. More cognitive load to remember to place
+things under other things.
+
+	gfs sync foodir bardir/
+
+To my eyes, the above seems to clearly say "stick foodir under bardir".
+
+So the question is do we create our own new convention?
+
+What about 
+
+	gfs store foodir bardir
+
+This seems to clearly call out for foodir to be stored as a full entry under something else.
+
+So in this alternative scenario, a trailing slash always means "take what is underneath here".
+
+	gfs sync foodir bardir
+	# make them the same
+	# if bardir had stuff not in foodir, remove it
+
+	gfs sync foodir/ bardir
+	# take everything under foodir and make sure each is the same as bardir
+	# probably should result in an error - what does it mean to sync 3 things to 1 thing?
+	# or maybe we pretent bardir had a trailing slash
+	# or maybe this says that bardir should have exactly the contents of foodir in it
+
+	gfs sync foodir bardir/
+	# take foodir as an entry and make sure its the same as bardir/foodir
+	# don't remove anything from bardir
+
+	gfs sync foodir/ bardir/
+	# make sure the contents of foodir appear under bardir.
+
+Decision: NOT MADE - appears we may want flexibility to emulate multiple
+formats in the future
+
+
+
+# STUFF
 
 immutable - basically means the ghost's truth state cannot change
 for instance, in the case of a snapshot
@@ -67,9 +202,11 @@ so resolution: basically, exists() can source verify, and it source verifies
 by doing a stat. That stat will bring in new knowlege, and may change flags on
 things to bring the ghost to a point where it is consistent with reality.
 
-so what if we have a ghost and our purpose is to test if it conforms to reality?
-well, the answer would be to create a new ghost with that LFN and verify that one.
-not sure why you'd want this, but it probably will come up. suggests a semantic where you can ask a ghost to "checkDiscrepencies" and you get a new ghost back with the actual state.
+so what if we have a ghost and our purpose is to test if it conforms to
+reality? well, the answer would be to create a new ghost with that LFN and
+verify that one. not sure why you'd want this, but it probably will come up.
+suggests a semantic where you can ask a ghost to "checkDiscrepencies" and you
+get a new ghost back with the actual state.
 
 now another thing has occured to me -what do we do about FSE proliferation?
 
