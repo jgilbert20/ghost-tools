@@ -3242,7 +3242,6 @@ sub learnStat
 	if( (defined $self->lastStat()) and ($time > $self->lastStat() ))
 	{
 		CODEPATH( "Newer stat information accepted");
-		return; 
 	}	
 
 	$self->size($size);
@@ -3255,8 +3254,6 @@ sub learnStat
 	{
 		CODEPATH( "new stat did not mark dirty" );
 	}
-
-
 
 	$self->dirty(1) if $anythingHasChanged;
 }
