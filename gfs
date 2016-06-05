@@ -1754,10 +1754,13 @@ sub incorporateGhostStore
   # debug Dumper( $self );
 }
 
-# Takes everything we've learned from a ghost and incorporate it
-# into our source of truth. 
-# as a side effect, this may end up registering new ghosts
-# as truthy.
+# Takes everything we've learned from a ghost and incorporate it into our
+# source of truth.  Ss a side effect, this may end up registering new ghosts
+# as truthy. Either the ghost you provide is registered as the truthy ghost,
+# or the existing one is updated.  Caller is always free to continue using
+# whatever ghost they want but future lookups will always get a reference
+# ghost with isTKVersion(1). If you want to be sure you are using that
+# version, future use should be the TK version which is returns.
 
 sub incorporateGhostData
 {
@@ -1773,28 +1776,42 @@ sub incorporateGhostData
 
 	if( exists $ghostForLFN->{$g->lfn()} )
 	{
-		# merge case
-		# take the best of both
-		# prefer checksum from the newer one
-		# use that for the date of the hash
+		# merge case: My caller provided a ghost and I already have one in my registry
 
 		my $base = $ghostForLFN->{$g->lfn()};
-
-		if( $base->lastFullHash() < $g->lastFullHash() )
+		if( $base == $g )
 		{
-			die if $base->isImmutable();
+			debug "  Incorporate: Asked to incorporate a ghost that is already truthy";
+			die unless $base->isTKVersion() > 0;
+			return;
+		}
 
-			$base->lastFullHash( $g->lastFullHash() );
-			$base->fullHash( $g->fullHash() );
-			$base->dirty(1);
-			debug "  Incorporate - Merger case - existing TK ghost updated (base=$base)\n" if $icDebug;
-		}
-		else
-		{
-			debug "  Incorporate -  Merger case - existing TK ghost was fine\n" if $icDebug;
-		}
+		# Now, presumably, I have a base that may need to be updated.
+
+		$base->learnFromGhost( $g );
+
+		# not super clear why this is here, maybe just affirmative?
+
+		die "Assert: two ghosts authoritative to same LFN" if $g->isTKversion() > 0;
 
 		$g->isTKversion(0);
+
+
+		# my $base = $ghostForLFN->{$g->lfn()};
+
+		# if( $base->lastFullHash() < $g->lastFullHash() )
+		# {
+		# 	die if $base->isImmutable();
+
+		# 	$base->lastFullHash( $g->lastFullHash() );
+		# 	$base->fullHash( $g->fullHash() );
+		# 	$base->dirty(1);
+		# 	debug "  Incorporate - Merger case - existing TK ghost updated (base=$base)\n" if $icDebug;
+		# }
+		# else
+		# {
+		# 	debug "  Incorporate -  Merger case - existing TK ghost was fine\n" if $icDebug;
+		# }
 
 		return $base; 
 	}
@@ -2784,8 +2801,8 @@ sub makeDebugString
 
 my $debugID = $self->_debugID();
 
-	return "ghostDump($debugID): lfn:[$lfn] type:[$type] mode:[$mode] lFH:[$lastFullHash] ".
-	"full:[$fullHash] ldirscan:[$lastDirScan] lastfullstat:[$lastStat] size:[$size]".
+	return "ghostDump($debugID): lfn:[$lfn] type:[$type] mode:[$mode] l_FH:[$lastFullHash] ".
+	"full:[$fullHash] ldirscan:[$lastDirScan] l_stat:[$lastStat] size:[$size]".
 	" mtime:[$mtime] immutable[$immutable]";
 
 
@@ -3111,7 +3128,31 @@ sub verifyGhostIsMutable
 #
 
 
+sub learnFromGhost
+{
+	my $self = shift; 
+	my $g = shift;
 
+	die unless ref $g; 
+
+	ODEPATH( "ghost merging" );
+
+	if( defined $g->lastStat() )
+	{
+		my $size = $g->size();
+		my $mode = $g->mode();
+		my $mdate = $g->mdate();
+
+		$self->learnStat( $g->lastStat(), $size, $mode, $mdate );
+	}
+
+	if( defined $g->lastFullHash() )
+	{
+		my $hash = $g->fullHash();
+		$self->learnStat( $g->lastFullHash(), $hash );
+	}
+
+}
 
 
 
