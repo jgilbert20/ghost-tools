@@ -1205,13 +1205,42 @@ this lives at the factory level
 
 
 
++++++
 
+# reconstruct-test A B C
+#   makes sure that everything in A and B be reconstructed in target C
+#   as long as there is at least one valid duplicate, we move on
+# 			first, best approach is to look for hashed AFN
+#			       ask FSE if it "owns" that file
+#				   then call "hasIdenticalContent()"
+#               if that doens't work, check the cache of sizes
+#					call hasIdenticalContent
+#                  as soon as one returns "hasIdenticalContent", we return
+#               finally, force the full cache of sizes
 
+# copy-delta A B C
+#    Anything in A and B that is not in C is going to get copied over 
+#	 into a "delta" directory
 
+# rsync A B C
+#	 C is reconfigured to look exactly like A and B. Files that no longer
+#    belong can be identified and removed as an option.
+#	 this works by MOVING files around inside of C. depending on how
+#    slashes are used, we either merge or replace (rsync ffo/ behavior)
+#    $fse->move( a, b );
+#			the move tool has to move the ghosts too
+# 			and that may invalidate certain descriptor files
 
+# what is the means by whcih deleted files are recongized?
+# in cases of a full scan, someone has to be smart enough
+# to know we are doing a scan that is "full" enough to count,
+# and to mark ghosts for deletion
 
-
-
+# right now, there is no stat verification when writing a snapshot
+# snapshot -verify-stat (can find it, size and lastmod match) --verify-
+# hash and when those things are in place, anthing that hasn't been
+# checked in the last 24 hours are rejected, unless you say --hit-disk
+# which means basically ignore all of the  tools and recheck everything
 
 
 

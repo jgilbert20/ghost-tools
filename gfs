@@ -50,6 +50,10 @@ local $main::run_descriptors_write = 0;
 local $main::readdir_invokes = 0;
 local $main::readdir_entries = 0;
 
+# Codepatch tracking
+
+my %codepathCount;
+
 # Get path to our WD
 
 my $HOME = $ENV{HOME};
@@ -177,7 +181,6 @@ sub setupDatabases
 	    -ErrPrefix => "GFS";
 }
 
-
 sub debug ($)
 {
 	return if not $GENERAL_DEBUG;
@@ -187,14 +190,30 @@ sub debug ($)
 }
 
 
+sub CODEPATH($)
+{	
+	my $p = shift; 
+	$codepathCount{$p}++;
+	print( "CODEPATH: $p\n" );
+}
+
+sub reportCodepaths
+{
+	foreach my $p (sort keys %codepathCount )
+	{
+		print "$codepathCount{$p}\t$p\n";
+
+	}
+
+
+}
+
 sub init
 {
 	verifyWorkingDirectories();
 	setupDatabases();
 	$main::localFileSystemFSE = new FilesystemExplorer::FS();
 }
-
-
 
 # Incorporated code from String::Escape via per artistic license
 # Reason: Need to tweak what counts as an escaped character
@@ -354,45 +373,7 @@ sub main()
 
 	my $verb = shift @ARGV;
 
-	# print " Verb = [$verb]\n";
-
 	handleVerb( $verb );
-
-	# reconstruct-test A B C
-	#   makes sure that everything in A and B be reconstructed in target C
-	#   as long as there is at least one valid duplicate, we move on
-	# 			first, best approach is to look for hashed AFN
-	#			       ask FSE if it "owns" that file
-	#				   then call "hasIdenticalContent()"
-	#               if that doens't work, check the cache of sizes
-	#					call hasIdenticalContent
-	#                  as soon as one returns "hasIdenticalContent", we return
-	#               finally, force the full cache of sizes
-
-	# copy-delta A B C
-	#    Anything in A and B that is not in C is going to get copied over 
-	#	 into a "delta" directory
-
-	# rsync A B C
-	#	 C is reconfigured to look exactly like A and B. Files that no longer
-	#    belong can be identified and removed as an option.
-	#	 this works by MOVING files around inside of C. depending on how
-	#    slashes are used, we either merge or replace (rsync ffo/ behavior)
-	#    $fse->move( a, b );
-	#			the move tool has to move the ghosts too
-	# 			and that may invalidate certain descriptor files
-	
-	# what is the means by whcih deleted files are recongized?
-	# in cases of a full scan, someone has to be smart enough
-	# to know we are doing a scan that is "full" enough to count,
-	# and to mark ghosts for deletion
-
-	# right now, there is no stat verification when writing a snapshot
-	#  snapshot -verify-stat (can find it, size and lastmod match) --verify-hash
-	# and when those things are in place, anthing that hasn't been checked in the last 24 hours
-	# are rejected, unless you say --hit-disk which means basically ignore all of the 
-	# tools and recheck everything
-	
 
 	FSEFactory->shutdown();
 
@@ -401,8 +382,9 @@ sub main()
 	if( $OPT_STATS )
 	{
 		handleStats();
-
 	}
+
+	reportCodepaths();
 }
 
 
@@ -427,9 +409,6 @@ sub handleStats
 sub handleVerb
 {
 	my $verb = shift;
-
-
-
 
 	if( $verb eq "lsdup")
 	{
@@ -464,7 +443,6 @@ sub handleVerb
 		doverb_writeSnapshot();
 		return;
 	}
-
 
 	die "Verb $verb not recognized - try $0 help for ideas";
 
@@ -634,11 +612,7 @@ sub doverb_checksum()
 		# $g->printDebug();
 
 		print +(join "\t", $fullHash, $g->lfn()), "\n";
-
-
 	}
-
-
 }
 
 
@@ -799,9 +773,6 @@ sub doverb_writeDescriptor()
 	}
 }
 
-
-
-
 # A hard ignore is a filename that we must pretend never existed
 # it will not factor into any directory checksums
 # or be saved to any ghost stores
@@ -915,9 +886,6 @@ sub canonize($)
 	return $clfn;
 }
 
-
-
-
 # Assembles a FQLFN from its consituent parts
 
 sub assembleLFN
@@ -929,7 +897,6 @@ sub assembleLFN
 	die unless defined $path;
 
 	return join ':', $handler, $root, $path;
-
 }
 
 
@@ -1483,7 +1450,6 @@ sub debug($)
 # and gets the ghosts returns a nice structure of data you'd need for iteration
 # on the command line: [provided ARGV, fully qualified ghost name, ghost]
 
-
 sub makeGhostsFromCommandLine
 {
 	my $self = shift;
@@ -1618,7 +1584,8 @@ sub verifyNoDirtyGhostsRemain
 			debug "\n";
 		}	
 
-		# TODO- unresolved design decision
+		# TODO - unresolved design decision, what do we do with dirty snapshot
+		# stuff?
 
 		if($g->dirty())
 		{
@@ -1922,7 +1889,6 @@ sub obtainGhostForLFN
 		}
 	}
 
-
 	# Wow, we've totally stuck out here - make a new thing
 	# when we get to this point, how do we decide if this guy is going to be virtual
 	# or if its going to be real?
@@ -2000,8 +1966,6 @@ sub next
 		return undef;
 	}
 
-	# debug "Next: Got [$n]\n";
-
 	my $tk = TruthKeeper::get();
 	my $g = $tk->obtainGhostForLFN( $n );
 
@@ -2073,8 +2037,6 @@ sub nextRaw
 
 	return $c;
 }
-
-
 
 ##########
 #
@@ -2577,6 +2539,12 @@ sub debug($)
 {
 	my $a = shift;
 	main::debug( "G: " . $a );
+}
+
+sub CODEPATH($)
+{	
+	my $p = shift; 
+	main::CODEPATH( "Ghost: $p" );
 }
 
 sub debugID()
@@ -3169,11 +3137,8 @@ sub learnPresent
 	# TODO: implement field
 }
 
-sub CODEPATH($)
-{	
-	my $p = shift; 
-	print "CODEPATH: $p\n";
-}
+
+
 
 
 # Dirscan means that we have seen the ghost in a directory scan
@@ -3430,6 +3395,4 @@ sub getStatSourceVerify
 
 main::main();
 exit();
-
-
 
