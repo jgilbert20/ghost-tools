@@ -29,6 +29,19 @@ use MLDBM qw( BerkeleyDB::Hash Storable );
 
 sub debug($);
 
+
+# Debug control
+
+
+my $icDebug = 0;
+my $tkdebug = 0;
+my $tkflushdebug = 0;
+my $gsDebug = 0;
+my $fseSnapshotDebug = 0;
+
+
+
+
 # Major globals
 
 my $DESCRIPTOR_FILENAME = ".gfs_ip";
@@ -444,6 +457,12 @@ sub handleVerb
 		return;
 	}
 
+	if( $verb eq "rsync")
+	{
+		doverb_rsync();
+		return;
+	}
+
 	die "Verb $verb not recognized - try $0 help for ideas";
 
 	return;
@@ -612,6 +631,28 @@ sub doverb_checksum()
 		# $g->printDebug();
 
 		print +(join "\t", $fullHash, $g->lfn()), "\n";
+	}
+}
+
+
+
+sub doverb_rsync()
+{
+	my $target = pop @ARGV;
+	my @source = @ARGV;
+
+	my $tk = TruthKeeper::get();
+	my ($targetGS, $targetStash) = $tk->makeGhostsFromCommandLine( $target );
+	my ($sourceGS, $sourceStash) = $tk->makeGhostsFromCommandLine( @source );
+	my $i = $sourceGS->getDescendingIterator();
+
+	while( my $g = $i->next() )
+	{
+		my $lfn = $g->getPath(); 
+		my $newPath = "$target";
+
+		print "[$lfn] -> [$newPath]\n";
+
 	}
 }
 
@@ -993,7 +1034,6 @@ use File::Basename;
 use base qw(Class::Accessor);
 FilesystemExplorer::Snapshot->mk_accessors( qw( dirty rootGhost rootGhostStore isFinalized deNovo) );
 
-my $fseSnapshotDebug = 0;
 
 sub debug($)
 {
@@ -1027,15 +1067,14 @@ sub getAbsoluteLFNForGhost
 	return main::rewriteLFNreplaceRoot( $g->lfn(), "HACKED_HASH_GOES_HERE");
 }
 
-
-
 sub storeGhost
 {
 	my $self = shift;
 	my $g = shift;
 
 	my $DID = $g->debugID();
-	debug "Storing ghost $DID";
+
+	debug "Storing ghost $DID" if $gsDebug;
 
 	# FOR NOW, we'll assume that snapshots are pretty immuatble, 
 	# but clearly there is no reason for them to be so
@@ -1434,10 +1473,6 @@ my $global_tk;
 my %ghostForLFN_private;
 my %ghostForAFN_private;
 my %ghostStoreForDescriptorLFN;
-
-my $icDebug = 1;
-my $tkdebug = 1;
-my $tkflushdebug = 1;
 
 sub debug($)
 {
@@ -2051,8 +2086,6 @@ use File::Basename;
 use POSIX;
 use base qw(Class::Accessor);
 GhostStore->mk_accessors( qw(lfnToGhost clean sizeToFNs) );
-
-my $gsDebug = 0;
 
 sub debug($)
 {
