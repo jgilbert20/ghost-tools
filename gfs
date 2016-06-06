@@ -687,9 +687,9 @@ sub doverb_checksum()
 ## dir1/File-x1 - I # pure swap case
 ## dir1/File-x2 - J # pure swap case 
 
-
-
-## TODO add a swap
+## also need to add cases where the orphan is actually a whole directory
+## e.g. a new directory replacing old directory,
+## and a new file replacing a directory, and a directory replacing a file
 
 sub doverb_rsync()
 {
@@ -705,12 +705,15 @@ sub doverb_rsync()
 
 	if( not $targetGhost->exists() )
 	{
-		die "Cannot find target!";
+		die "Cannot stat() target: $targetUserFN! $!";
 	}
 
 	die unless $targetGhost->canHaveChildren();
 
 	my ($targetHandler, $targetRoot, $targetPath)  = $targetGhost->getLFNcompontents();
+
+	my %targetClaimedLFN;
+	my $targetOrphanGS = GhostStore->new();
 
 	while( my $g = $i->next() )
 	{
@@ -720,17 +723,97 @@ sub doverb_rsync()
 		my $newPath = File::Spec->catfile( $targetPath, $basename );
 		my $newLFN = main::assembleLFN( $targetHandler, $targetRoot, $newPath );
 
+		print "----------------------\n";
 		print "[$sourcePath] -> [$newPath]\n";
+		print "Thing I'm iterating on:\n";
+		$g->printDebug();
+
 		# print "[$sourceLFN] -> [$newLFN]\n";
 
 		# Check case where file is already at our destination
 
 		my $targetGhost = $tk->obtainGhostForLFN( $newLFN );
 
+		my $handled = 0; 
+
 		if( $targetGhost->exists() )
 		{
-			print "Exists\n";
+			print "   - Exists at destination (A)\n";
+
+			if( $targetGhost->isDuplicateOf($g) )
+			{
+				print "   - Acceptable, no action to take! (A1)\n";
+				$targetClaimedLFN{$sourceLFN} = 'Claimed';
+				$handled = 1;
+			}
+			else
+			{
+				print "   - Not acceptable, orphan, move needed (A2)\n";
+
+				my $newOrphanNameFound = 0;
+				my $scramble = 1;
+				my $finalNewOrphanLFN = 0; 
+
+				while( not $newOrphanNameFound )
+				{
+					# Calculate a new name for this file
+					my $orphanNewPathName = $targetGhost->getPath() . "orphan-$scramble";
+					my $orphanNewLFN = main::assembleLFN( $targetHandler, $targetRoot, $orphanNewPathName );
+					my $orphanGhost = $tk->obtainGhostForLFN( $orphanNewLFN );
+					print "       - testing orphan: $orphanNewLFN\n";
+					next if $orphanGhost->exists();
+					next if $targetClaimedLFN{$orphanNewLFN};
+					$finalNewOrphanLFN = $orphanNewLFN;
+					$newOrphanNameFound = 1;
+				}
+
+				# no, this doesn't work. we won't know what is claimed until we get through all of the
+				# source
+				# so we need a past that claims everything, and a separate pass that assigns orphans
+
+				$targetClaimedLFN{$finalNewOrphanLFN} = 'Claimed';
+
+
+
+				$targetClaimedLFN{$sourceLFN} = 'Orphaned';
+				$targetOrphanGS->addGhost( $targetGhost );
+			}
 		}
+
+		if( not $handled )
+		{
+			# This is the copy case - either the target represents an orphan
+			# or there is no file there at all.
+
+			# First check for an orphan
+			# TODO, this could get really expensive O(N^2) shit if we don't
+			# handle addGhost properly
+
+			#print "Orphans are these:\n";
+			#map { $_->printDebug() } $targetOrphanGS->getAllGhosts();
+
+			my $orphan = $targetOrphanGS->findSingleDuplicate( $g );
+
+			if( defined $orphan )
+			{
+				print "   - Found an orphan matching source\n";
+				$handled = 1;
+			}
+		}
+
+		if( not $handled )
+		{
+			my $orphan = $targetGS->findSingleDuplicate( $g );
+
+			if( defined $orphan )
+			{
+				print "   - Found an target hash matching source\n";
+				$handled = 1;
+			}
+		}
+
+
+
 
 
 	}
@@ -1454,6 +1537,8 @@ sub getImmediateChildren
 	my $parent = shift;
 
 	my $dir = $parent->getPath();
+
+	print "*** Scandir [$dir]\n";
 
 	print "FSE:ScanDIR into dir:[$dir]\n" if $fseDebug;
 
@@ -2190,7 +2275,7 @@ package GhostStore;
 use File::Basename;
 use POSIX;
 use base qw(Class::Accessor);
-GhostStore->mk_accessors( qw(lfnToGhost clean sizeToFNs) );
+GhostStore->mk_accessors( qw(lfnToGhost sizeToFNs) );
 
 sub debug($)
 {
@@ -2198,23 +2283,37 @@ sub debug($)
 	main::debug( "GS: " . $a );
 }
 
+sub CODEPATH($)
+{	
+	my $p = shift; 
+	main::CODEPATH( "GS: $p" );
+}
 
 sub new
 {
 	my $class = shift;
 	my $self = $class->SUPER::new();
 	$self->lfnToGhost( +{} );
-	$self->clean(1);
+	$self->sizeToFNs( undef );
 
 	return $self;
 }
+
+## TODO
+
+## ghost iterators now sort their contents why? well, turns out there is some
+## non-deterministic behavior going on depending on how the values get scrabled
+## into the cache and i need consistency. ideally though, we need a way of
+## iterating through the ghost store in an order similiar to the one the user
+## intendend.
+
 
 sub getDescendingIterator
 {
 	my $self = shift;
 
 	my $r = GhostIterator->new();
-	$r->queue( [ keys %{$self->lfnToGhost()} ] );
+	$r->queue( [ sort keys %{$self->lfnToGhost()} ] );
 	$r->recurse(1);
 	$r->parentGhoststore( $self );
 	return $r;
@@ -2260,6 +2359,7 @@ sub purifyAllGhostsToTK
 			debug "GhostStore: ***** PURIFY $g->lfn()\n" if $gsDebug;
 			my $n = $tk->obtainGhostForLFN( $g->lfn() );
 			$lfnToGhost->{$n->lfn()} = $n;
+			CODEPATH( "GS purification");
 		}
 	}
 }
@@ -2288,12 +2388,30 @@ sub addGhost($)
 
 	if( exists $lfnToGhost->{$g->lfn()} )
 	{
-		die "GhostStore: Boundary case - adding ghost where one already existed" if $gsDebug;
+		die "GhostStore: Boundary case - adding ghost where one already existed";
 	}
 
 	$lfnToGhost->{$lfn} = $g; 
 
+	$self->ghostStoreCacheTaint();
+
 	return;
+}
+
+# Signal that membership in the store has changed, and that the caches 
+# are probably not up to date. Conservative action is to revoke all caches.
+
+
+sub ghostStoreCacheTaint
+{
+	my $self = shift;
+
+	if( defined $self->sizeToFNs() )
+	{
+		CODEPATH( "Tainted ghoststore cache");
+		$self->sizeToFNs( undef );
+	}
+
 }
 
 # Pulls in the descriptor listed 
@@ -2492,14 +2610,11 @@ sub loadSizeCache
 		push @{$h->{$size}}, $g;
 	}
 
-
 	$self->sizeToFNs($h);
-
 }
 
 sub findFilesWithSize
 {
-
 	my $self = shift;
 	my $s = shift;
 
@@ -2512,9 +2627,30 @@ sub findFilesWithSize
 
 	my $lu = $self->sizeToFNs()->{$s};
 
+
 	return +() if not defined $lu;
 
-	return ( @{$lu} );
+	# Its theoretically possible the size cache is invalid. Quickly check our
+	# answer. 
+
+	my @c = @{$lu};
+	my @r;
+	foreach my $g (@c)
+	{
+		if( $g->size() != $s )
+		{
+			CODEPATH( "Rare case where ghoststore size cache returned stale data");
+		}
+		else
+		{
+			push @r, $g;
+		}
+
+	}
+
+
+
+	return @r;
 }
 
 # Returns all ghosts other than the one passed that is a hash duplicate
@@ -2561,7 +2697,7 @@ sub findAllDuplicates
 				debug "     -- Checking size duplicates size:[$size]\n";
 				debug "     ---> cfn:[$cFN]\n";
 				debug "  vs ---> tfn:[$tFN]\n";
-				}	
+			}	
 		}
 
 		if( $target->isDuplicateOf( $gc ) )
@@ -2575,8 +2711,19 @@ sub findAllDuplicates
 	# return @matches;
 }
 
+# Returns a single ghost that is a duplicate, or undef if no such duplicate
+# exists. 
 
+sub findSingleDuplicate
+{
+	my $self = shift;
+	my $target = shift;
 
+	my @r = $self->findOtherDuplicates( $target );
+
+	return undef if @r < 1;
+	return pop @r; 
+}
 
 
 
@@ -2585,8 +2732,8 @@ sub findAllDuplicates
 # Ghost - an imprint of a file that may or may not exist at a particular place
 #
 # The ghost is a carrier of information about a file, and intended to be lightweight
-# More than one ghost can exist for a given file, and they can be different
-# to obtain an "authoritiative" ghost, the TruthKeeper is used to resolve them
+# More than one ghost can exist for a given file, and they can be different.
+# To obtain an "authoritiative" ghost, the TruthKeeper is used to resolve them
 # for instance a snapshot could have one version of a ghost, a descriptor a different
 # and the one from the file system could yet again be different. Ghosts are intended
 # to be so lightweight that they can be used as proxies for filename everywhere
@@ -2973,7 +3120,6 @@ sub isDuplicateOf
 
 #   die "Incomplete info self full hash" if not defined $self->fullHash();
 #	die "Incomplete info other full hash " if not defined $other->fullHash();
-
 
 	return 0 if( $self->getFullHash() ne $other->getFullHash() );
 

@@ -1,3 +1,40 @@
+
+
+# Compare mode
+
+a new sematic i didn't realize
+its not reconstruct
+its stronger
+it asks "is everything here exactly as it was in the snapshot?"
+
+
+# Singleton nature
+
+Its canonical that the LFN of a ghost once created must never change.
+
+if you need to reference a new thing, make a new ghost
+
+
+# determinis and order
+
+ghost iterators now sort their contents why? well, turns out there is some
+non-deterministic behavior going on depending on how the values get scrabled
+into the cache and i need consistency. ideally though, we need a way of
+iterating through the ghost store in an order similiar to the one the user
+intendend.
+
+# too much caching
+
+there is a good reason to really restat the entire destination directory
+before developing a workplan otherwise operations will start to go wrong when
+things aren't where expected. I think its fair to not rely on caching 
+when you are actually about to write new stuff.. 
+
+do this at the start, don't wait for some forced cache
+
+
+
+
 # Existence
 
 A stat on a file either has to tell you that the file has certain information,
