@@ -3277,6 +3277,7 @@ sub getFullHash
 		my $t = time();
 
 		$self->getStatSourceVerify( $t );
+		return undef if not $self->exists();
 		$self->getFullHashSourceVerify( $t );
 		$self->getStatSourceVerify( $t );
 
@@ -3548,9 +3549,16 @@ sub learnStat
 
 	if( (defined $self->lastStat()) and ($time == $self->lastStat() ))
 	{
-		die "Rule2: Info with same date must match existing" unless $self->size() == $size;
-		die "Rule2: Info with same date must match existing" unless $self->mtime() == $mtime;
-		die "Rule2: Info with same date must match existing" unless $self->mode() == $mode;
+		die "Rule2: same date mismatch" if defined $size  and defined $self->size()  and $self->size() != $size;
+		die "Rule2: same date mismatch" if defined $mtime and defined $self->mtime() and $self->mtime() != $mtime;
+		die "Rule2: same date mismatch" if defined $mode  and defined $self->mode()  and $self->mode() ne $mode;
+
+		die "Rule2: same date mismatch" if defined $size  and not defined $self->size(); 
+		die "Rule2: same date mismatch" if defined $mtime and not defined $self->mtime();
+		die "Rule2: same date mismatch" if defined $mode  and not defined $self->mode();
+
+
+
 	}
 
 	# RULE #6: Error stats revoke all other fields
@@ -3568,7 +3576,7 @@ sub learnStat
 	# hash is newer than the incoming stat, but older than the existing stat, we
 	# have a logical violation of RULE #1)
 
-	if( (defined $self->size()) && ($self->size() != $size))
+	if( (defined $self->size()) && ((not defined $size) or ($self->size() != $size)))
 	{
 		$self->lastFullHash(undef);
 		$self->fullHash(undef);
@@ -3578,12 +3586,9 @@ sub learnStat
 
 	if( (defined $self->lastStat()) and ($time < $self->lastStat() ))
 	{
-
 		CODEPATH( "ignored older incoming stat" );
 		return;
 	}
-
-
 
 	my $anythingHasChanged = 0;
 
@@ -3598,9 +3603,14 @@ sub learnStat
 	}
 	else
 	{
-		$anythingHasChanged = 1 if( $self->size() != $size );
-		$anythingHasChanged = 1 if( $self->mtime() != $mtime );
-		$anythingHasChanged = 1 if( $self->mode() != $mode );
+		$anythingHasChanged = 1 if( ( not defined $size  ) and ( defined $self->size()  ) );
+		$anythingHasChanged = 1 if( ( not defined $mtime ) and ( defined $self->mtime() ) );
+		$anythingHasChanged = 1 if( ( not defined $mode  ) and ( defined $self->mode()  ) );
+
+
+		$anythingHasChanged = 1 if( defined $size and $self->size() != $size );
+		$anythingHasChanged = 1 if( defined $mtime and $self->mtime() != $mtime );
+		$anythingHasChanged = 1 if( defined $mode and $self->mode() ne $mode );
 	}
 
 	if( (defined $self->lastStat()) and ($time > $self->lastStat() ))

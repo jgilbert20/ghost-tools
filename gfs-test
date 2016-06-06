@@ -15,6 +15,27 @@ my $TESTSTATE_PWD = getcwd();
 my $TESTSTATE_LASTRUN_STD;
 my $TESTSTATE_LASTRUN_ERR;
 my $TESTSTATE_LAST_OUTPUT;
+my $TESTSTATE_TEST_NAME;
+
+
+
+sub clear_test_env
+{
+	undef $TESTSTATE_PWD;
+	undef $TESTSTATE_LASTRUN_STD;
+	undef $TESTSTATE_LASTRUN_ERR;
+	undef $TESTSTATE_LAST_OUTPUT;
+	undef $TESTSTATE_TEST_NAME;
+
+	system( 'rm -rv /tmp/gfstest/' );
+}
+
+
+sub testname
+{
+	my $name = shift;
+	$TESTSTATE_TEST_NAME = $name;
+}	
 
 sub mkdirs($)
 {
@@ -22,13 +43,15 @@ sub mkdirs($)
 
 	# my $dirx = dirname $dir;
 
-	print "MKDIRS:[$dir]\n";
+	# print "MKDIRS:[$dir]\n";
 	eval { mkpath( $dir, 1 ) };
 	$@ and die "Couldn't create dir path: $! $@";
 	die "Did not find new path" if not -d $dir;
 
 	return 1;
 }
+
+my %shaForSeed;
 
 sub mkfile($$)
 {
@@ -38,8 +61,24 @@ sub mkfile($$)
 	mkdirs(dirname($path) );
 
 	open FILE, ">$path" or die "Cannot open $path: $!";
-	print FILE "$seed";
+	print FILE "X-$seed" x 100;
 	close FILE;
+
+	$shaForSeed{$seed} = getSha( $path );
+
+	print "$TESTSTATE_TEST_NAME - mkfile - $seed - $path\n";
+
+}
+
+sub getSha
+{
+	my $path = shift;
+	my $sha = `shasum $path`;
+	chomp $sha; 
+	($sha =~ /^([^\s]+)\s/ ) or die;
+	my $r = $1; 
+	chomp $r;
+	return $r;
 }
 
 sub cd($)
@@ -74,28 +113,93 @@ sub run($)
 	}
 }
 
-sub baseline_reported_checksum
+sub extractReportedChecksum
 {
 	my $k = shift;
 
-	print $TESTSTATE_LAST_OUTPUT;
+	 # print $TESTSTATE_LAST_OUTPUT;
 
-	die "failed to find CS" unless( $TESTSTATE_LAST_OUTPUT =~ /^([\w\/]+)\s+.*$k$/m );
-	
-	print "got: $1\n";
+	die "failed to find CS" unless( $TESTSTATE_LAST_OUTPUT =~ /^SHA1\/FULL\/([\w\/]+)\s+.*$k$/m);
+	my $r = $1;
+	chomp $r;
 
-	return $1; 
+ 	# print "GFS reported $k -> $r\n";
 
+	return $r; 
+}
+
+sub verifyReportedChecksum
+{
+	my $path = shift;
+	my $seed = shift;
+
+	my $r = extractReportedChecksum( $path );
+	my $c = $shaForSeed{$seed};
+
+	die "Verify Reported Checksum Failed - $path - $r ne $c" if( $r ne $c );
+
+	print "$TESTSTATE_TEST_NAME - OK - gfs_checksum - $seed - $path\n";
+
+}
+
+
+
+sub verifyFile
+{
+	my $path = shift;
+	my $seed = shift;
+
+	my $found = getSha( $path );
+
+	die "Verify Checksum Failed - $path - $found ne $shaForSeed{$seed}" if( $found ne $shaForSeed{$seed});
+
+	print "$TESTSTATE_TEST_NAME - OK - verifyFile - $seed - $path\n";
+
+}
+
+use File::Copy;
+
+sub move
+{
+	my $a = shift;
+	my $b = shift;
+
+	File::Copy->move( $a, $b );
+
+	print "$TESTSTATE_TEST_NAME - mv - $a -> $b\n";
+}
+
+sub rm
+{
+	my $a = shift;
+
+	unlink( $a );
+
+	print "$TESTSTATE_TEST_NAME - rm - $a\n";
 }
 
 sub test_simplePathnames
 {
+	clear_test_env;
+	testname 'test_simplePathnames';
 	mkfile '/tmp/gfstest/file1', 15;
 	mkfile '/tmp/gfstest/file2', 20;
 	cd '/tmp/gfstest';
 	run "gfs checksum file1 file2";
 
-	baseline_reported_checksum( 'file1' );
+	verifyFile( '/tmp/gfstest/file1', 15 );
+	verifyFile( '/tmp/gfstest/file2', 20 );
+
+	verifyReportedChecksum( 'file1', 15 );
+
+	rm '/tmp/gfstest/file1';
+
+	verifyReportedChecksum( 'file1', 15 );
+
+	run "gfs checksum -G 0 file1 file2";
+
+	
+
 }
 
 test_simplePathnames();
