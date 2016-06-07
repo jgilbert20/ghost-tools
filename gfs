@@ -671,10 +671,11 @@ sub doverb_checksum()
 ## File0 - An immoveable file
 ## File1 - A   # file in right place
 ## File2 - B   # file needs a rename nad has to get out of the way
-## File6 - F   # orphaned in the new tree
+## File6 - F   # orphaned in the new tree, no winkins
 ## File-x1 - J # pure swap case
 ## File-x2 - I # pure swap case
-##
+## File9x - K  # make intentional orphan with data K
+## 
 ## Move into it
 ##
 ## dir1/File3 - C # input t
@@ -685,11 +686,58 @@ sub doverb_checksum()
 ## dir1/File2 - H # net new file overwriting a existing file who is needed elsewhere 
 ## dir1/File5 - B # needs to pull fom the orphan
 ## dir1/File-x1 - I # pure swap case
-## dir1/File-x2 - J # pure swap case 
+## dir1/File-x2 - J # pure swap case
+## dir1/File9x - A # make an orphan
+## dir1/File9a - K # one of the places that 9x can go
+## dir1/File9b - K # a place for a copy of a wink in
+## dir1/File9c - K # a place for a copy of a wink in
+
+
+
 
 ## also need to add cases where the orphan is actually a whole directory
 ## e.g. a new directory replacing old directory,
 ## and a new file replacing a directory, and a directory replacing a file
+
+## A case where we run out of wink-ins
+
+
+
+
+
+## iterate through all files in source
+## if file is present, and correct - CLAIMED
+## if file is present, and wrong - ORPHAN, add to PENDING
+## if file is not present add to PENDING
+
+# now go through all PENDING, assigning source LFNs
+# if we can find an unclaimed orphan, queue a local move on the CLEARANCE list
+# if we can find an calimed orphan, queue a local move on the ORPHANCOPY list
+# if we can find a target, move onto the LOCAL copy
+
+# first do all ORPHANCOPY operations
+# Then CLEARANCE moves
+# Then any orphans left, move out
+# then finally transfer the PENDING items
+
+# I think this will FAIL to handle a swap. Tower of hanoi problem.
+#
+
+
+# Go through all files in source and claim those paths in the destination
+# A1- if the file is present, and correct - mark destpath=DONE
+# A2- if the file is present, and incorrect - mark destpath=WRONGFILE
+# A3- if the file is not present - mark DESTPATH=EMPTY
+
+# now move all orphans to new location. If we can find any WRONGFILE slots they fit, 
+# move them there. Every move should update destpath to DONE
+
+# otherwise, give them new names .orphan. check the new names to make sure they don't have destpath
+# 
+
+
+
+
 
 sub doverb_rsync()
 {
@@ -712,8 +760,17 @@ sub doverb_rsync()
 
 	my ($targetHandler, $targetRoot, $targetPath)  = $targetGhost->getLFNcompontents();
 
-	my %targetClaimedLFN;
+	# First go through all source files and check for one of three cases on the other end. 
+	# Go through all files in source and claim those paths in the destination
+	# A1- if the file is present, and correct - mark destpath=DONE
+	# A2- if the file is present, and incorrect - mark destpath=WRONGFILE
+	# A3- if the file is not present - mark DESTPATH=EMPTY
+
+	my %targetStatusLFN;
 	my $targetOrphanGS = GhostStore->new();
+	my $targetMissingGS = GhostStore->new();
+	#my @orphanGhostsAtTarget = ();
+
 
 	while( my $g = $i->next() )
 	{
@@ -721,9 +778,9 @@ sub doverb_rsync()
 		my $sourcePath = $g->getPath(); 
 		my $basename = basename $g->getPath();
 		my $newPath = File::Spec->catfile( $targetPath, $basename );
-		my $newLFN = main::assembleLFN( $targetHandler, $targetRoot, $newPath );
+		my $targetLFN = main::assembleLFN( $targetHandler, $targetRoot, $newPath );
 
-		print "----------------------\n";
+		print "--- INITIAL SCAN -------------------\n";
 		print "[$sourcePath] -> [$newPath]\n";
 		print "Thing I'm iterating on:\n";
 		$g->printDebug();
@@ -732,7 +789,7 @@ sub doverb_rsync()
 
 		# Check case where file is already at our destination
 
-		my $targetGhost = $tk->obtainGhostForLFN( $newLFN );
+		my $targetGhost = $tk->obtainGhostForLFN( $targetLFN );
 
 		my $handled = 0; 
 
@@ -743,80 +800,88 @@ sub doverb_rsync()
 			if( $targetGhost->isDuplicateOf($g) )
 			{
 				print "   - Acceptable, no action to take! (A1)\n";
-				$targetClaimedLFN{$sourceLFN} = 'Claimed';
+
+				$targetStatusLFN{$targetLFN} = 'DONE';
 				$handled = 1;
 			}
 			else
 			{
 				print "   - Not acceptable, orphan, move needed (A2)\n";
 
-				my $newOrphanNameFound = 0;
-				my $scramble = 1;
-				my $finalNewOrphanLFN = 0; 
+				$targetStatusLFN{$targetLFN} = 'WRONGFILE';
+				$targetOrphanGS->addGhost( $targetGhost );
+				# push @orphanGhostsAtTarget, $targetGhost;
+			}
+		}
+		else
+		{
+			print "   - No file is present (A3)\n";
 
-				while( not $newOrphanNameFound )
-				{
-					# Calculate a new name for this file
-					my $orphanNewPathName = $targetGhost->getPath() . "orphan-$scramble";
-					my $orphanNewLFN = main::assembleLFN( $targetHandler, $targetRoot, $orphanNewPathName );
-					my $orphanGhost = $tk->obtainGhostForLFN( $orphanNewLFN );
-					print "       - testing orphan: $orphanNewLFN\n";
-					next if $orphanGhost->exists();
-					next if $targetClaimedLFN{$orphanNewLFN};
-					$finalNewOrphanLFN = $orphanNewLFN;
-					$newOrphanNameFound = 1;
-				}
+			$targetStatusLFN{$targetLFN} = 'NO_FILE';
+			$targetMissingGS->addGhost( $g );
+		}
+	}
+
+	# Next, we need to find homes for orphans. The cases we care about
+	# B1 - Orphan in the unsent pool, case of a wink-in
+	# B2 - Orphan not in unsent pool, find a non-conflicting name and move
+
+	my $targetOrphanGSiterator = $targetOrphanGS->getIterator(); 
+
+	while( my $g = $targetOrphanGSiterator->next() )
+	{
+
+		print "--- ORPHAN SCAN ----------------\n";
+		print "Orphan: " . $g->lfn();
+		print "\n";
+
+		if( my $m = $targetMissingGS->findSingleDuplicate( $g ) )
+		{
+			my $lfn = $m->lfn();
+			print "   - Wink in available - $lfn\n";
+
+			$targetMissingGS->removeGhost( $m );
+		}
+	}
+
+
+
+
+
+				# my $newOrphanNameFound = 0;
+				# my $scramble = 1;
+				# my $finalNewOrphanLFN = 0; 
+
+				# while( not $newOrphanNameFound )
+				# {
+				# 	# Calculate a new name for this file
+				# 	my $orphanNewPathName = $targetGhost->getPath() . "orphan-$scramble";
+				# 	my $orphanNewLFN = main::assembleLFN( $targetHandler, $targetRoot, $orphanNewPathName );
+				# 	my $orphanGhost = $tk->obtainGhostForLFN( $orphanNewLFN );
+				# 	print "       - testing orphan: $orphanNewLFN\n";
+				# 	next if $orphanGhost->exists();
+				# 	next if $targetClaimedLFN{$orphanNewLFN};
+				# 	$finalNewOrphanLFN = $orphanNewLFN;
+				# 	$newOrphanNameFound = 1;
+				# }
 
 				# no, this doesn't work. we won't know what is claimed until we get through all of the
 				# source
 				# so we need a past that claims everything, and a separate pass that assigns orphans
 
-				$targetClaimedLFN{$finalNewOrphanLFN} = 'Claimed';
 
 
 
-				$targetClaimedLFN{$sourceLFN} = 'Orphaned';
-				$targetOrphanGS->addGhost( $targetGhost );
-			}
-		}
+		# 		$targetClaimedLFN{$sourceLFN} = 'Orphaned';
+		# 		$targetOrphanGS->addGhost( $targetGhost );
+		# 	}
+		# }
 
-		if( not $handled )
-		{
-			# This is the copy case - either the target represents an orphan
-			# or there is no file there at all.
-
-			# First check for an orphan
-			# TODO, this could get really expensive O(N^2) shit if we don't
-			# handle addGhost properly
-
-			#print "Orphans are these:\n";
-			#map { $_->printDebug() } $targetOrphanGS->getAllGhosts();
-
-			my $orphan = $targetOrphanGS->findSingleDuplicate( $g );
-
-			if( defined $orphan )
-			{
-				print "   - Found an orphan matching source\n";
-				$handled = 1;
-			}
-		}
-
-		if( not $handled )
-		{
-			my $orphan = $targetGS->findSingleDuplicate( $g );
-
-			if( defined $orphan )
-			{
-				print "   - Found an target hash matching source\n";
-				$handled = 1;
-			}
-		}
+	
 
 
 
 
-
-	}
 }
 
 
@@ -2319,6 +2384,18 @@ sub getDescendingIterator
 	return $r;
 }
 
+
+sub getIterator
+{
+	my $self = shift;
+
+	my $r = GhostIterator->new();
+	$r->queue( [ sort keys %{$self->lfnToGhost()} ] );
+	$r->recurse(0);
+	$r->parentGhoststore( $self );
+	return $r;
+}
+
 sub countDirty
 {
 	my $self = shift;
@@ -2369,6 +2446,39 @@ sub getAllGhosts
 	my $self = shift;
 	my $lfnToGhost = $self->lfnToGhost();
 	return values %$lfnToGhost;
+}
+
+sub removeGhost($)
+{
+	my $self = shift;
+	my $g = shift;
+
+	my $lfn = $g->lfn();
+	my $lfnToGhost = $self->lfnToGhost();
+
+	my $DID = $g->debugID();
+	debug "GhostStore: Remove ghost $DID (lfn=$lfn) from ghoststore\n" if $gsDebug;
+
+	if( not exists $lfnToGhost->{$lfn} )
+	{
+		die "GhostStore: Boundary case - as to remove a ghost that doesn't exist";
+	}
+
+	delete $lfnToGhost->{$lfn};
+
+	my $sizeToFNs = $self->sizeToFNs();
+
+	# remove from size cache if it exists
+
+	if( defined $sizeToFNs )
+	{	
+		if( defined $g->getSize() )
+		{
+			my $size = $g->getSize(); 
+			my @r = grep { $lfn eq $_ } @{$sizeToFNs->{$size}};
+			$sizeToFNs->{$size} = \@r;
+		}
+	}
 }
 
 sub addGhost($)
@@ -2663,15 +2773,25 @@ sub findOtherDuplicates
 	return grep { not $g->isSameFilename($_) } $self->findAllDuplicates($g);
 }
 
-# Returns every known ghost named in this collection that is a duplicate
+
+# Returns every known ghost named in this collection that is a duplicate. A
+# duplicate is defined as a file with the exact contents, even if things like
+# mode or modification times differ.
+#
+# This is the most expensive duplicate finding operation since it is
+# completionist -  all potential duplicates are verified. Note: duplicates may
+# include  the ghost itself.
 
 sub findAllDuplicates
 {
 	my $self = shift;
 	my $target = shift;
 
+	die "findAllDuplicates() passed invalid scalar" unless defined $target;
+
 	my $size = $target->getSize();
 
+	die "findAllDuplicates passed an invalide (size = undef) file" if not defined $size; 
 	return () if $size < 1; 
 
 	# First, check our size cache for a match
@@ -2712,7 +2832,8 @@ sub findAllDuplicates
 }
 
 # Returns a single ghost that is a duplicate, or undef if no such duplicate
-# exists. 
+# exists. In theory this can be implemented in a "leaner" way since once a
+# single is found, no more hash duplicates need to be tested.
 
 sub findSingleDuplicate
 {
@@ -2725,6 +2846,16 @@ sub findSingleDuplicate
 	return pop @r; 
 }
 
+sub hasDuplicate
+{
+	my $self = shift;
+	my $target = shift;
+
+	return $self->findSingleDuplicate($target);
+
+
+
+}
 
 
 ##########
@@ -2890,14 +3021,10 @@ sub newFromSerialized($)
 	if( $serializeDebug )
 	{
 		debug "Just deserialized: ".$self->makeDebugString();
-		
 	}	
 
 	return $self;
-
 }
-
-
 
 sub isImmutable
 {

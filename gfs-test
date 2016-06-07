@@ -18,7 +18,6 @@ my $TESTSTATE_LAST_OUTPUT;
 my $TESTSTATE_TEST_NAME;
 
 
-
 sub clear_test_env
 {
 	undef $TESTSTATE_PWD;
@@ -197,9 +196,63 @@ sub test_simplePathnames
 	verifyReportedChecksum( 'file1', 15 );
 
 	run "gfs checksum -G 0 file1 file2";
+}
 
+## Assemble target such that it has
+##
+## File0 - An immoveable file
+## File1 - A   # file in right place
+## File2 - B   # file needs a rename nad has to get out of the way
+## File6 - F   # orphaned in the new tree, no winkins
+## File-x1 - J # pure swap case
+## File-x2 - I # pure swap case
+## File9x - K  # make intentional orphan with data K
+
+sub test_rsyncmega
+{
+	clear_test_env;
+	testname 'test_rsyncmega';
+	mkfile '/tmp/gfstest/target/file1',   'A';
+	mkfile '/tmp/gfstest/target/file2',   'B';
+	mkfile '/tmp/gfstest/target/file6',   'C';
+	mkfile '/tmp/gfstest/target/file-x1', 'J';
+	mkfile '/tmp/gfstest/target/file-x2', 'I';
+	mkfile '/tmp/gfstest/target/file9x',  'K';
+
+
+## dir1/File3 - C # input t
+## dir2/File3 - D # input file that overlaps other input file
+## dir1/File4 - E # input file that that is a net new hash
+## dir1/File1 - A # target file already in the right place
+## dir1/File8 - E # two input files with same hash (trigger local move, 1x copy)
+## dir1/File2 - H # net new file overwriting a existing file who is needed elsewhere 
+## dir1/File5 - B # needs to pull fom the orphan
+## dir1/File-x1 - I # pure swap case
+## dir1/File-x2 - J # pure swap case
+## dir1/File9x - A # make an orphan
+## dir1/File9a - K # one of the places that 9x can go
+## dir1/File9b - K # a place for a copy of a wink in
+## dir1/File9c - K # a place for a copy of a wink in
+
+	mkfile '/tmp/gfstest/source/file3',   'C';
+	mkfile '/tmp/gfstest/source/file4',   'E';
+	mkfile '/tmp/gfstest/source/file1',   'A';
+	mkfile '/tmp/gfstest/source/file8',   'E';
+	mkfile '/tmp/gfstest/source/file2',   'H';
+	mkfile '/tmp/gfstest/source/file5',   'B';
+	mkfile '/tmp/gfstest/source/file-x1', 'I';
+	mkfile '/tmp/gfstest/source/file-x2', 'J';
+	mkfile '/tmp/gfstest/source/file9x',  'A';
+	mkfile '/tmp/gfstest/source/file9a',  'K';
+	mkfile '/tmp/gfstest/source/file9b',  'K';
+	mkfile '/tmp/gfstest/source/file9c',  'K';
 	
 
 }
 
-test_simplePathnames();
+
+
+
+# test_simplePathnames();
+test_rsyncmega();
+
