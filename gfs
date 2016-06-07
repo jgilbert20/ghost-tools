@@ -769,6 +769,7 @@ sub doverb_rsync()
 	my %targetStatusLFN;
 	my $targetOrphanGS = GhostStore->new();
 	my $targetMissingGS = GhostStore->new();
+	my $placedOrphanGS = GhostStore->new();
 	#my @orphanGhostsAtTarget = ();
 
 
@@ -810,6 +811,7 @@ sub doverb_rsync()
 
 				$targetStatusLFN{$targetLFN} = 'WRONGFILE';
 				$targetOrphanGS->addGhost( $targetGhost );
+				$targetMissingGS->addGhost( $g );
 				# push @orphanGhostsAtTarget, $targetGhost;
 			}
 		}
@@ -830,21 +832,74 @@ sub doverb_rsync()
 
 	while( my $g = $targetOrphanGSiterator->next() )
 	{
-
 		print "--- ORPHAN SCAN ----------------\n";
 		print "Orphan: " . $g->lfn();
 		print "\n";
 
-		if( my $m = $targetMissingGS->findSingleDuplicate( $g ) )
-		{
-			my $lfn = $m->lfn();
-			print "   - Wink in available - $lfn\n";
+		my @r = $targetMissingGS->findAllDuplicates( $g ) ;
 
-			$targetMissingGS->removeGhost( $m );
+		# Check for case where the orphan is a potential answer to one or more 
+		# missing files to transfer
+
+		if( @r > 0 )
+		{
+			my $winkin = shift @r;
+			my $winkinLFN = $winkin->lfn();
+			print "   - Wink in available - $winkinLFN\n";
+ 
+			# somehow we need to store the new intended location
+			# so that later if we need to copy this file for another purpose we can find it
+
+			$targetMissingGS->removeGhost( $winkin );
+			$placedOrphanGS->addGhost( $winkin );
 		}
 	}
 
+	# Now look for local copies to fill in missing items. A "local copy" is a
+	# case where a claimed file is a better source than a remotely transmitted
+	# file. Because  the file is claimed, its already in the tree in a place
+	# it should be. These local copies are either in the target or the list of
+	# placed orphans.
 
+	my $targetMissingGSiterator = $targetMissingGS->getIterator(); 
+
+	while( my $g = $targetMissingGSiterator->next() )
+	{
+		print "--- TARGET MISSING SCAN ----------------\n";
+		print "Missing: " . $g->lfn();
+		print "\n";		
+
+		my $r = $placedOrphanGS->findSingleDuplicate( $g ) ;
+
+		if( defined $r )
+		{
+			my $lfn = $r->lfn();
+			print "   - Local File Copy (placed orphan): $lfn\n";
+			next;
+		}
+
+		my $x = $targetGS->findSingleDuplicate( $g ) ;
+
+		if( defined $x )
+		{
+			my $lfn = $x->lfn();
+			print "   - Local File Copy (target): $lfn\n";
+			next;
+		}
+
+		my $tlfn = $g->lfn();
+		print "   - Not found - TRANSMISSION REQUIRED: $tlfn\n";
+
+	}
+
+
+			# foreach my $m (@r)
+			# {
+			# 	my $lfn = $m->lfn();
+			# 	print "   - Copy via orphan in available - $lfn\n";
+
+			# 	$targetMissingGS->removeGhost( $m );
+			# }
 
 
 
@@ -876,12 +931,6 @@ sub doverb_rsync()
 		# 		$targetOrphanGS->addGhost( $targetGhost );
 		# 	}
 		# }
-
-	
-
-
-
-
 }
 
 
@@ -1271,6 +1320,11 @@ sub statModeParse_isError
 	return 1 if $stat =~ /^ERR/;
 	return 0; 
 }
+
+
+
+
+
 
 
 
@@ -2850,6 +2904,9 @@ sub hasDuplicate
 {
 	my $self = shift;
 	my $target = shift;
+
+	# ideally if the size is not present, doesn't force any hashes
+	# should check for that
 
 	return $self->findSingleDuplicate($target);
 

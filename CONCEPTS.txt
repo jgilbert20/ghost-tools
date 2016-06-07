@@ -32,6 +32,127 @@ when you are actually about to write new stuff..
 
 do this at the start, don't wait for some forced cache
 
+# New design idea
+
+GhostStateTransform
+
+populate the entire current state -> assign that to the original state
+default is that future state = the current state
+
+
+
+
+gst->assign( g, $lfn )
+	# copies the G, puts it at the LFN in the future state
+	# now current state != future state
+
+gst->handleFutureStateLFN( $lfn )
+	looks at that LFN, and emits instruction to move source G to dest G
+	now curState = futureState
+	every transformation moves future state to current state
+
+# how does this handle swaps?
+
+setOriginalState( $g )
+
+the end of evrything, we handle orphans
+
+LFN-> [original,current,final]
+	points to ghosts
+
+
+gst->generateWorkplan();
+
+now caller says
+
+for all target LFNs
+	gst->setOriginal()
+	sets original, current and final to the ghost (all pointers)
+
+for all source LFNs
+	gst->assign( $g, lfn)
+
+gst->genWorkplan()
+	simplest one is that each item in the workplan is copied over
+
+gst->delete(lfn)
+	sets the final to undef
+
+gst->replace(src)
+	sets future state to G = copy src;
+	we have an ongoing hash of orphans, this adds to the orphans
+
+gst->setOriginal( target/file1{A} )
+gst->setOriginal( target/file2{B} )
+
+gst->assign( source/file2{A}, target/file2{A} )
+     makes new G target/file2{A} and backpointer to source/file2{A} as upstream
+gst->assign( source/file1{B}, target/file1{B} )
+	 makes new G target/file1{B} and backpointer to source/file1{B} as upstream
+
+# issue - some of these ghosts will not have hashes and may never need them
+# .. I guess assign has to be OK with that?
+
+gst->go()
+	gst->Clear()
+		do clearances first
+		first, we'll see that target/file1 will be replaced
+			how? because finalState(LFN) != curState(lfn)
+		so we'll call gst->move( target/file1, target/file1.orphan )
+		so we'll call gst->move( target/file2, target/file2.orphan )
+		now all new positions are cleared
+			curState->undef, and i emit onto the work queue
+			[MOVE, target/file1, target/file1.orphan]
+		now I go through all of the LFNs
+	gst->moveWinkinOrphans()
+		in cases where curState undef, finalstate() defined
+		now I get to look for the best way to fill finalstate
+		my first bet will be to hit orphans
+		orphans->findDuplicates( $g )
+		get a match, now i drop into place
+		gst->move( target/file1.orphan, target/file2 )
+		gst->move( target/file2.orphan, target/file1 )
+			now curState will have those things
+	gst->findLocalCopies()
+		things that are missing will look that way -- curState blank
+			for all LFNs in curState, we stick into a GS
+		generateLocalCopiesFromStore(GS)
+			so now probe for the curstate
+				generate a
+					[COPY, source, target ]
+				populate the curState 
+	gst->generateLongHaulCopies()
+		go through all of my curStats
+		for each of those, check if targetCache->hasDuplicate()
+		hasDuplicate should not force a hash unless the file sizes differ
+		if net new, handle the copy
+		if not, add to our pending guys()
+	gst->generateLocalCopiesFromStore()
+		so now probe for the curstate
+			generate a
+				[COPY, source, target ]
+			populate the curState
+
+
+
+
+advantages
+	can be undone
+	can be interrupted and resumed
+	can be parallelized
+	clearner to understand
+
+gst->findSuperceeded()
+	looks for all currents that are not final
+
+the rule is that things that don't exist don't enter the GST.
+
+so you'd see an "undef" in that location
+
+
+
+
+
 
 
 
