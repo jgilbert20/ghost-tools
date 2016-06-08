@@ -455,6 +455,12 @@ sub handleVerb
 		return;
 	}
 
+	if( $verb eq "pointer" )
+	{
+		doverb_pointer();
+		return;
+	}
+
 	# LS tells us what we can find out about the current directory tree
 	# nothing is force read. there is a dirscan and that is it.
 
@@ -472,7 +478,6 @@ sub handleVerb
 		doverb_compare();
 		return;
 	}
-
 
 	if( $verb eq "checksum" )
 	{
@@ -552,6 +557,23 @@ gfs lsdup [source1 .. source-n] target [--all]
       implemented)
 
 HERE
+
+}
+
+
+# doverb_pointer
+#
+# Simple actions for using the OJX. 
+
+sub doverb_pointer()
+{
+	my $name = shift;
+	my $value = shift;
+
+	my $ojx = FilesystemExplorer::ObjectStore->new( 'xx-GFS-ojx/test' );
+$ojx->setUpRepository();
+
+
 
 }
 
@@ -933,7 +955,6 @@ sub doverb_rsync
 	# at this point, we wantt the GST to generate all ghosts (in present locations)
 	# currently under the tree
 	# iterate over all current ghosts
-
 
 }
 
@@ -1888,6 +1909,88 @@ sub printWorklist
 
 
 	}
+}
+
+
+package FilesystemExplorer::ObjectStore;
+
+use File::Basename;
+use File::Spec; 
+use File::Path; 
+use base qw(Class::Accessor);
+FilesystemExplorer::ObjectStore->mk_accessors( qw( _rootDir _isInitialized ) );
+
+
+sub debug($)
+{
+	my $a = shift;
+	main::debug( "fse/OJX: " . $a );
+}
+
+sub new
+{
+	my $class = shift;
+	my $root = shift;
+	my $self = $class->SUPER::new();
+
+	die unless defined $root; 
+	$self->_rootDir( $root );
+	$self->_isInitialized( 0 );
+
+	return $self;
+}
+
+sub initialize
+{
+	my $self = shift;
+
+	$self->{ROOTDIR} = $self->_rootDir();
+}
+
+
+
+sub setUpRepository
+{
+	my $self = shift;
+
+	$self->internalMkDir( File::Spec->catfile( $self->_rootDir() ));
+}
+
+sub internalMkDir
+{
+	my $self = shift;
+	my $p = shift;
+
+	debug "Mkpath: $p";
+	File::Path::make_path( $p );
+
+	$@ and die "Couldn't create dir path: $@";
+    die "Did not find new path" if not -d $p;
+
+
+	# main::mkdirs( File::Spec->catfile( $self->{ROOTDIR}, "foo" ));
+
+}
+
+
+
+sub setPointer
+{
+	my $self = shift;
+	my $name = shift;
+	my $value = shift;
+
+	die unless $self->_isInitialized();
+
+
+}
+
+sub getPointer
+{
+	my $self = shift;
+	my $name = shift;
+	
+	die unless $self->_isInitialized();
 }
 
 

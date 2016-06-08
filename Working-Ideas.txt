@@ -1,9 +1,9 @@
 Working Ideas.txt
 
 
-- make sure undef is really clear in serialization/deserialization
-- finish implementing learn()
-- fix the incorporation logic code. 
+- make sure undef is really clear in serialization/deserialization [DONE]
+- finish implementing learn() [DONE]
+- fix the incorporation logic code. [DONE]
 
 
 - IMPORTANT BUG CHECK - a cp -r on a directory with a .gfs file seemed to generate really strange errors on the first run.
