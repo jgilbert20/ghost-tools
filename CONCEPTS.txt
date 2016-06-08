@@ -1,4 +1,287 @@
 
+# Cool tools to check
+
+https://github.com/bup/bup
+
+http://superuser.com/questions/730592/compressing-many-similar-big-files/730598
+https://git-annex.branchable.com/future_proofing/
+http://ck.kolivas.org/apps/lrzip/README
+https://raw.githubusercontent.com/bup/bup/master/DESIGN
+
+
+git annex is cool! i want it to do what i want! but it doesn.t its stuck doign
+everything like a big git repository that knows how to shuffle files around.
+you have to manually add things into the annex and commit them. My style is
+more to just put files around in any place I want them and then worry about
+redudancy later. Annex is nice though becuase it seems to provide closure
+around a set of "managed" files so there is no confusion as to what your
+archive looks like no matter where the peices are scattered.
+
+and bup is way cool too, but also seemingly tied to being a backup tool. But
+its got way awesome large file saving and incremental backup support.
+
+in my ideal tool, i'd do the following
+
+	gfs init-volume /              laptop-root
+	gfs init-volume /Volumes/usb   usb1-spare
+
+	mkdir ~/working-stuff
+	add lots of things under here
+
+Now, to "run" a backup...
+
+	gfs push . 
+
+	# Looks for things in laptop-root its never seen before, and then fishes around
+	#for a place to stash them. 
+
+	./working-stuff/a,b,c -> usb1-spare/backup-today-20160601
+
+And i can check on replication status whenever I want...
+
+	gfs check .
+
+	15 files have stashed copies on usb1-spare (trusted, but currently offline)
+	4 files are novel and unreplicated anywhere else
+
+The key thing is that GFS stays flexible where and how these other things are
+saved and stored. And it doesn't create symlinks or other messy things like
+that.
+
+GFS also tries to stay flexibile about how blobs are backed up. The lowest
+common denominator of a backed up file is just a user-level copy of the file.
+
+# Aliases and volumes
+
+We need a definitive way to store volume data.
+
+	@volume/a/b/c
+
+which really means
+
+	fs:root:/VOLPATH/a/b/c
+
+the rule is that isAlias() tells you that the thing is really an alias. And
+you can dereference it.
+
+how? well, we have a LUT. Simplest thing is a file named volume in a
+particular directory that has the path.
+
+when you do a global save to a ghost, it pulls open any aliases and updates
+their ghosts as well.
+
+that update should theoretically be done with a LEARN operation. So we need
+learn() to be able to handle the alias type.
+
+At certain times (when..?) we may want to snapshot the contents of an alias to
+something more permanent than the global working store. Sort of like a
+filesystem saying "make a registered snapshot of this thing". Like a
+checkpoint. The system can be pushed new data in a big bulk about what is that
+thing.
+
+So i can get a download from a server saying "here is what i have right now",
+and this should flow into my understanding of what i can ask it for.
+Basically, the server can say, here is a list of LFNs i can respond to. Or a
+volume can say that. And I need to store that list so later I can decide what
+to do with them.
+
+The trick with a volume is that it could move from place to place. So does the
+checkpoint behavior occur over the alias, or under it?
+
+In concept, my server can say
+
+	remote:gryphon:/foo/bar/bat
+	remote:gryphon:/foo/bar/file2
+	remote:gryphon:/foo/bar/file3
+
+Meaning, any of these paths are valid. You're allowed to punch them back into
+the system and get your blob or object or whatever.
+
+A volume similiarly could say
+
+	vol:234df355562dd:/foo/bar/bar
+	vol:234df355562dd:/foo/bar/file2
+	vol:234df355562dd:/foo/bar/file3
+
+Which means that as long as I can find '234df355562dd', my volume code can
+find this thing.
+
+When a volume is locally mounted, that will mean the following ghosts
+
+
+	vol:234df355562dd:/foo/bar/bar
+	vol:234df355562dd:/foo/bar/file2
+	vol:234df355562dd:/foo/bar/file3
+	fs:root:/Volume/mnt/DRIVE/foo/bar/bar
+	fs:root:/Volume/mnt/DRIVE/foo/bar/file2
+	fs:root:/Volume/mnt/DRIVE/foo/bar/file3
+
+A relative path points into this object.
+
+	vol:my-usb-stick:/foo/bar/bar
+
+That is totally kosher -- when you as to translate it to an underlying ghost,
+it will hit the local repositories.
+
+All all present. But I don't think i want
+fs:root:/Volume/mnt/DRIVE/foo/bar/bar to normally be displayed to a user.
+
+That way, volume 234df355562dd can be found in different places.
+
+Maybe a volume is best thought of as a snapshot FSE that maintains a link to real files.
+
+So the 234df355562dd object needs to contain a pointer to the current
+mountpoint, if any. And it needs to have a snapshot location to use when things are offline.
+
+The snapshot itself can be a blob. 
+
+So a very basic dead simple approach here (w/o aliases for the time being?) is this syntax.
+
+	gfs init-vol /Volumes/stick my-usb-stick
+	> created 234df355562dd my-usb-stick
+
+	.gfs/refs/volumes/my-usb-stick -> 234df355562dd
+	write text file /Volume/stick/.gfs-id -> 234df355562dd
+
+	gfs checkpoint /Volumes/stick
+	<reads all of those files, writes them to a snapshot of some kind>
+	> created checkpoint 33fc12 
+	.gfs/objects/33/33fc12 - holds this snapshot thing
+	.gfs/refs/latest-checkpoint/volume/stick -> 33fc12
+
+Basically, volumes are an overlay somehow over ghosts in that part of the tree.
+That means that a volume is empty until it is checkpointed.
+and maybe it also means that the volume state is invarient, so changes to
+the underlaying ghosts don't change the volume necessarily.
+
+So if we work inside of /Volumes/stick/testfile.txt, and make some file
+changes with gfs, the contents of the volume have not technically changed yet.
+I don't automatically get vol:234df355562dd:/testfile.txt.
+
+I think adding the automated mapping case is easy once it works manually.
+
+The system is going to need to know that volumes have to be dereferenced. the
+dereference call gets passed down to the FSE which returns you a more basic
+filesystem ghosts. Or maybe its better thought of as a "retreival", rather
+than a dereference. If it were a remote file, we'd want to pull it down when
+the dereference occurs.
+
+SO dereferencing/retreivals are not normally done. The only time you really do
+them is when you copy something or have to make the file.
+
+	gfs copy vol:23432:test.txt bar
+	# this will dereference vol:23432:test.txt -> to a ghost on disk
+	that is then handled like any other file. Dereferencing could be quite 
+	expensive in the case of a file retrieval.
+
+That implies that a bucket manager like S3 needs to maintain a map of what is
+stored at its location and where a copy exists internally when its pulled down.
+
+This "dereferencing" needs to be maximially lazy - you'd never do it unless you had to.
+
+An ls operation wouldn't actually derference.
+
+	gfs ls vol:2343:tst.txt
+	# shows what we know about that entry in the latest checkpoint
+
+asking one of these things to verify itself is pointless. They are immutable. 
+
+Verification happens explicity when you force these things to be dereferenced
+and then you can learn the checksum or data from the dereferenced thing. Or
+you have the server retrieve that file or perform some task, and then send you
+new ghosts.
+
+So learn() needs to work on immutable things but it should never occur from a
+getSize() or getMode(). hasAcceptable() must always be true for immutable
+things.
+
+To do all of this, i need a super fundamental tiny layer above the fs:root. I suspect this thing will be like an FSE.
+
+	my $OJS = FSE::Objectstore( ~/.gfs/obj );
+	my $file = $obj->getTempGhost()
+	write into that file
+	my $g = $OJS->store( $file );
+	# g = fs:root:~/.gfs/obj/22/22fc22
+	$OJS->findHash( 22fc22 );
+	# gives me back the ghost that points to that thing
+	$OJS->setPointer( 'volumes/my-usb-stick','234df355562dd');
+
+Does the object store have its own LFNs? I have no idea. I think its just a
+naming service. But lets plauy around with the idea that its smarter than
+that and exposes some type of LFN.
+
+	gfs ls obj:CORE:^234df355562dd
+	gfs ls obj:CORE:my-usb-stick
+
+A "path" in this name space is a named object. And it always resolves to a
+ghost sitting in the object store.
+
+Basically, its a thing that can always generate FS ghostnames for you. It can be super limited. Doenstn' have to support fancy aliases or checkpoints. Just translate a tag -> data.
+
+Its any fancy. It basically something almost as primitive as the fs: guys. No
+caching needed No AFNS needed. I'm not even sure it strictly needs a ghost-
+like interface.
+
+So now, to get our volume behavior, there is a more advanced FSE::Volume. Say
+this tool is given something like vol:lacie-drive:foo.txt and asks to
+derefernece it. The API would call
+
+	$g = $OJS->getPointer( 'lacie-drive' );
+	now, slurp the ghost $g into a ghost store and save it
+	hit my ghost store for foo.txt 
+	and now i have my primary record of that thing.
+
+Lets make the objectstores technically be rooted in different places. But
+there will be a special one called CORE. SetPointer and GetPointer are super
+flexible and cache their answers. Also the value they point to can be any
+string, not just a hash. But as a hack, setPointerHash will check that Hash is
+actually stored by OJS.
+
+OJS doesn't have to hang onto any ghosts but it will definitely make rich use
+of the global ghost cache so that its super speedy.
+
+Interesting implication of this design: it means that LFNS like "obj:CORE:my-
+usb-stick" are technically pointers. Say we make a ghost and call getSize().
+What is the getSize() of such a thing? Shpuld it automatically follow down to
+the FS? I'm not sure it really matters. I'm fine with that bombing out the
+system. Or maybe delegating back to the ghost of the file it points to is just
+fine - they will always be filesystem objects, special cases don't need to be
+considered since this is really just a light layer over the filesystem. Only
+trick is in the case where the Pointer goes to something that is not a hash.
+
+OJS can have a rule - pointers may not end in a slash!
+
+So really base case, lets implement 
+
+- singleton object
+gfs init 
+  - makes all of the directories and stuff
+gfs store filex
+  - exercises the storeGhost API (which can be hackist, no GST required.)
+gfs obj-setname foo bar
+  - exercises pointer logic
+  
+
+
+
+Side note: We need a way of defining a ghoststore that is "backed" by a file such that slurping is completely lazy and uses some sort of native indexing tool. Hate the idea that a million rows of a ghoststore might have to be read just to get some random value. 
+
+
+
+
+
+
+
+# great idea here: (copypaste from BUP technical notes)
+
+
+bup makes accommodations for the expected "worst-case" filesystem timestamp resolution -- currently one second; examples include VFAT, ext2, ext3, small ext4, etc. Since bup cannot know the filesystem timestamp resolution, and could be traversing multiple filesystems during any given run, it always assumes that the resolution may be no better than one second.
+
+As a practical matter, this means that index updates are a bit imprecise, and so bup save may occasionally record filesystem changes that you didn't expect. That's because, during an index update, if bup encounters a path whose actual timestamps are more recent than one second before the update started, bup will set the index timestamps for that path (mtime and ctime) to exactly one second before the run, -- effectively capping those values.
+
+
+
+
 
 # Compare mode
 
