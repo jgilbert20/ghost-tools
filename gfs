@@ -571,9 +571,11 @@ sub doverb_pointer()
 	my $value = shift;
 
 	my $ojx = FilesystemExplorer::ObjectStore->new( 'xx-GFS-ojx/test' );
-$ojx->setUpRepository();
+	$ojx->setUpRepository();
 
-
+	$ojx->setPointer( "foo", "bar");
+	$ojx->setPointer( "foo2", "bar");
+	$ojx->getPointer( "foo2");
 
 }
 
@@ -1916,6 +1918,7 @@ package FilesystemExplorer::ObjectStore;
 
 use File::Basename;
 use File::Spec; 
+use File::Spec::Functions;
 use File::Path; 
 use base qw(Class::Accessor);
 FilesystemExplorer::ObjectStore->mk_accessors( qw( _rootDir _isInitialized ) );
@@ -1945,15 +1948,25 @@ sub initialize
 	my $self = shift;
 
 	$self->{ROOTDIR} = $self->_rootDir();
+	$self->{PTR_DIR} = catfile( $self->_rootDir(), 'ptr' );
+	$self->{OBJ_DIR} = catfile( $self->_rootDir(), 'obj' );
+
+	die unless -w $self->{ROOTDIR};
+	die unless -w $self->{PTR_DIR};
+	die unless -w $self->{OBJ_DIR};
+
+	$self->_isInitialized(1);
 }
-
-
 
 sub setUpRepository
 {
 	my $self = shift;
 
-	$self->internalMkDir( File::Spec->catfile( $self->_rootDir() ));
+	$self->internalMkDir( catfile( $self->_rootDir() ));
+	$self->internalMkDir( catfile( $self->_rootDir(), 'ptr' ));
+	$self->internalMkDir( catfile( $self->_rootDir(), 'obj' ));
+
+	$self->initialize();
 }
 
 sub internalMkDir
@@ -1982,7 +1995,15 @@ sub setPointer
 
 	die unless $self->_isInitialized();
 
+	debug( "setPtr: [$name]=>[$value]");
 
+	$self->{PTR}->{$name} = $value;
+
+	my $targetPath = catfile( $self->{PTR_DIR}, $name );
+
+	open FILE, ">$targetPath" or die "Could not open [$targetPath] for pointer: $!";
+	print FILE $value;
+	close FILE,
 }
 
 sub getPointer
@@ -1991,6 +2012,33 @@ sub getPointer
 	my $name = shift;
 	
 	die unless $self->_isInitialized();
+
+	my $targetPath = catfile( $self->{PTR_DIR}, $name );
+
+	if( exists $self->{PTR}->{$name})
+	{
+		my $value = $self->{PTR}->{$name};
+		debug( "getPtr: [$name]=>[$value] (cache)");
+		return $value;
+	}
+
+	if( ! -e $targetPath )
+	{
+		my $value = undef; 
+		debug( "getPtr: [$name]=>[undef] (stat)");
+		return $value;
+	}
+
+	local $/ = undef;
+	local *FILE;
+	open FILE, "<$targetPath" or die "Could not open [$targetPath] for pointer: $!";
+	my $value = <FILE>;
+	close FILE,
+
+	$self->{PTR}->{$name} = $value;
+	debug( "getPtr: [$name]=>[$value] (disk)");
+
+	return $value; 
 }
 
 
