@@ -200,6 +200,12 @@ sub test_simplePathnames
 
 ## Assemble target such that it has
 ##
+
+sub test_rsyncmega
+{
+	clear_test_env;
+	testname 'test_rsyncmega';
+
 ## File0 - An immoveable file
 ## File1 - A   # file in right place
 ## File2 - B   # file needs a rename nad has to get out of the way
@@ -208,17 +214,26 @@ sub test_simplePathnames
 ## File-x2 - I # pure swap case
 ## File9x - K  # make intentional orphan with data K
 
-sub test_rsyncmega
-{
-	clear_test_env;
-	testname 'test_rsyncmega';
 	mkfile '/tmp/gfstest/target/file1',   'A';
 	mkfile '/tmp/gfstest/target/file2',   'B';
-	mkfile '/tmp/gfstest/target/file6',   'C';
+	mkfile '/tmp/gfstest/target/file6',   'F';
 	mkfile '/tmp/gfstest/target/file-x1', 'J';
 	mkfile '/tmp/gfstest/target/file-x2', 'I';
 	mkfile '/tmp/gfstest/target/file9x',  'K';
 
+#     T     S
+# A   1  
+# B   1
+# C      	1   file3
+# E         1   file4
+# H         1   file2
+# I   1     1
+# J   1     1
+# K   1     1
+# F   1
+
+
+# E an H are the only things that have to come over e-file8,file4  h-file2 
 
 ## dir1/File3 - C # input t
 ## dir2/File3 - D # input file that overlaps other input file

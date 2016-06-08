@@ -6,6 +6,9 @@ Working Ideas.txt
 - fix the incorporation logic code. 
 
 
+- IMPORTANT BUG CHECK - a cp -r on a directory with a .gfs file seemed to generate really strange errors on the first run.
+- compare has an annoying bug - not really matching paths for the top most node properly. (Everything else seems to work.)
+
 
 # Priorities
 

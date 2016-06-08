@@ -34,10 +34,14 @@ sub debug($);
 
 
 my $icDebug = 0;
-my $tkdebug = 0;
-my $tkflushdebug = 0;
-my $gsDebug = 0;
+my $tkdebug = 1;
+my $tkflushdebug = 1;
+my $gsDebug = 1;
+my $duplicateDebug = 0;
 my $fseSnapshotDebug = 0;
+
+my $serializeDebug = 1;
+my $gChildDebug = 0;
 
 
 
@@ -279,24 +283,38 @@ sub gfs_escape($)
 {
 	my $v = shift;
 
-	return undef if not defined $v;
+	return "_" if not defined $v;
 
-	$v =~ s/:/\\c/gs;
+	$v =~ s/\:/\\c/gs;
 	$v =~ s/\@/\\a/gs;
-	$v =~ s/#/\\p/gs;
+	$v =~ s/\#/\\p/gs;
 	$v =~ s/\n/\\n/gs;
+	$v =~ s/\_/\\l/gs;
+
+	$v =~ s/([^\x20\x21\x24\x25-\x39\x41-\x5b\x5d-\x7e])/"\\x(" . unpack('H2', $1) . ")" /gse;
+
+
 	return $v;
 
 }
 
 sub gfs_unescape($)
 {
-
 	my $v = shift;
+
+	return undef if( $v eq "_");
+
+
+	$v =~ s/\\x\(([\da-fA-F]+)\)/ pack('H2', $1) /gse;
+
+
 	$v =~ s/\\c/:/gs;
 	$v =~ s/\\a/\@/gs;
-	$v =~ s/\\p/#/gs;
+	$v =~ s/\\p/\#/gs;
 	$v =~ s/\\n/\n/gs;
+	$v =~ s/\\l/\_/gs;
+
+
 
 	return $v;
 }
@@ -446,6 +464,16 @@ sub handleVerb
 		return;
 	}
 
+	# Asks the question if the target is exactly identical to the source
+	# and if not, shows the difference.
+
+	if( $verb eq "compare" )
+	{
+		doverb_compare();
+		return;
+	}
+
+
 	if( $verb eq "checksum" )
 	{
 		doverb_checksum();
@@ -553,6 +581,96 @@ sub doverb_writeSnapshot()
 
 	# $store->writeSnapshotToDisk( "snapshot-$$.out");
 }
+
+
+sub doverb_compare()
+{
+	my $target = pop @ARGV;
+	my @source = @ARGV;
+
+	my $tk = TruthKeeper::get();
+	my ($targetGS, $targetStash) = $tk->makeGhostsFromCommandLine( $target );
+	my ($sourceGS, $sourceStash) = $tk->makeGhostsFromCommandLine( @source );
+	
+
+	my( $targetUserFN, $targetFqlfn, $targetGhost ) = @{$targetStash->[0]};
+
+	if( not $targetGhost->exists() )
+	{
+		die "Cannot stat() target: $targetUserFN! $!";
+	}
+
+	die unless $targetGhost->canHaveChildren();
+
+	my ($targetHandler, $targetRoot, $targetPath)  = $targetGhost->getLFNcompontents();
+
+	my $gst = new GhostStateTransform();
+
+	my $targetGSiterator = $targetGS->getIterator();
+	while( my $g = $targetGSiterator->next() )
+	{	
+		$gst->setOriginal($g);
+	}
+
+	my $sourceGSiterator = $sourceGS->getIterator();
+	while( my $g = $sourceGSiterator->next() )
+	{
+		my $sourceLFN = $g->lfn();
+		my $sourcePath = $g->getPath(); 
+		my $basename = basename $g->getPath();
+		my $newPath = File::Spec->catfile( $targetPath, $basename );
+		my $targetLFN = main::assembleLFN( $targetHandler, $targetRoot, $newPath );
+
+		print "--- INITIAL SCAN -------------------\n";
+		print "[$sourcePath] -> [$newPath]\n";
+		#print "Thing I'm iterating on:\n";
+		#$g->printDebug();
+
+		$gst->setTargetState( $targetLFN, $g );
+	}
+
+#	$gst->printDebug();
+#	$gst->printDebugWithPaths();
+
+	$gst->doforeachLFN( sub
+	{
+		my $self = shift;
+		my $lfn = shift;
+
+		my $status = "";
+
+		if( $gst->LFNtest_isComplete($lfn) )
+		{	
+			$status = "Match";
+		}
+
+		if( $gst->LFNtest_isMissing($lfn) )
+		{	
+			$status .= "Missing";
+		}
+
+		if( $gst->LFNtest_isSpurious($lfn) )
+		{	
+			$status .= "Spurious";
+		}
+
+		if( $gst->LFNtest_isIncorrect($lfn) )
+		{	
+			$status .= "Incorrect checksum";
+		}
+
+		print "$lfn -> $status\n";
+	});
+
+
+}
+
+
+
+
+
+
+
 
 
 sub doverb_writeSnapshot_old()
@@ -764,6 +882,7 @@ sub doverb_rsync
 		$gst->setOriginal($g);
 	}
 
+	$gst->printDebug();
 
 	my $sourceGSiterator = $sourceGS->getIterator();
 	while( my $g = $sourceGSiterator->next() )
@@ -783,7 +902,53 @@ sub doverb_rsync
 	}
 
 	$gst->createClearanceMoves();
+	print "******************* Post Clearance\n";
+	$gst->printDebug();
+	print "******************* Post Clearance\n";
+	$gst->printDebugWithPaths();
+
+
 	$gst->handlePillageFromGS( $gst->orphanGS() );
+
+	print "******************* Post Orphan Pillage\n";
+	$gst->printDebug();
+	print "******************* Post Orphan Pillage\n";
+	$gst->printDebugWithPaths();
+
+
+
+	$gst->handleLocalCopyFromGS( $gst->obtainCurrentStateAsGS() );
+
+	print "******************* LocalCopy \n";
+	$gst->printDebug();
+	print "******************* LocalCopy\n";
+	$gst->printDebugWithPaths();
+
+
+	$gst->handleLongHaulCopyFromGS( $sourceGS );
+
+	print "******************* Long Haul \n";
+	$gst->printDebug();
+	print "******************* Long Haul \n";
+	$gst->printDebugWithPaths();
+
+
+	my $xgs = $gst->obtainCurrentStateAsGS();
+
+
+
+	$gst->handleLocalCopyFromGS( $xgs );
+
+
+	$gst->printWorklist();
+	$gst->verifyCorrectness();
+
+	#$gst->printDebug();
+
+	# at this point, we wantt the GST to generate all ghosts (in present locations)
+	# currently under the tree
+	# iterate over all current ghosts
+
 
 }
 
@@ -1373,6 +1538,24 @@ sub statModeParse_isError
 }
 
 
+# Holds the state of a transitional mapping between the current state of the
+# world and a desired final state. Provides a lot of tools for manipulating
+# this final state and then ultimately checking that it's performed.
+# 
+#
+# The caller starts by informing the object of the LFNs that should be state
+# managed. GST will hold onto the original LFNs with setOriginal(). The 
+# default mode is that these original files are presumed to be the initial
+# state. The user can also specify (if they want) a final state.
+#
+# At this point, move() or copy() commands can be used inside the GST. The GST
+# checks to be sure there is coherence between the action and the emerging state
+# of the filesystem. There are functions to automatically generate these
+# according to certain rules so that the final state is reached.
+#
+# The GST is done with the currentState = finalState, and a set of work
+# instructions are complete. CurrentState and finalStates typically are
+# invented LFNs.
 
 
 
@@ -1382,6 +1565,11 @@ use base qw(Class::Accessor);
 GhostStateTransform->mk_accessors( qw( _lfnState orphanGS) );
 
 
+sub CODEPATH($)
+{	
+	my $p = shift; 
+	main::CODEPATH( "GST: $p" );
+}
 
 sub new
 {
@@ -1412,6 +1600,8 @@ sub _setCurrent
 
 	my $lfnState = $self->_lfnState();
 	$lfnState->{$lfn}->[1] = $ghost; 
+
+	# $self->{_curGhostToPath}->{$ghost} = $lfn;
 }
 
 sub _setFinal
@@ -1470,8 +1660,56 @@ sub setTargetState
 	my $lfn = shift;
 	my $g = shift;
 
+	# my $c = $g->cloneWithLFN( $lfn );
+
 	$self->_setFinal( $lfn, $g );
 }
+
+
+
+sub LFNtest_isComplete()
+{
+	my $self = shift;
+	my $lfn = shift;
+		my $lfnState = $self->_lfnState();
+	my ( $original, $current, $final ) = @{$lfnState->{$lfn}};
+	return 1 if defined $current and defined $final and $current->isDuplicateOf($final);
+	return 0; 
+}
+
+
+sub LFNtest_isMissing()
+{
+	my $self = shift;
+	my $lfn = shift;
+		my $lfnState = $self->_lfnState();
+	my ( $original, $current, $final ) = @{$lfnState->{$lfn}};
+	return 1 if !defined $current and defined $final;
+	return 0; 
+
+}
+
+sub LFNtest_isSpurious()
+{
+	my $self = shift;
+	my $lfn = shift;
+		my $lfnState = $self->_lfnState();
+	my ( $original, $current, $final ) = @{$lfnState->{$lfn}};
+	return 1 if defined $current and !defined $final;
+	return 0; 
+
+}
+
+sub LFNtest_isIncorrect()
+{
+	my $self = shift;
+	my $lfn = shift;
+		my $lfnState = $self->_lfnState();
+	my ( $original, $current, $final ) = @{$lfnState->{$lfn}};
+	return 1 if defined $current and defined $final and !$current->isDuplicateOf($final);
+	return 0;
+}
+
 
 sub generateOrphanLFN
 {
@@ -1489,7 +1727,7 @@ sub generateOrphanLFN
 	{
 		$scramble++;
 		# Calculate a new name for this file
-		my $orphanNewPathName = $g->getPath() . "...orphan-$scramble";
+		my $orphanNewPathName = $g->getPath() . "-ORPH-$scramble";
 		my $orphanNewLFN = main::assembleLFN( $g->getHandler() , $g->getRoot(), $orphanNewPathName );
 		my $orphanGhost = $tk->obtainGhostForLFN( $orphanNewLFN );
 		print "       - testing orphan: $orphanNewLFN\n";
@@ -1503,23 +1741,74 @@ sub generateOrphanLFN
 	return $finalNewOrphanLFN;
 }
 
+sub doforeachLFN($&)
+{	
+	my $self = shift;
+	my $function = shift;
+
+	my $entry = 
+
+
+	my $lfnState = $self->_lfnState();
+	foreach my $lfn ( sort keys %$lfnState )
+	{
+		$function->($self,$lfn);
+	}
+
+}
+
+sub printDebug
+{
+	my $self = shift;
+
+	my $lfnState = $self->_lfnState();
+	foreach my $lfn ( sort keys %$lfnState )
+	{
+		print $self->debugStringForLFN( $lfn,0 )."\n";
+	}
+}
+
+sub printDebugWithPaths
+{
+	my $self = shift;
+
+	my $lfnState = $self->_lfnState();
+	foreach my $lfn ( sort keys %$lfnState )
+	{
+		print $self->debugStringForLFN( $lfn,1)."\n";
+	}
+}
+
 sub debugStringForLFN
 {
 	my $self= shift;
 	my $lfn = shift;
+	my $pathmode = shift;
 
 	my $lfnState = $self->_lfnState();
 	my ( $original, $current, $final ) = @{$lfnState->{$lfn}};
 
+	if( $pathmode )
+	{
+	$original = $original->lfn() if ref $original;
+	$current = $current->lfn() if ref $current;
+	$final = $final->lfn() if ref $final;
+}
+else
+{
 	$original = $original->debugID() if ref $original;
 	$current = $current->debugID() if ref $current;
 	$final = $final->debugID() if ref $final;
+}
 
 	$original ||= "<none>";
 	$current  ||= "<none>";
 	$final    ||= "<none>";
 
-	return "$lfn - $original\t$current\t$final";
+
+
+	# return "$original\t$current\t$final\t$lfn";
+	return sprintf( "%-35s %-35s %-35s %s", $original, $current, $final, $lfn );
 }
 
 
@@ -1539,47 +1828,164 @@ sub createClearanceMoves
 			my $orphanLFN = $self->generateOrphanLFN( $current );
 			print "Clearance $lfn -> $orphanLFN \n";
 
-			my $orphan = $self->moveGhostToLFN( $current, $orphanLFN);
+			my $orphan = $self->moveLFN( $lfn, $orphanLFN );
 
-			print "   Current = ".$current->makeDebugString()."\n";
-			print "   Orphan = ".$orphan->makeDebugString()."\n";
+			#print "   Current = ".$current->makeDebugString()."\n";
+			#print "   Orphan = ".$orphan->makeDebugString()."\n";
 
-
-
-my $ogs = $self->orphanGS();
-	print "OGS = $ogs\n";
-			$ogs->addGhost( $orphan );
+			my $ogs = $self->orphanGS();
+			# print "OGS = $ogs\n";
+			$ogs->addGhost( $current );
 		}
 	}
 }
 
-sub moveGhostToLFN
+
+# sub getCurrentPathForGhost
+# {
+# 	my $self = shift;
+# 	my 
+# 	return $self->{_curGhostToPath}->{$ghost};
+# }
+
+
+sub moveLFN
 {
 	my $self = shift;
-	my $ghost = shift;
-	my $lfn = shift;
+	my $from = shift;
+	my $to = shift;
 
-	my $t = $ghost->cloneWithLFN( $lfn );
-	$t->setImmutable();
+	$self->addWorklist( -action=>'MOVE', -source=>$from, -destination=>$to, -debug=>"X" );
+	my $g = $self->_getCurrent($from);
+	my $o = $self->_getCurrent($to);
+	die if defined $o; 
+	$self->_setCurrent($to, $g);
+	$self->_setCurrent($from, undef );
 
-	$self->moveGhostToGhost($ghost, $t );
-	return $t; 
+
 }
 
-sub moveGhostToGhost
+sub copyLFN
 {
 	my $self = shift;
-	my $ghost = shift;
-	my $t = shift;
+	my $from = shift;
+	my $to = shift;
 
-	die unless $self->_getCurrent($ghost->lfn()) == $ghost;
-	die if defined $self->_getCurrent($t->lfn());
-
-	$self->addWorklist( -action=>'MOVE', -source=>$ghost, -destination=>$t, -debug=>"Clearance move" );
-
-	$self->_setCurrent( $ghost->lfn(), undef );
-	$self->_setCurrent( $t->lfn(), $t );
+	$self->addWorklist( -action=>'COPY', -source=>$from, -destination=>$to, -debug=>"X" );
+	my $g = $self->_getCurrent($from);
+	my $o = $self->_getCurrent($to);
+	die if defined $o; 
+	$self->_setCurrent($to, $g);
 }
+
+sub haulGhostToLFN
+{
+	my $self = shift;
+	my $g = shift;
+	my $to = shift;
+
+
+	my $from = $g->lfn();
+
+	$self->addWorklist( -action=>'HAUL', -source=>$from, -destination=>$to, -debug=>"X" );
+	my $o = $self->_getCurrent($to);
+	die if defined $o; 
+	$self->_setCurrent($to, $g);
+}
+
+# sub moveGhostToLFN
+# {
+# 	my $self = shift;
+# 	my $ghost = shift;
+# 	my $lfn = shift;
+
+# 	my $p = $self->getCurrentGSTPathForGhost( $ghost );
+
+#     # die unless $self->_getCurrent($ghost->lfn()) == $ghost;
+#  	die if defined $self->_getCurrent($t->lfn());
+
+
+#  	$self->addWorklist( -action=>'MOVE', -source=>$ghost, -destination=>$t, -debug=>"X" );
+
+#  	$self->_setCurrent( $ghost->lfn(), undef );
+#  	$self->_setCurrent( $t->lfn(), $ghost );
+
+# 	return $t; 
+# }
+
+
+
+# sub copyGhostToLFN
+# {
+# 	die;
+# 	my $self = shift;
+# 	my $ghost = shift;
+# 	my $lfn = shift;
+
+# 	my $t = $ghost->cloneWithLFN( $lfn );
+# 	$t->setImmutable();
+
+# 	$self->copyGhostToGhost($ghost, $t );
+# 	return $t; 
+# }
+
+
+
+# sub moveGhostToGhost
+# {
+# 	my $self = shift;
+# 	my $ghost = shift;
+# 	my $t = shift;
+
+# 	die unless $self->_getCurrent($ghost->lfn()) == $ghost;
+# 	die if defined $self->_getCurrent($t->lfn());
+
+# 	$self->addWorklist( -action=>'MOVE', -source=>$ghost, -destination=>$t, -debug=>"X" );
+
+# 	$self->_setCurrent( $ghost->lfn(), undef );
+# 	$self->_setCurrent( $t->lfn(), $ghost );
+# }
+
+
+# sub copyGhostToGhost
+# {
+# 	die;
+# 	my $self = shift;
+# 	my $ghost = shift;
+# 	my $t = shift;
+
+# 	die unless $self->_getCurrent($ghost->lfn()) == $ghost;
+# 	die if defined $self->_getCurrent($t->lfn());
+
+# 	$self->addWorklist( -action=>'COPY', -source=>$ghost, -destination=>$t, -debug=>"Y" );
+
+# 	$self->_setCurrent( $t->lfn(), $ghost );
+# }
+
+sub obtainCurrentStateAsGS
+{
+	my $self = shift;
+
+	my $gs = GhostStore->new();
+
+	my $lfnState = $self->_lfnState();
+
+	# current states may have LFNs that appear more than once 
+	# say a copy, or somesuch. Ghoststores don't like that.
+
+	my %seen;
+
+	foreach my $lfn ( sort keys %$lfnState )
+	{
+		my ( $original, $current, $final ) = @{$lfnState->{$lfn}};
+		next if not defined $current; 
+		next if $seen{$current->lfn()}++;
+		$gs->addGhost( $current );
+	}
+
+	return $gs;
+}
+
 
 sub handlePillageFromGS
 {
@@ -1587,7 +1993,7 @@ sub handlePillageFromGS
 	my $gs = shift;
 
 	print "My GS = $gs\n";
-	$gs->printDebugShort();
+	#$gs->printDebugShort();
 	$gs->printDebugMedium();
 
 	my $lfnState = $self->_lfnState();
@@ -1597,30 +2003,146 @@ sub handlePillageFromGS
 
 		print "HandlePillageGS: GST=".$self->debugStringForLFN( $lfn )."\n";
 
+		## Bug - will keep doing this over and over again, gotta stop it
+		# from moving files more than once.
+
 		if( defined $final and !defined $current)
 		{
 			print "    - Check for pillage!\n";
 			if( my $pillage = $gs->findSingleDuplicate($final)  )
 			{
 				print " - Pillage found..[$pillage]\n";
-				my $n = $self->moveGhostToLFN( $pillage, $final->lfn());
+				my $curLFN = $self->findOneInProgressLFNforGhost( $pillage );
+				my $n = $self->moveLFN( $curLFN, $lfn);
+			}
+		}
+	}
+}
+
+sub findOneInProgressLFNforGhost
+{
+	my $self = shift;
+	my $g = shift;
+
+	my $lfnState = $self->_lfnState();
+	foreach my $lfn (  keys %$lfnState )
+	{
+		CODEPATH( "Horrors");
+		return $lfn if $self->_getCurrent( $lfn ) == $g;
+	}
+
+	return undef; 
+}
+
+sub handleLocalCopyFromGS
+{
+	my $self = shift;
+	my $gs = shift;
+
+	#print "My GS = $gs\n";
+	#$gs->printDebugShort();
+	#$gs->printDebugMedium();
+
+	my $lfnState = $self->_lfnState();
+	foreach my $lfn ( sort keys %$lfnState )
+	{
+		my ( $original, $current, $final ) = @{$lfnState->{$lfn}};
+
+		print "handleLocalCopyFromGS: GST=".$self->debugStringForLFN( $lfn )."\n";
+
+		if( defined $final and !defined $current)
+		{
+			print "    - Check for localcopy!\n";
+			if( my $hit = $gs->findSingleDuplicateIncludingSelf($final)  )
+			{
+				print " - Localcopy found..[$hit]\n";
+				my $curLFN = $self->findOneInProgressLFNforGhost( $hit );
+				# my $n = $self->copyGhostToLFN( $hit, $final->lfn());
+
+				my $n = $self->copyLFN( $curLFN, $lfn);
+
 			}
 		}
 	}
 }
 
 
+sub verifyCorrectness
+{
+	my $self = shift;
+
+	my $lfnState = $self->_lfnState();
+
+	foreach my $lfn ( sort keys %$lfnState )
+	{
+		my ( $original, $current, $final ) = @{$lfnState->{$lfn}};
+
+		print "Verify: GST=".$self->debugStringForLFN( $lfn )."\n";
+
+		if( defined $final and !defined $current)
+		{
+			die "Position not defined: $lfn";
+		}
+		if( defined $final )
+		{
+		die "Hash mismatch @ $lfn"  unless $final->isDuplicateOf($current);
+	}
+	}
+
+}
+
+
+sub handleLongHaulCopyFromGS
+{
+	my $self = shift;
+	my $gs = shift;
+
+	#print "My GS = $gs\n";
+	#$gs->printDebugShort();
+	#$gs->printDebugMedium();
+
+	my $transferGS = GhostStore->new();
+
+	my $lfnState = $self->_lfnState();
+	foreach my $lfn ( sort keys %$lfnState )
+	{
+		my ( $original, $current, $final ) = @{$lfnState->{$lfn}};
+
+		print "handleLongHaulCopyFromGS: GST=".$self->debugStringForLFN( $lfn )."\n";
+
+		if( defined $final and !defined $current)
+		{
+			print "    - Check for haul [$lfn]!\n";
+
+			if( my $alreadyTransfered = $transferGS->findSingleDuplicateIncludingSelf( $final ))
+			{
+				print "    - Already transfered [$lfn]!\n";
+				next;
+			}
+
+			if( my $hit = $gs->findSingleDuplicateIncludingSelf($final)  )
+			{
+				print " - Haul found..[$hit]\n";
+
+				my $n = $self->haulGhostToLFN( $hit, $lfn);
+				$transferGS->addGhost($n);
+
+			}
+		}
+	}
+}
+
 
 sub addWorklist
 {
 	my $self = shift;
 	my %hash = @_;
-	my $worklist = $self->{WL};
+	my $worklist = 
 
 	my $action = $hash{-action};
 
-	my $S = $hash{-source}->lfn();
-	my $D = $hash{-destination}->lfn();
+	my $S = $hash{-source};
+	my $D = $hash{-destination};
 
 	print "Adding Worklist: $action [$S] [$D]\n";
 
@@ -1629,9 +2151,26 @@ sub addWorklist
 	# 	print "     $k => $hash{$k}\n";
 	# }
 
-	push @$worklist, %hash;
+	push @{$self->{WL}}, \%hash;
 }
 
+
+sub printWorklist
+{
+	my $self = shift;
+	my $worklist = $self->{WL};
+	foreach my $hash (@$worklist)
+	{
+			my $action = $hash->{-action};
+
+	my $S = $hash->{-source};
+	my $D = $hash->{-destination};
+
+	print "$action $S $D\n";
+
+
+	}
+}
 
 
 
@@ -2591,7 +3130,7 @@ sub debug($)
 	main::debug( "GI: " . $a );
 }
 
-my $GI_DEBUG = 1; 
+my $GI_DEBUG = 0; 
 
 sub new
 {
@@ -3122,6 +3661,7 @@ sub loadSizeCache
 
 	my $iterator = $self->getIterator();
 
+	CODEPATH( "Gen size cache");
 
 	debug "GS-Generating size cache\n";
 
@@ -3227,30 +3767,39 @@ sub findAllDuplicates
 
 	return if @otherFN < 1;
 
-    debug " -- Checking size duplicates size:[$size]\n" if $gsDebug;
+    debug " -- Checking size duplicates size:[$size]\n" if $duplicateDebug;
 
 	my @matches;
 
 	foreach my $gc ( @otherFN )
 	{
-		next if $gc->isSameFilename( $target );
+		#next if $gc->isSameFilename( $target );
+		my $hit = 0;
+		if( $target->isDuplicateOf( $gc ) )
+		{
+			$hit = 1;
+			push @matches, $gc;
+		}
 
-		if( $gsDebug )
+
+		if( $duplicateDebug )
 		# if( 1 )
 		{
 			my $cFN = $gc->lfn();
 			my $tFN = $target->lfn();
 
+			my $cD = $gc->quickDebugString();
+			my $tD = $target->quickDebugString();
+			
+
+
 				debug "     -- Checking size duplicates size:[$size]\n";
-				debug "     ---> cfn:[$cFN]\n";
-				debug "  vs ---> tfn:[$tFN]\n";
+				debug "     ---> cfn:[$cFN] $cD " .($hit?"HIT=Y":"HIT=N"). "\n";
+				debug "  vs ---> tfn:[$tFN] $tD\n";
 				
 		}
 
-		if( $target->isDuplicateOf( $gc ) )
-		{
-			push @matches, $gc;
-		}
+	
 	}
 
 	return @matches;
@@ -3270,6 +3819,18 @@ sub findSingleDuplicate
 	my @r = $self->findOtherDuplicates( $target );
 
 	return undef if @r < 1;
+	return pop @r; 
+}
+
+sub findSingleDuplicateIncludingSelf
+{
+	my $self = shift;
+	my $target = shift;
+
+	my @r = $self->findAllDuplicates( $target );
+
+	return undef if @r < 1;
+
 	return pop @r; 
 }
 
@@ -3327,9 +3888,6 @@ Ghost->mk_accessors( qw(lfn lastFullHash size mode fullHash
 	dirty isTKversion lastDirScan lastStat mtime lastEnumerated firstStat fileStatus
 	 children _immutable _debugID) );
 
-my $serializeDebug = 0;
-my $gChildDebug = 0;
-
 
 my $GHOST_DEBUG_ID = 100000; 
 
@@ -3362,7 +3920,7 @@ sub cloneWithLFN
 
 	my $copy = $self->clone();
 
-	print "Clone $lfn\n";
+	# print "Clone $lfn\n";
 	$copy->lfn( $lfn );
 
 	return $copy;
@@ -3428,7 +3986,12 @@ sub newFromSerialized($)
 
 	my @a = split ':', $str;
 
+	debug "Pre-GUS:" . join '|', @a;
+
 	@a = map {main::gfs_unescape($_)} @a;
+
+	debug "Post-GUS:" . join '|', map { defined $_ ? $_ : "undef" } @a;	
+
 
 	my $serialLFN = shift @a;
 
@@ -3481,7 +4044,9 @@ sub isImmutable
 {
 	my $self = shift;
 
-	return $self->_immutable();
+	return 0 if not defined  $self->_immutable();
+	return 1 if  $self->_immutable() > 0 ;
+	return 0; 
 }
 
 # getFSE - returns whatever FSE object is best for this thing
@@ -3602,6 +4167,25 @@ sub printDebug
 
 }
 
+sub quickDebugString
+{
+	my $self = shift;
+
+	my $debugID = $self->_debugID();
+	my $size 			= defined( $self->size() ) 		? $self->size() : "_";
+my $lfn 			= defined( $self->lfn() ) 		? $self->lfn() : "_";
+# my $immutable 		= defined( $self->_immutable() ) 		? $self->_immutable() : "_";
+	my $fullHash 		= defined( $self->fullHash() ) 		? $self->fullHash() : "_";
+
+		$fullHash =~ /(\w{5,5})$/;
+		my $fh = $1 || "_";
+		my $ix = defined $self->_immutable() ? ($self->_immutable() >0 ? "I+" : "I-" ) : 'I_'; 
+
+		return "$debugID/$size/$fh/$ix/$lfn"
+
+
+}
+
 sub makeDebugString
 {
 	my $self = shift;
@@ -3625,7 +4209,8 @@ sub makeDebugString
 	my $immutable 		= defined( $self->_immutable() ) 		? $self->_immutable() : "undef";
 
 	# not technically a field but we should include this
-	my $type = $self->extractTypeFromMode( $mode );
+
+	my $type = defined $self->mode() ? $self->extractTypeFromMode( $self->mode() ) : "???";
 	# my $type = $self->getType();
 
 my $debugID = $self->_debugID();
@@ -3691,17 +4276,27 @@ sub isDuplicateOf
 	my $self = shift;
 	my $other = shift;
 
-#	die "Incomplete info self-size" if not defined $self->size();
-#	die "Incomplete info other-size" if not defined $other->size();
+	die "Incomplete info self-size" if not defined $self->size();
+	die "Incomplete info other-size" if not defined $other->size();
 
 	return 0 if( $self->getSize() ne $other->getSize() );
 
 #   die "Incomplete info self full hash" if not defined $self->fullHash();
 #	die "Incomplete info other full hash " if not defined $other->fullHash();
 
-	return 0 if( $self->getFullHash() ne $other->getFullHash() );
+		my $mH = $self->getFullHash();
+		my $oH = $other->getFullHash();
 
-	return 1; 
+	if( $duplicateDebug )
+	{
+
+		my $mI = $self->debugID();
+		my $oI = $other->debugID();
+		debug "isDuplicateOf - forcing hash $mH - $oH ($mI and $oI)\n";
+	}
+	return 1 if( $mH eq $oH );
+
+	return 0; 
 }
 
 sub serialize()
@@ -3733,9 +4328,14 @@ sub serialize()
 			  $self->mtime()
 			  );
 
+	debug "PRE-GFSE:" . join '|', map { defined $_ ? $_ : "undef" } @s;	
+
 	@s = map {main::gfs_escape($_)} @s;
 
-	my $s = join ':', map { defined $_ ? $_ : '' } @s;
+	debug "Post-GFSE:" . join '|', map { defined $_ ? $_ : "undef" } @s;	
+
+
+	my $s = join ':', @s;
 
 	return $s;
 }
@@ -3808,11 +4408,23 @@ sub hasAcceptableFullhash
 	my $self = shift;
 	my $timeguard = shift;
 
-	return 1 if $self->isImmutable();
 
-#	debug "Checking if I like my hash\n";
 
-	return 0 if( not defined $self->fullHash() );
+
+	# debug "Checking if I like my hash\n";
+
+	if( $self->isImmutable() )
+	{
+		#debug "I'm immutable - i like my hash";
+		return 1 ;
+
+ 	}
+
+	if( not defined $self->fullHash() or $self->fullHash() eq "" )
+	{
+		#debug "has not defined, reject";
+		return 0;
+	}
 
 	if( defined $timeguard && $self->lastStat() < $timeguard )
 	{
@@ -3831,6 +4443,8 @@ sub hasAcceptableFullhash
 			return 0; 
 		}
 	}
+
+	# debug "Yes, hash is OK.";
 
 	return 1;
 }
@@ -4106,6 +4720,11 @@ sub learnStat
 	my $mtime = shift;
 	my $mode = shift; 
 
+
+my $q = $self->quickDebugString();
+	print "LEARN [$size], [$mtime], [$mode] for $q\n";
+	print $self->printDebug();
+
 	# RULE3: ALl stat informaiton must travel together. 
 
 	die "learn() got partial stat (violates RULE#3)" if not defined $mode;
@@ -4129,13 +4748,14 @@ sub learnStat
 
 	if( (defined $self->lastStat()) and ($time == $self->lastStat() ))
 	{
-		die "Rule2: same date mismatch" if defined $size  and defined $self->size()  and $self->size() != $size;
-		die "Rule2: same date mismatch" if defined $mtime and defined $self->mtime() and $self->mtime() != $mtime;
-		die "Rule2: same date mismatch" if defined $mode  and defined $self->mode()  and $self->mode() ne $mode;
 
-		die "Rule2: same date mismatch" if defined $size  and not defined $self->size(); 
-		die "Rule2: same date mismatch" if defined $mtime and not defined $self->mtime();
-		die "Rule2: same date mismatch" if defined $mode  and not defined $self->mode();
+		die "Rule2: same date mismatch A" if defined $size  and defined $self->size()  and $self->size() != $size;
+		die "Rule2: same date mismatch B" if defined $mtime and defined $self->mtime() and $self->mtime() != $mtime;
+		die "Rule2: same date mismatch C" if defined $mode  and defined $self->mode()  and $self->mode() ne $mode;
+
+		die "Rule2: same date mismatch D" if defined $size  and not defined $self->size(); 
+		die "Rule2: same date mismatch E" if defined $mtime and not defined $self->mtime();
+		die "Rule2: same date mismatch F" if defined $mode  and not defined $self->mode();
 
 
 
@@ -4299,6 +4919,10 @@ sub extractTypeFromMode
 	my $self = shift;
 	my $mode = shift;
 
+	# die if $mode eq "";
+	# die if not defined $mode;
+	# print "Mode:: [$mode]\n";
+
 	return undef if( not defined $mode );
 
 	return '_' if main::statModeParse_isError( $mode );
@@ -4312,6 +4936,7 @@ sub extractTypeFromMode
 sub isFile
 {
 	my $self = shift;
+	die if not defined $self->getMode();
 	return 1 if $self->getType() eq 'f';
 }
 
