@@ -514,8 +514,8 @@ meta-data about the size, modification date, or checksum is already available,
 it is used for the operation regardless of its age (although you might get a
 warning if its too old.) You can force information to be more up to date by
 setting a guard time with -G. This is the number of seconds old that metadata
-is valid. Setting it to 0 means that basically no metadata caching is done,
-the most conservative (and slowest) approach.
+is valid (either stat or hash). Setting guard to 0 means that basically no
+metadata caching is done, the most conservative (and slowest) approach.
 
 Future feature: Checksums are not typically forced by the -G switch unless
 there is some reason to doubt them (such as a changed size or modification
@@ -525,6 +525,17 @@ gfs ls file1 [... file-n]
 
 	Prints out each file and the data known about it. Does not force any new
 	calculations or checksums unless a guard argument is in place.
+
+gfs rsync [source1 .. source-n] <target>
+
+	Moves or copies files so that target looks exactly like the merger
+	of its sources. Mostly implemented.
+
+gfs compare [source1 .. source-n] <target>
+
+	Checks if two directories contain exactly the same files. A report is
+	generated for spurious, incorrect, missing and matched files. Directories
+	are not quite implemented properly yet.
 
 gfs snapshot file1 [... filen]
 
@@ -581,6 +592,7 @@ sub doverb_writeSnapshot()
 
 	# $store->writeSnapshotToDisk( "snapshot-$$.out");
 }
+
 
 
 sub doverb_compare()
@@ -671,33 +683,6 @@ sub doverb_compare()
 
 
 
-
-
-sub doverb_writeSnapshot_old()
-{
-	die"";
-	my $tk = TruthKeeper::get();
-	my ($targetGS, $targetStash) = $tk->makeGhostsFromCommandLine( @ARGV );
-
-	my $i = $targetGS->getIterator();
-
-	my $store = GhostStore->new();
-
-	while( my $g = $i->next() )
-	{
-		debug "Write Snapshot - Got Ghost: $g\n";
-
-		if( not $g->canHaveChildren() )
-		{
-			$g->forceCharacterization();
-		}
-
-		$g->printDebug();
-		$store->addGhost( $g );
-	}
-
-	$store->writeSnapshotToDisk( "snapshot-$$.out");
-}
 
 # doverb_ls - handle the LS command
 #
@@ -951,204 +936,6 @@ sub doverb_rsync
 
 
 }
-
-
-
-
-sub doverb_rsync_old()
-{
-	my $target = pop @ARGV;
-	my @source = @ARGV;
-
-	my $tk = TruthKeeper::get();
-	my ($targetGS, $targetStash) = $tk->makeGhostsFromCommandLine( $target );
-	my ($sourceGS, $sourceStash) = $tk->makeGhostsFromCommandLine( @source );
-	my $i = $sourceGS->getIterator();
-
-	my( $targetUserFN, $targetFqlfn, $targetGhost ) = @{$targetStash->[0]};
-
-	if( not $targetGhost->exists() )
-	{
-		die "Cannot stat() target: $targetUserFN! $!";
-	}
-
-	die unless $targetGhost->canHaveChildren();
-
-	my ($targetHandler, $targetRoot, $targetPath)  = $targetGhost->getLFNcompontents();
-
-	# First go through all source files and check for one of three cases on the other end. 
-	# Go through all files in source and claim those paths in the destination
-	# A1- if the file is present, and correct - mark destpath=DONE
-	# A2- if the file is present, and incorrect - mark destpath=WRONGFILE
-	# A3- if the file is not present - mark DESTPATH=EMPTY
-
-	my %targetStatusLFN;
-	my $targetOrphanGS = GhostStore->new();
-	my $targetMissingGS = GhostStore->new();
-	my $placedOrphanGS = GhostStore->new();
-	#my @orphanGhostsAtTarget = ();
-
-
-	while( my $g = $i->next() )
-	{
-		my $sourceLFN = $g->lfn();
-		my $sourcePath = $g->getPath(); 
-		my $basename = basename $g->getPath();
-		my $newPath = File::Spec->catfile( $targetPath, $basename );
-		my $targetLFN = main::assembleLFN( $targetHandler, $targetRoot, $newPath );
-
-		print "--- INITIAL SCAN -------------------\n";
-		print "[$sourcePath] -> [$newPath]\n";
-		print "Thing I'm iterating on:\n";
-		$g->printDebug();
-
-		# print "[$sourceLFN] -> [$newLFN]\n";
-
-		# Check case where file is already at our destination
-
-		my $targetGhost = $tk->obtainGhostForLFN( $targetLFN );
-
-		my $handled = 0; 
-
-		if( $targetGhost->exists() )
-		{
-			print "   - Exists at destination (A)\n";
-
-			if( $targetGhost->isDuplicateOf($g) )
-			{
-				print "   - Acceptable, no action to take! (A1)\n";
-
-				$targetStatusLFN{$targetLFN} = 'DONE';
-				$handled = 1;
-			}
-			else
-			{
-				print "   - Not acceptable, orphan, move needed (A2)\n";
-
-				$targetStatusLFN{$targetLFN} = 'WRONGFILE';
-				$targetOrphanGS->addGhost( $targetGhost );
-				$targetMissingGS->addGhost( $g );
-				# push @orphanGhostsAtTarget, $targetGhost;
-			}
-		}
-		else
-		{
-			print "   - No file is present (A3)\n";
-
-			$targetStatusLFN{$targetLFN} = 'NO_FILE';
-			$targetMissingGS->addGhost( $g );
-		}
-	}
-
-	# Next, we need to find homes for orphans. The cases we care about
-	# B1 - Orphan in the unsent pool, case of a wink-in
-	# B2 - Orphan not in unsent pool, find a non-conflicting name and move
-
-	my $targetOrphanGSiterator = $targetOrphanGS->getIterator(); 
-
-	while( my $g = $targetOrphanGSiterator->next() )
-	{
-		print "--- ORPHAN SCAN ----------------\n";
-		print "Orphan: " . $g->lfn();
-		print "\n";
-
-		my @r = $targetMissingGS->findAllDuplicates( $g ) ;
-
-		# Check for case where the orphan is a potential answer to one or more 
-		# missing files to transfer
-
-		if( @r > 0 )
-		{
-			my $winkin = shift @r;
-			my $winkinLFN = $winkin->lfn();
-			print "   - Wink in available - $winkinLFN\n";
- 
-			# somehow we need to store the new intended location
-			# so that later if we need to copy this file for another purpose we can find it
-
-			$targetMissingGS->removeGhost( $winkin );
-			$placedOrphanGS->addGhost( $winkin );
-		}
-	}
-
-	# Now look for local copies to fill in missing items. A "local copy" is a
-	# case where a claimed file is a better source than a remotely transmitted
-	# file. Because  the file is claimed, its already in the tree in a place
-	# it should be. These local copies are either in the target or the list of
-	# placed orphans.
-
-	my $targetMissingGSiterator = $targetMissingGS->getIterator(); 
-
-	while( my $g = $targetMissingGSiterator->next() )
-	{
-		print "--- TARGET MISSING SCAN ----------------\n";
-		print "Missing: " . $g->lfn();
-		print "\n";		
-
-		my $r = $placedOrphanGS->findSingleDuplicate( $g ) ;
-
-		if( defined $r )
-		{
-			my $lfn = $r->lfn();
-			print "   - Local File Copy (placed orphan): $lfn\n";
-			next;
-		}
-
-		my $x = $targetGS->findSingleDuplicate( $g ) ;
-
-		if( defined $x )
-		{
-			my $lfn = $x->lfn();
-			print "   - Local File Copy (target): $lfn\n";
-			next;
-		}
-
-		my $tlfn = $g->lfn();
-		print "   - Not found - TRANSMISSION REQUIRED: $tlfn\n";
-
-	}
-
-
-			# foreach my $m (@r)
-			# {
-			# 	my $lfn = $m->lfn();
-			# 	print "   - Copy via orphan in available - $lfn\n";
-
-			# 	$targetMissingGS->removeGhost( $m );
-			# }
-
-
-
-				# my $newOrphanNameFound = 0;
-				# my $scramble = 1;
-				# my $finalNewOrphanLFN = 0; 
-
-				# while( not $newOrphanNameFound )
-				# {
-				# 	# Calculate a new name for this file
-				# 	my $orphanNewPathName = $targetGhost->getPath() . "orphan-$scramble";
-				# 	my $orphanNewLFN = main::assembleLFN( $targetHandler, $targetRoot, $orphanNewPathName );
-				# 	my $orphanGhost = $tk->obtainGhostForLFN( $orphanNewLFN );
-				# 	print "       - testing orphan: $orphanNewLFN\n";
-				# 	next if $orphanGhost->exists();
-				# 	next if $targetClaimedLFN{$orphanNewLFN};
-				# 	$finalNewOrphanLFN = $orphanNewLFN;
-				# 	$newOrphanNameFound = 1;
-				# }
-
-				# no, this doesn't work. we won't know what is claimed until we get through all of the
-				# source
-				# so we need a past that claims everything, and a separate pass that assigns orphans
-
-
-
-
-		# 		$targetClaimedLFN{$sourceLFN} = 'Orphaned';
-		# 		$targetOrphanGS->addGhost( $targetGhost );
-		# 	}
-		# }
-}
-
 
 
 ###########
@@ -1892,75 +1679,6 @@ sub haulGhostToLFN
 	die if defined $o; 
 	$self->_setCurrent($to, $g);
 }
-
-# sub moveGhostToLFN
-# {
-# 	my $self = shift;
-# 	my $ghost = shift;
-# 	my $lfn = shift;
-
-# 	my $p = $self->getCurrentGSTPathForGhost( $ghost );
-
-#     # die unless $self->_getCurrent($ghost->lfn()) == $ghost;
-#  	die if defined $self->_getCurrent($t->lfn());
-
-
-#  	$self->addWorklist( -action=>'MOVE', -source=>$ghost, -destination=>$t, -debug=>"X" );
-
-#  	$self->_setCurrent( $ghost->lfn(), undef );
-#  	$self->_setCurrent( $t->lfn(), $ghost );
-
-# 	return $t; 
-# }
-
-
-
-# sub copyGhostToLFN
-# {
-# 	die;
-# 	my $self = shift;
-# 	my $ghost = shift;
-# 	my $lfn = shift;
-
-# 	my $t = $ghost->cloneWithLFN( $lfn );
-# 	$t->setImmutable();
-
-# 	$self->copyGhostToGhost($ghost, $t );
-# 	return $t; 
-# }
-
-
-
-# sub moveGhostToGhost
-# {
-# 	my $self = shift;
-# 	my $ghost = shift;
-# 	my $t = shift;
-
-# 	die unless $self->_getCurrent($ghost->lfn()) == $ghost;
-# 	die if defined $self->_getCurrent($t->lfn());
-
-# 	$self->addWorklist( -action=>'MOVE', -source=>$ghost, -destination=>$t, -debug=>"X" );
-
-# 	$self->_setCurrent( $ghost->lfn(), undef );
-# 	$self->_setCurrent( $t->lfn(), $ghost );
-# }
-
-
-# sub copyGhostToGhost
-# {
-# 	die;
-# 	my $self = shift;
-# 	my $ghost = shift;
-# 	my $t = shift;
-
-# 	die unless $self->_getCurrent($ghost->lfn()) == $ghost;
-# 	die if defined $self->_getCurrent($t->lfn());
-
-# 	$self->addWorklist( -action=>'COPY', -source=>$ghost, -destination=>$t, -debug=>"Y" );
-
-# 	$self->_setCurrent( $t->lfn(), $ghost );
-# }
 
 sub obtainCurrentStateAsGS
 {
