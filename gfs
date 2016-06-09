@@ -34,13 +34,13 @@ sub debug($);
 
 
 my $icDebug = 0;
-my $tkdebug = 1;
-my $tkflushdebug = 1;
+my $tkdebug = 0;
+my $tkflushdebug = 0;
 my $gsDebug = 1;
 my $duplicateDebug = 0;
 my $fseSnapshotDebug = 0;
-
-my $serializeDebug = 1;
+my $granularSerialDebug = 0;    # Instruments the escape/unescape mechanism
+my $serializeDebug = 0;			# Instruments the load/save at ghost level
 my $gChildDebug = 0;
 
 
@@ -479,6 +479,13 @@ sub handleVerb
 		return;
 	}
 
+	# The "mv" verb calls the move handlers for the relevant FSE
+
+	if( $verb eq "mv" )
+	{
+		doverb_move();
+		return;
+	}
 
 	# LS tells us what we can find out about the current directory tree
 	# nothing is force read. there is a dirscan and that is it.
@@ -591,12 +598,39 @@ sub doverb_store()
 	my $name = shift @ARGV;
 	my $value = shift @ARGV;
 
+	my $tk = TruthKeeper::get();
 
+	my ($targetGS, $targetStash) = $tk->makeGhostsFromCommandLine( $value );
+	my ($sourceGS, $sourceStash) = $tk->makeGhostsFromCommandLine( $name );
 
+	my( $targetUserFN, $targetFqlfn, $targetGhost ) = @{$targetStash->[0]};
+	my( $sourceUserFN, $sourceFqlfn, $sourceGhost ) = @{$sourceStash->[0]};
 
+	$targetGhost->store( $sourceGhost );
 }
 
 
+
+
+sub doverb_move()
+{
+	my $origArg = @ARGV;
+
+	die "Must give EXACTLY 2 arguments" if( $origArg != 2 );
+
+	my $src = shift @ARGV;
+	my $dest = shift @ARGV;
+
+	my $tk = TruthKeeper::get();
+
+	my ($targetGS, $targetStash) = $tk->makeGhostsFromCommandLine( $dest );
+	my ($sourceGS, $sourceStash) = $tk->makeGhostsFromCommandLine( $src );
+
+	my( $targetUserFN, $targetFqlfn, $targetGhost ) = @{$targetStash->[0]};
+	my( $sourceUserFN, $sourceFqlfn, $sourceGhost ) = @{$sourceStash->[0]};
+
+	$sourceGhost->moveGhost( $targetGhost );
+}
 
 
 
@@ -661,7 +695,7 @@ sub doverb_writeSnapshot()
 
 		# $g->printDebug();
 
-		$targetFSE->storeGhost($g);
+		$targetFSE->absorb($g);
 
 		# $store->addGhost( $g );
 	}
@@ -682,7 +716,6 @@ sub doverb_compare()
 	my ($targetGS, $targetStash) = $tk->makeGhostsFromCommandLine( $target );
 	my ($sourceGS, $sourceStash) = $tk->makeGhostsFromCommandLine( @source );
 	
-
 	my( $targetUserFN, $targetFqlfn, $targetGhost ) = @{$targetStash->[0]};
 
 	if( not $targetGhost->exists() )
@@ -1402,6 +1435,30 @@ sub statModeParse_isError
 }
 
 
+
+# Hash parsing tools live here
+
+# Breaks apart a hash into its three components. 
+
+sub extractHashComponents
+{
+	my $hashString = shift;
+
+	my ($algorithim, $meta, $digest ) = split '/', $hashString;
+
+	die unless defined $algorithim;
+	die unless defined $meta;
+	die unless defined $digest;
+
+	return [ $algorithim, $meta, $digest  ];
+
+}
+
+
+
+
+
+
 # Holds the state of a transitional mapping between the current state of the
 # world and a desired final state. Provides a lot of tools for manipulating
 # this final state and then ultimately checking that it's performed.
@@ -1579,6 +1636,8 @@ sub generateOrphanLFN
 {
 	my $self = shift;
 	my $g = shift;
+
+	# sort of cloned-ish code , maybe unite with generateAlternativeLocation
 
 	$g->getPath(); 
 	my $tk = TruthKeeper::get();
@@ -2093,6 +2152,64 @@ sub getPointer
 	return $value; 
 }
 
+# One of the universal methods. It basically says make a copy of the things
+# I'm pointing to and gives you the name of the place to store it. If there is
+# something already in that position, leaves it up to each FSE what to do with it.
+
+sub store
+{
+	my $self = shift;
+	my $source = shift;
+	my $target = shift;
+
+	# my $hardFilename = $source->getHardFile();
+
+	my $hash = $source->getFullHash();
+	my $justHash = main::extractHashComponents( $hash )->[2];
+
+	my $targetPath = catfile( $self->{OBJ_DIR}, $justHash );
+
+	# Super schitzophrenic - shou;dn't this ALL be done via the ghost API?
+	# $self->internalMkDir( $targetPath );
+
+	my $finalPath = catfile( $targetPath, $justHash );
+
+	my $targetLFN = main::assembleLFN( "fs", "root", $finalPath);
+	my $tk = TruthKeeper::get();
+	my $targetGhost = $tk->obtainGhostForLFN($targetLFN);
+	$targetGhost->store( $source );
+
+}
+
+
+# A universal method that says "take the things I pointed to, and make sure
+# you've stored it somewhere". In this form, you're not allowed to say where
+# it gets stored or how, just that it shpuld be there.
+
+sub absorb 
+{
+	my $self = shift;
+	my $source = shift;
+
+	die "absorb not implemented for this FSE type.";
+}
+
+
+
+# Forces the ghost, if it exists, to return an absolute file on the local
+# filesystem. This should ALWAYS return a local path (can be a temp file.) the
+# caller must promise to not tamper with this in any way other than a read.
+
+sub getReadonlyHardFile
+{
+	my $self = shift;
+
+
+
+
+	die;
+}
+
 
 
 
@@ -2134,7 +2251,10 @@ sub getAbsoluteLFNForGhost
 	return main::rewriteLFNreplaceRoot( $g->lfn(), "HACKED_HASH_GOES_HERE");
 }
 
-sub storeGhost
+
+
+
+sub absorb
 {
 	my $self = shift;
 	my $g = shift;
@@ -2313,6 +2433,7 @@ package FilesystemExplorer::FS;
 
 use Time::HiRes qw( CLOCK_REALTIME gettimeofday tv_interval);
 use File::Basename;
+use File::Copy;
 use base qw(Class::Accessor);
 FilesystemExplorer::FS->mk_accessors( qw(topLevelLFNs sizeToFNs) );
 
@@ -2326,6 +2447,12 @@ sub debug($)
 {
 	my $a = shift;
 	main::debug( "FSE/fs: " . $a );
+}
+
+sub CODEPATH($)
+{	
+	my $p = shift; 
+	main::CODEPATH( "FSE/fs: $p" );
 }
 
 sub finalize
@@ -2451,6 +2578,215 @@ sub getImmediateChildren
 
 	return @files;
 }
+
+# 
+#
+# CORE
+# 
+# One of the universal FSE methods. It basically says make a copy of the things
+# I'm pointing to and gives you the name of the place to store it. If there is
+# something already in that position, leaves it up to each FSE what to do with it.
+
+# BE CAREFUL: We are always the FSE handler for the TARGET, not the SOURCE, so
+# our first job is to force the the SOURCE to something we're prepared to
+# read.
+
+sub store
+{
+	my $self = shift;
+	my $sourceGhost = shift;
+	my $target = shift;
+
+	# this extra overhead forces the file to be a filesystem object and
+	# ensures that we are only working with a ghost that is authoritative.
+
+	my $hardFilename = $sourceGhost->getReadonlyHardFile();
+	my $sourceFileLFN = main::assembleLFN( "fs", "root", $hardFilename);
+	my $tk = TruthKeeper::get();
+	my $sourceFileGhost = $tk->obtainGhostForLFN($sourceFileLFN);
+
+	my $srcPath = $sourceFileGhost->getPath();
+	my $destPath = $target->getPath();
+
+	print "store() - COPY - [$srcPath]->[$destPath]\n";
+
+	my $finalTarget; 
+
+	if( $target->exists( time() ) )
+	{
+		if( $target->isDuplicateOf($sourceGhost) )
+		{
+			print "store(): Source and destination are identical, no action.\n";
+			CODEPATH( "store.identical");
+			return $target; 
+		}
+		else
+		{
+			print "store(): destination exists, generating new location.\n";
+			my $newLocation = $target->generateAlternativeLocation( 'storeOperation' );
+			CODEPATH( "store.relocate");
+
+			# should be a move, not a copy, but that means we have to work out move semantics
+			$newLocation->store($target);
+			$finalTarget = $target;
+		}
+	}
+	else
+	{
+		$finalTarget = $target;
+	}
+
+	my $finalPath = $finalTarget->getPath();
+
+	print "store(): Invoking full copy [$srcPath]->[$finalPath]\n";
+
+	my $r = copy( $srcPath, $finalPath );
+
+	if( !$r )
+	{
+		die "Copy operation failed - [$srcPath]->[$finalPath]: err: $!";
+	}
+
+	$finalTarget->learnContentsChanged( time() );
+
+	# Perform a quick verification that the file sizes match. Not strictly
+	# needed. The caller can force more verification if it wants.
+
+	if( $finalTarget->getSize() != $sourceGhost->getSize() )
+	{
+		die "Assert: My copy succeeded but the getSize() no longer matches - what gives?";
+	}
+
+	return $finalTarget; 
+
+	# die "Copy not implemented";
+
+}
+
+
+
+# 
+#
+# CORE  
+# 
+# One of the universal FSE methods. When this is invoked, we are always
+# the FSE manager for the SOURCE. (This is the opposite of the case of a copy.)
+# This should die if the move cannot be performed in the way that preserves everything. 
+
+sub moveGhost
+{
+	my $self = shift;
+	my $source = shift;
+	my $target = shift;
+
+	my $srcPath = $source->getPath();
+	my $destPath = $target->getPath();
+
+	die unless $source->getHandler() eq 'fs';
+	die unless $target->getHandler() eq 'fs';
+
+	print "move() - MOVE - [$srcPath]->[$destPath]\n";
+
+	die "move() - already a file present at target location!" if $target->exists( time() );
+
+	my $originalSize = $source->getSize( time() );
+
+
+	my $r = move( $srcPath, $destPath );
+
+	if( !$r )
+	{
+		die "Copy operation failed - [$srcPath]->[$destPath]: err: $!";
+	}
+
+	my $effectiveTime = time() ;
+	$source->learnContentsChanged( $effectiveTime );
+	$target->learnContentsChanged( $effectiveTime );
+
+	# Perform a quick verification that the file sizes match. Not strictly
+	# needed. The caller can force more verification if it wants.
+
+	my $newSize = $target->getSize( $effectiveTime );
+
+	if( $newSize != $originalSize  )
+	{
+		die "Assert: Move succeeded but the getSize() no longer matches - what gives? Orig=$originalSize New=$newSize";
+	}
+
+
+	return $target;
+}
+
+
+# Returns a new available location for a file that is writeable and guarenteed
+# to not be re-used
+
+local %FilesystemExplorer::FS::altLocationGuarentee;
+
+sub generateAlternativeLocation
+{
+	my $self = shift;
+	my $g = shift;
+	my $strategy = shift; 
+
+	$g->getPath(); 
+	my $tk = TruthKeeper::get();
+
+	my $newOrphanNameFound = 0;
+	my $scramble = 0;
+	my $finalNewOrphanLFN = 0; 
+
+	my $datestr = POSIX::strftime( "%Y%m%d", gmtime() );
+
+	while( not $newOrphanNameFound )
+	{
+		
+		# Calculate a new name for this file
+		my $orphanNewPathName = $g->getPath() . ".gsfmoved-$datestr";
+		$orphanNewPathName .= "-$scramble" if $scramble > 0;
+		my $orphanNewLFN = main::assembleLFN( $g->getHandler() , $g->getRoot(), $orphanNewPathName );
+		my $orphanGhost = $tk->obtainGhostForLFN( $orphanNewLFN );
+		print "       - testing orphan: $orphanNewLFN\n";
+		$scramble++;
+		if( $orphanGhost->exists() )
+		{
+			CODEPATH( "Rare - orphanNewLFN - needed additional clearance check" );
+			next;
+		}
+		if( $FilesystemExplorer::FS::altLocationGuarentee{orphanNewLFN} )
+		{
+			CODEPATH( "Rare - orphanNewLFN - guarnetee override" );
+			next; 
+		}
+
+		$FilesystemExplorer::FS::altLocationGuarentee{$orphanNewLFN} = 1; 
+		return $orphanGhost;
+	}
+
+	die;
+
+
+
+}
+
+
+# Forces the ghost, if it exists, to return an absolute file on the local
+# filesystem. This should ALWAYS return a local path (can be a temp file.) the
+# caller must promise to not tamper with this in any way other than a read.
+
+sub getReadonlyHardFile
+{
+	my $self = shift;
+	my $thing = shift; 
+
+	# Implementation is super easy - just get my path and be done!
+
+	die unless $thing->exists();
+
+	return $thing->getPath();
+	
+}
+
 
 
 
@@ -3904,11 +4240,11 @@ sub newFromSerialized($)
 
 	my @a = split ':', $str;
 
-	debug "Pre-GUS:" . join '|', @a;
+	debug "Pre-GUS:" . join '|', @a if $granularSerialDebug;
 
 	@a = map {main::gfs_unescape($_)} @a;
 
-	debug "Post-GUS:" . join '|', map { defined $_ ? $_ : "undef" } @a;	
+	debug "Post-GUS:" . join '|', map { defined $_ ? $_ : "undef" } @a if $granularSerialDebug;	
 
 
 	my $serialLFN = shift @a;
@@ -4246,11 +4582,11 @@ sub serialize()
 			  $self->mtime()
 			  );
 
-	debug "PRE-GFSE:" . join '|', map { defined $_ ? $_ : "undef" } @s;	
+	debug "PRE-GFSE:" . join '|', map { defined $_ ? $_ : "undef" } @s if $granularSerialDebug;	
 
 	@s = map {main::gfs_escape($_)} @s;
 
-	debug "Post-GFSE:" . join '|', map { defined $_ ? $_ : "undef" } @s;	
+	debug "Post-GFSE:" . join '|', map { defined $_ ? $_ : "undef" } @s if $granularSerialDebug;	
 
 
 	my $s = join ':', @s;
@@ -4479,15 +4815,69 @@ sub verifyGhostIsMutable
 	die "Mutable operation attempted on immutable ghost!" if $self->isImmutable();
 }
 
+
+###########
+# Storage semantics
+#
+# Represents the idea that you want the thing pointed to by this ghost to assume
+# the identical contents of the ghost being pointed to. This is one of those
+# wonderful things that we just pass over to the FSE.
+#
+
+sub store
+{
+	my $self = shift;
+	my $thing = shift;
+
+	return $self->getFSE()->store( $thing, $self );
+}
+
+######
+
+
+sub moveGhost
+{
+	my $self = shift;
+	my $thing = shift;
+
+	return $self->getFSE()->moveGhost( $self, $thing );
+}
+
+
+###########
+# Getting a hardfile
+#
+# Gets you a path with that object that is free and clear for readonly
+# purposes. Fills in the gap that possibly a file is on a remote server.
+#
+
+sub getReadonlyHardFile
+{
+	my $self = shift;
+
+	return $self->getFSE()->getReadonlyHardFile($self);
+}
+
+
+
+
+
+sub generateAlternativeLocation
+{
+	my $self = shift;
+	my $strategy = shift; 
+
+	return $self->getFSE()->generateAlternativeLocation($self, $strategy);
+}
+
+
 ###########
 # Tests for existence
 #
 # The exists() semantic tells you definitively if the file is present or not within
-# the window of knowledge of the time range given.
+# the window of knowledge of the time range given. Default does not actually hit the disk.
 #
 # 
-
-
 
 sub exists()
 {
@@ -4501,7 +4891,7 @@ sub exists()
 		return 1; 
 	}
 
-	return $self->getStatPresence();
+	return $self->getStatPresence($time);
 }
 
 
@@ -4541,7 +4931,8 @@ sub getStatPresence
 # 
 # RULE #3: The date corresponding to the size is lockstep with the date on rest of the stat. Correlary -- all stat information must travel together
 # 
-# RULE #4: A new provided hash will be accepted into a learner as long as its date is newer than both the hash and the stat
+# RULE #4: A new provided hash will be accepted into a learner as long as its date 
+# is newer than both the hash and the stat
 # 
 # RULE #5: A new stat that represents a change in size should invalidate the
 # existing hash, unless the hash has the exact same date as the stat. (If the existing
@@ -4623,6 +5014,30 @@ sub learnDirscan
 	$self->learnPresent( $time );
 }
 
+# This tells the ghost that the file contents are presumed to have changed. In
+# fact, the file may not exist anymore. For consistency, we basically pretend
+# that the file doesn't exist anymore, thus forcing recalculations.
+# hasAcceptableXXX() will always return false in these cases.
+
+# TODO: is a cleaner way to do this to have some sort of "knownUpdate" field
+# that is triggered on it which automatically fails out the next hasAcceptable() 
+
+sub learnContentsChanged
+{
+	my $self = shift;
+	my $effectiveTime = shift;
+
+	$self->size( undef );
+	$self->mtime( undef );
+	$self->fullHash( undef );
+	$self->mode( undef );
+	$self->lastFullHash( undef );
+	$self->lastStat( undef );
+}
+
+# This is the universal way of reporting new stat information, either from the
+# disk, or from another ghost. It adjudicates what information to keep and
+# what to toss using the set of rules worked out above. 
 
 sub learnStat
 {
@@ -4639,9 +5054,13 @@ sub learnStat
 	my $mode = shift; 
 
 
-my $q = $self->quickDebugString();
-	print "LEARN [$size], [$mtime], [$mode] for $q\n";
-	print $self->printDebug();
+	my $q = $self->quickDebugString();
+
+	my $__size = defined $size ? $size : "<undef>";
+	my $__mtime = defined $mtime ? $mtime : "<undef>";
+	my $__mode = defined $mode ? $mode : "<undef>";
+	print "LEARN [$__size], [$__mtime], [$__mode] for $q\n";
+	$self->printDebug();
 
 	# RULE3: ALl stat informaiton must travel together. 
 
