@@ -76,7 +76,10 @@ my $WDIR = "$HOME/.gfs";
 my $DBDIR = "$WDIR/db";
 my $EDIR = "$ENV{HOME}/.gfsrun/EXEC-$$";
 
+# These are the two "global" FSE objects used to resolve fs: and obj: LFNs
+
 $main::localFileSystemFSE = undef;
+$main::coreOjxFSE = undef; 
 
 # Option management
 
@@ -230,6 +233,10 @@ sub init
 	verifyWorkingDirectories();
 	setupDatabases();
 	$main::localFileSystemFSE = new FilesystemExplorer::FS();
+	my $ojx = FilesystemExplorer::ObjectStore->new( 'xx-GFS-ojx/test' );
+	$ojx->setUpRepository();
+
+	$main::coreOjxFSE = $ojx; 
 }
 
 # Incorporated code from String::Escape via per artistic license
@@ -577,6 +584,26 @@ HERE
 #
 # Simple actions for using the OJX. 
 
+sub doverb_store()
+{
+	my $origArg = @ARGV;
+
+	my $name = shift @ARGV;
+	my $value = shift @ARGV;
+
+
+
+
+}
+
+
+
+
+
+# doverb_pointer
+#
+# Simple actions for using the OJX. 
+
 sub doverb_pointer()
 {
 	my $origArg = @ARGV;
@@ -584,8 +611,7 @@ sub doverb_pointer()
 	my $name = shift @ARGV;
 	my $value = shift @ARGV;
 
-	my $ojx = FilesystemExplorer::ObjectStore->new( 'xx-GFS-ojx/test' );
-	$ojx->setUpRepository();
+	my $ojx = $main::coreOjxFSE;
 
 	print "ARGV=@ARGV ---$origArg\n";
 
