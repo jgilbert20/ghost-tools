@@ -44,8 +44,6 @@ my $serializeDebug = 1;
 my $gChildDebug = 0;
 
 
-
-
 # Major globals
 
 my $DESCRIPTOR_FILENAME = ".gfs_ip";
@@ -455,11 +453,25 @@ sub handleVerb
 		return;
 	}
 
+	# Interface into the pointer storage and retrieval system
+
 	if( $verb eq "pointer" )
 	{
 		doverb_pointer();
 		return;
 	}
+
+
+	# The "store" verb basically pushes the contents to the location specified
+	# typically as a copy operation. Originally intended to store files into
+	# the OJX. (Full semantics have not been worked out.)
+
+	if( $verb eq "store" )
+	{
+		doverb_store();
+		return;
+	}
+
 
 	# LS tells us what we can find out about the current directory tree
 	# nothing is force read. there is a dirscan and that is it.
@@ -567,15 +579,31 @@ HERE
 
 sub doverb_pointer()
 {
-	my $name = shift;
-	my $value = shift;
+	my $origArg = @ARGV;
+
+	my $name = shift @ARGV;
+	my $value = shift @ARGV;
 
 	my $ojx = FilesystemExplorer::ObjectStore->new( 'xx-GFS-ojx/test' );
 	$ojx->setUpRepository();
 
-	$ojx->setPointer( "foo", "bar");
-	$ojx->setPointer( "foo2", "bar");
-	$ojx->getPointer( "foo2");
+	print "ARGV=@ARGV ---$origArg\n";
+
+	die "Too many arguments" if( $origArg > 2 );
+
+	if( $origArg> 1 )
+	{
+		print "Pointer [$name] now set to [$value]\n";
+		$ojx->setPointer( $name, $value );
+		return;
+	}
+
+	if( $origArg > 0 )
+	{
+		
+		$value = $ojx->getPointer( $name );
+		print "Pointer [$name] is currently: [$value]\n";
+	}
 
 }
 
@@ -1980,9 +2008,7 @@ sub internalMkDir
 	$@ and die "Couldn't create dir path: $@";
     die "Did not find new path" if not -d $p;
 
-
 	# main::mkdirs( File::Spec->catfile( $self->{ROOTDIR}, "foo" ));
-
 }
 
 
@@ -2040,9 +2066,6 @@ sub getPointer
 
 	return $value; 
 }
-
-
-
 
 
 
