@@ -35,7 +35,7 @@ sub debug($);
 my $icDebug = 0;
 my $tkdebug = 0;
 my $tkflushdebug = 1;
-my $gsDebug = 1;
+my $gsDebug = 0;
 my $duplicateDebug = 0;
 my $granularSerialDebug = 0;    # Instruments the escape/unescape mechanism
 my $serializeDebug = 0;			# Instruments the load/save at ghost level
@@ -43,6 +43,8 @@ my $gChildDebug = 0;
 my $fseDebug = 0;
 my $fseOjxDebug = 1;
 my $fseSnapshotDebug = 0;
+my $learnDebug = 0;
+my $statStructDebug = 0;
 
 # Major globals
 
@@ -1507,7 +1509,7 @@ sub extractHashComponents
 sub globalMkPath
 {
 	my $p = shift; 
-	debug "Mkpath: $p";
+	# debug "Mkpath: $p";
 	File::Path::make_path( $p );
 
 	$@ and die "Couldn't create dir path: $@";
@@ -1688,7 +1690,7 @@ sub loadFromPOSIXstat
 
 	# ($dev,$ino,$mode,$nlink,$uid,$gid,$rdev,$size,$atime,$mtime,$ctime,$blksize,$blocks)
 
-	print "StatStruct: Loaded :" . (join ',', @$arr ) . "\n";
+	print "StatStruct: Loaded :" . (join ',', @$arr ) . "\n" if $statStructDebug;
 
 	# drop 2,7,9
 
@@ -1696,7 +1698,7 @@ sub loadFromPOSIXstat
 	splice( @$arr, 6, 1 );
 	splice( @$arr, 7, 1 );
 
-	print "StatStruct: Trimed to :" . (join ',', @$arr ) . "\n";
+	print "StatStruct: Trimed to :" . (join ',', @$arr ) . "\n" if $statStructDebug;
 
 	$self->[0] = $arr;
 
@@ -1709,7 +1711,7 @@ sub serialize
 
 	my $str = join ',', @{$self->[0]};
 
-	debug( "Serialized to: $str");
+	debug( "Serialized to: $str") if $statStructDebug;
 
 	return $str;
 }
@@ -1721,7 +1723,7 @@ sub deserialize
 
 	die unless defined $str;
 	
-	debug( "Deserialized from: [$str]");
+	debug( "Deserialized from: [$str]") if $statStructDebug;
 
 	my @arr = split ',', $str;
 	
@@ -1749,7 +1751,7 @@ sub isSameAs
 		$result = ($self->serialize() eq $other->serialize() ) ? 1 : 0;
 	}
 
-	debug "isSameAs: $self vs $other = $result\n";
+	debug "isSameAs: $self vs $other = $result\n" if $statStructDebug;;
 
 	return $result; 
 }
@@ -5473,15 +5475,14 @@ sub learnFromGhost
 
 	CODEPATH( "ghost merging" );
 
-
-	debug "++++++++++++++++++++++++++++++++++ Base Ghost\n";
-	$self->printDebug();
-	debug "++++++++++++++++++++++++++++++++++ Teaching Ghost\n";
-	$g->printDebug();
-	debug "++++++++++++++++++++++++++++++++++ END\n";
-
-
-
+	if( $learnDebug )
+	{
+		debug "++++++++++++++++++++++++++++++++++ Base Ghost\n";
+		$self->printDebug();
+		debug "++++++++++++++++++++++++++++++++++ Teaching Ghost\n";
+		$g->printDebug();
+		debug "++++++++++++++++++++++++++++++++++ END\n";
+	}
 
 	if( defined $g->lastStat() )
 	{
@@ -5585,12 +5586,17 @@ sub learnStat
 
 	my $q = $self->quickDebugString();
 
-	my $__size = defined $size ? $size : "<undef>";
-	my $__mtime = defined $mtime ? $mtime : "<undef>";
-	my $__mode = defined $mode ? $mode : "<undef>";
-	my $__statStruct = defined $statStruct ? $statStruct : "<undef>";
-	print "LEARN [$__size], [$__mtime], [$__mode] [$__statStruct] for $q\n";
-	$self->printDebug();
+
+	if( $learnDebug )
+	{
+		my $__size = defined $size ? $size : "<undef>";
+		my $__mtime = defined $mtime ? $mtime : "<undef>";
+		my $__mode = defined $mode ? $mode : "<undef>";
+		my $__statStruct = defined $statStruct ? $statStruct : "<undef>";
+		print "LEARN [$__size], [$__mtime], [$__mode] [$__statStruct] for $q\n";
+		$self->printDebug();
+	}
+
 
 	# RULE3: ALl stat informaiton must travel together. 
 
