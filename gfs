@@ -257,51 +257,6 @@ sub init
 	$main::coreOjxFSE = $ojx; 
 }
 
-# Incorporated code from String::Escape via per artistic license
-# Reason: Need to tweak what counts as an escaped character
-
-# =head1 AUTHOR
-# Matthew Simon Cavalletto, C<< <simonm at cavalletto.org> >>
-# Initial versions developed at Evolution Online Systems with Eleanor J. Evans and Jeremy G. Bishop.
-# =head1 LICENSE
-# Copyright 2010, 2002 Matthew Simon Cavalletto.
-# Portions copyright 1996, 1997, 1998, 2001 Evolution Online Systems, Inc.
-# You may use, modify, and distribute this software under the same terms as Perl.
-# See http://dev.perl.org/licenses/ for more information.
-# =cut
-
-
-use vars qw( %Backslashed %Interpolated );
-
-# Earlier definitions are preferred to later ones, thus we output \n not \x0d
-_define_backslash_escapes(
-	( map { $_ => $_ } ( '\\', '"', '$', '@' ) ),
-	( 'r' => "\r", 'n' => "\n", 't' => "\t" ),
-	( map { 'x' . unpack('H2', chr($_)) => chr($_) } (0..255) ),
-	( map { sprintf('%03o', $_) => chr($_) } (0..255) ),
-);
-
-sub _define_backslash_escapes {
-	%Interpolated = @_;
-	%Backslashed  = reverse @_;
-}
-
-# $special_characters_escaped = backslash( $source_string );
-sub backslash ($) {
-	local $_ = ( defined $_[0] ? $_[0] : '' );
-	# Preserve only printable ASCII characters other than \, ", $, and @
-	s/([^\x20\x21\x24\x25-\x39\x41-\x5b\x5d-\x7e])/\\$Backslashed{$1}/gs;
-	return $_;
-}
-
-# $original_string = unbackslash( $special_characters_escaped );
-sub unbackslash ($) {
-	local $_ = ( defined $_[0] ? $_[0] : '' );
-	s/ (\A|\G|[^\\]) [\\] ( [0]\d\d | [x][\da-fA-F]{2} | . ) / $1 . ( $Interpolated{lc($2) }) /gsxe;
-	return $_;
-}
-
-
 sub gfs_escape($)
 {
 	my $v = shift;
