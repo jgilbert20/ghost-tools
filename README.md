@@ -1,8 +1,46 @@
 # Ghost Tools
 
-Simple zero-infrastructure tools for safetly managing large collections of your digital life, inspired by git
+Simple zero-infrastructure tools for safety managing large collections of your digital files, inspired by git and related tools.
 
-# Purpose
+# Introduction
+
+Ghost Tools (gfs) is a maximally unobtrusive utility that manages universal state and locations of files you care about. This means that as files are scattered about in your life, across different drives or storage providers, GFS knows where things are gone and how to get them back. It has been especially designed to avoid any damons, persistent state, databases or cloud systems. Everything it does will continue to work no matter what kind of large axe you take to it’s “private” files.
+
+The first rule of GFS is that every file or thing you want to protect continues to live exactly where you have it now. 
+
+Lets take a simple example. I store my main photos in the following directory:
+
+	apollo:~/PhotoFSX/LR-PhotoFS-LT $ ls -l
+	total 0
+	drwxr-xr-x+    20 jgilbert  staff     680 Jun 13  2015 2015-04-18
+	drwxr-xr-x+     4 jgilbert  staff     136 Oct 10  2015 2015-10-09
+	drwxr-xr-x+    28 jgilbert  staff     952 Feb 27 10:41 2016-02-27
+	drwxr-xr-x+    31 jgilbert  staff    1054 May 21 09:44 Isabella 2014 Part 05
+	drwxr-xr-x+    16 jgilbert  staff     544 May 21 09:49 Isabella 2015 Part 06
+	drwxr-xr-x+     5 jgilbert  staff     170 May 29 21:06 New Hampshire Drone May 2016
+	drwxr-xr-x+     3 jgilbert  staff     102 May 21 10:02 Rejects
+	drwxr-xr-x+     8 jgilbert  staff     272 Apr 20  2015 Rejects to move 2015April
+	drwxr-xr-x+   556 jgilbert  staff   18904 May 21 09:48 San Deigo Family 2015
+	drwxr-xr-x+    92 jgilbert  staff    3128 Nov  8  2015 Vermont 2015 Unsorted
+	drwxr-xr-x+    13 jgilbert  staff     442 Jun 15  2014 cambridge
+	drwxr-xr-x+ 10132 jgilbert  staff  344488 Nov 11  2015 iPhone MASTER
+	drwxr-xr-x+     2 jgilbert  staff      68 Aug 17  2013 iphone
+
+
+As you can see
+
+gfs chvolumes
+
+rule #2 - GFS still works even if you blow away its state and still loves you
+
+
+gfs addvol sdfsdfsdf
+gfs checkpoint
+
+gfs verify X, Y
+		# tells you what has changed since last checkpoints
+
+
 
 
 
@@ -26,7 +64,7 @@ In 2016, I have important data scattered over a variety of places because it is 
 - An old laptop that I may or may not have fully moved out from 2013
 - A Win7/10 gaming machine that may or may not have other files
 
-How do you manage all of this stuff? How do you figure out what is a copy, what is a backup, and what is a primay storage for something? How do you make sure you have a DR plan? What do you do if you have tens of terrabytes of files? And what would happen if you main machines died -- how would you reconstruct your digital life scattered over so many places?
+How do you manage all of this stuff? How do you figure out what is a copy, what is a backup, and what is a primary storage for something? How do you make sure you have a DR plan? What do you do if you have tens of terrabytes of files? And what would happen if you main machines died -- how would you reconstruct your digital life scattered over so many places?
 
 There are a few possible soluitons
 
@@ -36,7 +74,7 @@ There are a few possible soluitons
 
 But there is another way. The power of technology!
 
-# Design Critera
+# Design Criteria
 
 Ghost tool's design critera are unusual and probably won't work for everyone. The key principals that have worked well for my own digital packrat nature and govorn the use of this tool
 

@@ -32,7 +32,6 @@ sub debug($);
 
 # Debug control
 
-
 my $icDebug = 0;
 my $tkdebug = 0;
 my $tkflushdebug = 1;
@@ -5474,14 +5473,24 @@ sub learnFromGhost
 
 	CODEPATH( "ghost merging" );
 
+
+	debug "++++++++++++++++++++++++++++++++++ Base Ghost\n";
+	$self->printDebug();
+	debug "++++++++++++++++++++++++++++++++++ Teaching Ghost\n";
+	$g->printDebug();
+	debug "++++++++++++++++++++++++++++++++++ END\n";
+
+
+
+
 	if( defined $g->lastStat() )
 	{
 		my $size = $g->size();
 		my $mode = $g->mode();
-		my $mdate = $g->mdate();
+		my $mtime = $g->mtime();
 		my $statStruct = $g->statStruct();
 
-		$self->learnStat( $g->lastStat(), $size, $mode, $mdate, $statStruct );
+		$self->learnStat( $g->lastStat(), $size, $mtime, $mode, $statStruct );
 	}
 
 	if( defined $g->lastFullHash() )
@@ -5608,7 +5617,8 @@ sub learnStat
 	{
 
 		die "Rule2: same date mismatch A" if defined $size  and defined $self->size()  and $self->size() != $size;
-		die "Rule2: same date mismatch B" if defined $mtime and defined $self->mtime() and $self->mtime() != $mtime;
+		die "Rule2: same date mismatch B: $mtime vs " . $self->mtime()
+			 if defined $mtime and defined $self->mtime() and $self->mtime() != $mtime;
 		die "Rule2: same date mismatch C" if defined $mode  and defined $self->mode()  and $self->mode() ne $mode;
 		# its okay for stat structs to differ slightly
 
