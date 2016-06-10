@@ -85,6 +85,10 @@ my $EDIR = "$ENV{HOME}/.gfsrun/EXEC-$$";
 $main::localFileSystemFSE = undef;
 $main::coreOjxFSE = undef; 
 
+# The global database used everwhere
+
+$main::coreGhostDatabase = undef; 
+
 # Option management
 
 my $OPT_ALL = 0;
@@ -195,12 +199,19 @@ sub verifyWorkingDirectories
 
 sub setupDatabases
 {
-	my $bdb_env = new BerkeleyDB::Env 
-	    -Verbose => 1,
-	    -Home => $DBDIR,
-	    -Flags => DB_CREATE|DB_INIT_MPOOL|DB_INIT_CDB,
-	    -ErrFile => "$DBDIR/Errors-$$",
-	    -ErrPrefix => "GFS";
+	# my $bdb_env = new BerkeleyDB::Env 
+	#     -Verbose => 1,
+	#     -Home => $DBDIR,
+	#     -Flags => DB_CREATE|DB_INIT_MPOOL|DB_INIT_CDB,
+	#     -ErrFile => "$DBDIR/Errors-$$",
+	#     -ErrPrefix => "GFS";
+
+	my $gdb = GhostDatabase->new();
+	$gdb->init();
+
+	$main::coreGhostDatabase = $gdb;
+
+
 }
 
 sub debug ($)
@@ -468,6 +479,15 @@ sub handleVerb
 		return;
 	}
 
+	# Simple harness that confirms we can read and write to the database
+
+	if( $verb eq "dbtest")
+	{
+		doverb_dbtest();
+		return;
+	}
+
+
 	# Interface into the pointer storage and retrieval system
 
 	if( $verb eq "pointer" )
@@ -475,7 +495,6 @@ sub handleVerb
 		doverb_pointer();
 		return;
 	}
-
 
 	# The "store" verb basically pushes the contents to the location specified
 	# typically as a copy operation. Originally intended to store files into
@@ -595,7 +614,29 @@ HERE
 }
 
 
-# doverb_pointer
+
+# doverb_dbtest
+#
+# Simple actions for using the OJX. 
+
+sub doverb_dbtest()
+{
+	my $afn = 'fs:root:testfile1';
+	my $gdb = GhostDatabase->getCore();
+	my $tk = TruthKeeper::get();
+
+	my $g = $tk->obtainGhostForLFN( $afn );
+	$gdb->storeGhostToAFN( $g, $afn );
+
+	my $ng = $gdb->findGhostByAFN( $afn );
+
+	$ng->printDebug();
+
+
+
+}
+
+# doverb_store
 #
 # Simple actions for using the OJX. 
 
@@ -1018,7 +1059,6 @@ sub doverb_rsync
 	$gst->printDebug();
 	print "******************* Post Orphan Pillage\n";
 	$gst->printDebugWithPaths();
-
 
 
 	$gst->handleLocalCopyFromGS( $gst->obtainCurrentStateAsGS() );
@@ -1461,11 +1501,166 @@ sub extractHashComponents
 	return [ $algorithim, $meta, $digest  ];
 }
 
-# This holds everything that represents the core metadata of an object except
-# for size, mtime, and mode.  Anything that should be in lock-step with these
-# fields goes in here. This is really an optimization to prevent new fields
-# from unnecessarily being added into ghosts as our concept of stat-like
-# metadata expands over time.
+sub globalMkPath
+{
+	my $p = shift; 
+	debug "Mkpath: $p";
+	File::Path::make_path( $p );
+
+	$@ and die "Couldn't create dir path: $@";
+    die "Did not find new path" if not -d $p;
+
+}
+
+
+# Encapsulation around a fast disk-based database of ghost information
+
+package GhostDatabase;
+
+use BerkeleyDB;
+use BerkeleyDB::Hash;
+use BerkeleyDB::Btree;
+
+sub new
+{
+	my $class = shift;
+	my $self = {};
+	bless $self, $class;
+	return $self; 
+}
+
+sub debug($)
+{
+	my $a = shift;
+	main::debug( "GDB: " . $a );
+}
+
+
+
+
+sub getCore
+{
+	my $class = shift;
+
+	return $main::coreGhostDatabase;
+}
+
+
+sub init
+{
+	my $self = shift;
+
+	my $DBDIR = "db-test";
+
+	#my $xDBDIR = File::Spec->rel2abs( $DBDIR );
+
+
+	main::globalMkPath( $DBDIR );
+
+#	print "dir = $xDBDIR\n";
+
+	my $bdb_env = new BerkeleyDB::Env 
+	    #-Verbose => 1,
+	    -Home => $DBDIR,
+	    -Flags => DB_CREATE|DB_INIT_MPOOL|DB_INIT_CDB,
+	    -ErrFile => "$DBDIR/Errors-$$",
+	    -ErrPrefix => "GFS"
+	    ;
+
+	die "Environment failed: $!, $BerkeleyDB::Error" unless defined $bdb_env;
+
+	my $afnToGhost = new BerkeleyDB::Btree
+	    -Flags    => DB_CREATE,
+	    -Env => $bdb_env,
+	    -Filename => "afn-to-ghost.db";
+#	    -Filename => "$DBDIR/afn-to-ghost.db";
+	#    -Nelem         => $TOTAL_FILES_EXPECTED,
+	    # -Env => $bdb_env;
+
+	# my $s = $afnToGhost->status();
+
+
+	die "Failed to create afnToGhost: $!, $BerkeleyDB::Error" unless $afnToGhost;
+$afnToGhost->db_put("foo","bar");
+
+
+
+	# $self->{ENV} = $bdb_env;
+	$self->{AFN_TO_GHOST_DB} = $afnToGhost;
+
+}
+
+sub ckStatus
+{
+	my $status = shift;
+
+	die if $status; 
+}
+
+sub findGhostByAFN
+{
+	my $self = shift;
+	my $afn = shift;
+
+	if( exists $self->{AFN_TO_GHOST_CACHE}->{$afn} )
+	{
+		# return $self->{AFN_TO_GHOST_CACHE}->{$afn};
+	}
+
+
+	my $value;
+
+	my $status = $self->{AFN_TO_GHOST_DB}->db_get( $afn, $value );
+	ckStatus( $status );
+
+	if( defined $value )
+	{
+		print "Got from DB: $value\n";
+		my $ghost = Ghost->newFromSerialized( $value );
+		$self->{AFN_TO_GHOST_CACHE}->{$afn} = $ghost; 
+		return $ghost;
+
+	}
+
+
+}
+
+sub storeGhostToAFN
+{
+	my $self = shift;
+	my $g = shift;
+	my $afn = shift;
+
+	my $serialized = $g->serialize();
+
+	my $status = $self->{AFN_TO_GHOST_DB}->db_put( $afn, $serialized );
+	ckStatus( $status );
+
+}
+
+
+
+sub shutdown
+{
+	my $self = shift; 
+	my $status = $self->{AFN_TO_GHOST_DB}->db_close();
+	ckStatus( $status );
+}
+
+	# my $gdb = GhostDatabase->getCore();
+	# my $absGhost = $gdb->findGhostByAFN( $afn );
+	# $absGhost->learnFromGhost( $g );
+
+
+
+
+
+# This holds everything that represents the core stat metadata of an object
+# except for size, mtime, and mode.  Anything that should be in lock-step with
+# these stat fields goes in here. This is really an optimization to prevent
+# new fields from unnecessarily being added into ghosts as our concept of
+# stat-like metadata expands over time. Metadata that is not lock-tied to the
+# stat(3) call should NOT be added here.
 
 
 package StatStruct;
@@ -2213,11 +2408,7 @@ sub internalMkDir
 	my $self = shift;
 	my $p = shift;
 
-	debug "Mkpath: $p";
-	File::Path::make_path( $p );
-
-	$@ and die "Couldn't create dir path: $@";
-    die "Did not find new path" if not -d $p;
+	main::globalMkPath( $p );
 
 	# main::mkdirs( File::Spec->catfile( $self->{ROOTDIR}, "foo" ));
 }
@@ -3232,10 +3423,17 @@ sub flushUniversalStore
 	{
 		 debug( "          -> ". $g->quickDebugString() );
 		my $afn = $g->absoluteLFN();
-		 debug( "             |-> $afn")
+		 debug( "             |->AFN: $afn")
 	}
 
+	# my $gdb = GhostDatabase->getCore();
+	# my $absGhost = $gdb->findGhostByAFN( $afn );
+	# $absGhost->learnFromGhost( $g );
+
 }
+
+
+
 
 
 
