@@ -1552,15 +1552,10 @@ sub init
 
 	my $DBDIR = "db-test";
 
-	#my $xDBDIR = File::Spec->rel2abs( $DBDIR );
-
-
 	main::globalMkPath( $DBDIR );
 
-#	print "dir = $xDBDIR\n";
-
 	my $bdb_env = new BerkeleyDB::Env 
-	    #-Verbose => 1,
+	    -Verbose => 1,
 	    -Home => $DBDIR,
 	    -Flags => DB_CREATE|DB_INIT_MPOOL|DB_INIT_CDB,
 	    -ErrFile => "$DBDIR/Errors-$$",
@@ -1573,21 +1568,12 @@ sub init
 	    -Flags    => DB_CREATE,
 	    -Env => $bdb_env,
 	    -Filename => "afn-to-ghost.db";
-#	    -Filename => "$DBDIR/afn-to-ghost.db";
-	#    -Nelem         => $TOTAL_FILES_EXPECTED,
-	    # -Env => $bdb_env;
-
-	# my $s = $afnToGhost->status();
-
 
 	die "Failed to create afnToGhost: $!, $BerkeleyDB::Error" unless $afnToGhost;
-$afnToGhost->db_put("foo","bar");
 
+	$afnToGhost->db_put("foo","bar");
 
-
-	# $self->{ENV} = $bdb_env;
 	$self->{AFN_TO_GHOST_DB} = $afnToGhost;
-
 }
 
 sub ckStatus
