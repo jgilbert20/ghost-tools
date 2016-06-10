@@ -1324,7 +1324,7 @@ sub assembleLFN
 	my ($handler, $root, $path ) = @_;
 
 	die unless length $handler >0;
-	die unless length $root >0;
+	die unless defined $root;
 	die unless defined $path;
 
 	return join ':', $handler, $root, $path;
@@ -1338,7 +1338,7 @@ sub parseFQLFN
 	my $lfn = shift;
 
 #	my @parts = split( ':', $lfn );
-	my (@parts) = ( $lfn =~ m/^(\w+)\:([^:]+)\:(.*)/ );
+	my (@parts) = ( $lfn =~ m/^(\w+)\:([^:]*)\:(.*)/ );
 
 	my ($handler, $root, $path ) = @parts;
 
@@ -1382,7 +1382,7 @@ sub fullyQualifyLFN
 		# first, lets see if the first thing is one of our keywords
 		# if so, we can usually assume the next part is the root
 
-		if( $c[0] =~ /^fs|snap|remote/ )
+		if( $c[0] =~ /^fs|snap|remote|obj|vol/ )
 		{
 			$handler = $c[0];
 			$root = $c[1];
@@ -1451,27 +1451,23 @@ sub extractHashComponents
 	die unless defined $digest;
 
 	return [ $algorithim, $meta, $digest  ];
-
 }
 
 
-
-
-
-
+# GhostStateTransform Class
+#
 # Holds the state of a transitional mapping between the current state of the
 # world and a desired final state. Provides a lot of tools for manipulating
 # this final state and then ultimately checking that it's performed.
-# 
 #
 # The caller starts by informing the object of the LFNs that should be state
-# managed. GST will hold onto the original LFNs with setOriginal(). The 
+# managed. GST will hold onto the original LFNs with setOriginal(). The
 # default mode is that these original files are presumed to be the initial
 # state. The user can also specify (if they want) a final state.
 #
 # At this point, move() or copy() commands can be used inside the GST. The GST
-# checks to be sure there is coherence between the action and the emerging state
-# of the filesystem. There are functions to automatically generate these
+# checks to be sure there is coherence between the action and the emerging
+# state of the filesystem. There are functions to automatically generate these
 # according to certain rules so that the final state is reached.
 #
 # The GST is done with the currentState = finalState, and a set of work
@@ -1763,15 +1759,6 @@ sub createClearanceMoves
 	}
 }
 
-
-# sub getCurrentPathForGhost
-# {
-# 	my $self = shift;
-# 	my 
-# 	return $self->{_curGhostToPath}->{$ghost};
-# }
-
-
 sub moveLFN
 {
 	my $self = shift;
@@ -1784,8 +1771,6 @@ sub moveLFN
 	die if defined $o; 
 	$self->_setCurrent($to, $g);
 	$self->_setCurrent($from, undef );
-
-
 }
 
 sub copyLFN
@@ -2036,7 +2021,6 @@ use File::Path;
 use base qw(Class::Accessor);
 FilesystemExplorer::ObjectStore->mk_accessors( qw( _rootDir _isInitialized ) );
 
-
 sub debug($)
 {
 	my $a = shift;
@@ -2162,6 +2146,8 @@ sub store
 	my $source = shift;
 	my $target = shift;
 
+	die "store only works for single files" unless $source->isSingleFile();
+
 	# my $hardFilename = $source->getHardFile();
 
 	my $hash = $source->getFullHash();
@@ -2190,6 +2176,7 @@ sub absorb
 {
 	my $self = shift;
 	my $source = shift;
+	die "absorb only works for single files" unless $source->isSingleFile();
 
 	die "absorb not implemented for this FSE type.";
 }
@@ -2597,6 +2584,8 @@ sub store
 	my $sourceGhost = shift;
 	my $target = shift;
 
+	die "store only works for single files" unless $sourceGhost->isSingleFile();
+
 	# this extra overhead forces the file to be a filesystem object and
 	# ensures that we are only working with a ghost that is authoritative.
 
@@ -2678,6 +2667,9 @@ sub moveGhost
 	my $self = shift;
 	my $source = shift;
 	my $target = shift;
+
+	die "store only works for single files" unless $source->isSingleFile();
+	die "store only works for single files" unless $target->isSingleFile();
 
 	my $srcPath = $source->getPath();
 	my $destPath = $target->getPath();
@@ -2820,14 +2812,10 @@ sub shutdown
 	}
 }
 
-# sub getGlobalFSHandler
-# {
-# 	return $main::localFileSystemFSE if defined $main::localFileSystemFSE;
 
-# 	my $r = $main::localFileSystemFSE = new FilesystemExplorer::FS();
-# 	$fseForHandlerRoot{"fs:root"} = $r;
-# 	return $r;
-# }
+
+# This is the core function that dispatches out the FSE handler for the
+# particular path. All handlers are ultimately registered here.
 
 sub getFSEHandlerForGhost
 {
@@ -2843,9 +2831,8 @@ sub getFSEHandlerForGhost
 
 	my $key = $handler . ":" . $root;
 
-	if( $lfn =~ /^snap/m )
+	if( $handler eq 'snap' )
 	{
-		
 		my $class = "FilesystemExplorer::Snapshot";
 
 		## TODO - break this out into a cleaner function
@@ -2862,9 +2849,19 @@ sub getFSEHandlerForGhost
 			$r->rootGhost($g);
 		}
 	}	
+	elsif( $handler eq 'fs' )
+	{
+		die "FS handler for non-root is not supported yet" if $root ne 'root';
+		$r = $main::localFileSystemFSE;
+	}
+	elsif( $handler eq 'obj' )
+	{
+		die "OBJ handler for non-root is not supported yet" if $root ne 'core';
+		$r = $main::coreOjxFSE;
+	}
 	else
 	{
-		$r = $main::localFileSystemFSE;
+		die "Unrecognized LFN handler: [$lfn] ERROR - Handler [$handler] is unknown.";
 	}
 
 	debug "FSEFactory: FSE handler for lfn:[$lfn] --> Class:[$r]" if $fseFactoryDebug;
@@ -4411,6 +4408,15 @@ sub canHaveChildren
 	}
 
 	return 0;
+}
+
+
+sub isSingleFile
+{
+	my $self = shift;
+	my $type = $self->getType();
+	return 1 if $type eq 'f';
+	return 0; 
 }
 
 sub printDebug

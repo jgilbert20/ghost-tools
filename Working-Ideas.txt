@@ -5,9 +5,10 @@ Working Ideas.txt
 - finish implementing learn() [DONE]
 - fix the incorporation logic code. [DONE]
 
-
--ADD TEST CASE FOR COPY (both for overlap, duplicate files, etc)
--ADD TEST CASE FOR MOVE (check no conflcits, etc, etc)
+- core test cases for move/copy inside filesystem fs:
+- ADD TEST CASE FOR COPY (both for overlap, duplicate files, etc)
+- ADD TEST CASE FOR MOVE (check no conflcits, etc, etc)
+- ADD test case pointer get,set
 
 
 
