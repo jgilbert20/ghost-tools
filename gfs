@@ -68,6 +68,8 @@ local $main::readdir_entries = 0;
 local $main::run_files_copied = 0;
 local $main::run_bytes_copied = 0;
 local $main::run_files_moved = 0;
+local $main::run_db_puts = 0;
+local $main::run_db_gets = 0;
 
 # Codepatch tracking
 
@@ -460,6 +462,9 @@ sub handleStats
 	print "Bytes copied    : $main::run_bytes_copied\n";
 	print "Files moved     : $main::run_files_moved\n";
 
+	print "Database puts   : $main::run_db_puts\n";
+	print "Database gets   : $main::run_db_gets\n";
+
 	print "Total Script Time: " . tv_interval( $main::SCRIPT_START_GTOD ) . "\n";	
 }
 
@@ -617,7 +622,7 @@ HERE
 
 # doverb_dbtest
 #
-# Simple actions for using the OJX. 
+# Simple actions for using the ghost database.
 
 sub doverb_dbtest()
 {
@@ -627,7 +632,6 @@ sub doverb_dbtest()
 
 	my $g = $tk->obtainGhostForLFN( $afn );
 	$gdb->storeGhostToAFN( $g, $afn );
-
 	my $ng = $gdb->findGhostByAFN( $afn );
 
 	$ng->printDebug();
@@ -1571,7 +1575,8 @@ sub init
 
 	die "Failed to create afnToGhost: $!, $BerkeleyDB::Error" unless $afnToGhost;
 
-	$afnToGhost->db_put("foo","bar");
+	my $status = $afnToGhost->db_put("foo","bar");
+	ckStatus( $status );
 
 	$self->{AFN_TO_GHOST_DB} = $afnToGhost;
 }
@@ -1580,7 +1585,7 @@ sub ckStatus
 {
 	my $status = shift;
 
-	die if $status; 
+	die "DB error: $!, $BerkeleyDB::Error" if $status; 
 }
 
 sub findGhostByAFN
@@ -1597,7 +1602,8 @@ sub findGhostByAFN
 	my $value;
 
 	my $status = $self->{AFN_TO_GHOST_DB}->db_get( $afn, $value );
-	ckStatus( $status );
+	# ckStatus( $status );
+	$main::run_db_gets ++;
 
 	if( defined $value )
 	{
@@ -1605,9 +1611,17 @@ sub findGhostByAFN
 		my $ghost = Ghost->newFromSerialized( $value );
 		$self->{AFN_TO_GHOST_CACHE}->{$afn} = $ghost; 
 		return $ghost;
-
 	}
 
+	# Guess we have to make it. This call to make_private() is only supposed
+	# to happen in one place inside the TruthKeeper but I think its OK since
+	# i'm not sure I want these things in the TK cache. 
+
+	my $gAFN = Ghost->make_private( $afn );
+
+	$self->{AFN_TO_GHOST_CACHE}->{$afn} = $gAFN;
+
+	return $gAFN; 
 
 }
 
@@ -1619,9 +1633,12 @@ sub storeGhostToAFN
 
 	my $serialized = $g->serialize();
 
+	print "GDB:STORE: $serialized\n";
+
 	my $status = $self->{AFN_TO_GHOST_DB}->db_put( $afn, $serialized );
 	ckStatus( $status );
 
+	$main::run_db_puts ++;
 }
 
 
@@ -3405,17 +3422,20 @@ sub flushUniversalStore
 {
 	my $self = shift;
 	my $ghostForLFN = $self->ghostForLFN();
+
+	my $gdb = GhostDatabase->getCore();
 	foreach my $g (values %$ghostForLFN )
 	{
 		 debug( "          -> ". $g->quickDebugString() );
 		my $afn = $g->absoluteLFN();
-		 debug( "             |->AFN: $afn")
-	}
+		 debug( "             |->AFN: $afn");
+	
 
-	# my $gdb = GhostDatabase->getCore();
-	# my $absGhost = $gdb->findGhostByAFN( $afn );
-	# $absGhost->learnFromGhost( $g );
+		my $absGhost = $gdb->findGhostByAFN( $afn );
+		$absGhost->learnFromGhost( $g );
+ 		$gdb->storeGhostToAFN( $g, $afn );
 
+ 	}
 }
 
 
