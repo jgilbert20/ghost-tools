@@ -11,6 +11,13 @@ Working Ideas.txt
 	- [ ] ADD TEST CASE FOR MOVE (check no conflcits, etc, etc)
 	- [ ] ADD test case pointer get,set
 	- [ ] store and retreive from objectstores
+	
+sdfsdf
+
+	sdfsdf
+	sdfsdf
+
+sdfsdf
 
 
 - [ ] Bug:  "gfs store obj:core:file1 --stats  newfile24" run twice seems to force a spurious hash, suspect its the pass through of sourceVerify. SourceVerify on the pointer seems to force the underlying FS to recheck unnecessarily.
