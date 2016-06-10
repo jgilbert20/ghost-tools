@@ -3,7 +3,7 @@
 use strict;
 use warnings;
 use diagnostics;
-#use diagnostics -verbose;
+use diagnostics -verbose;
 
 use Digest::SHA;
 use File::Basename;
@@ -34,8 +34,9 @@ sub debug($);
 
 my $icDebug = 0;
 my $tkdebug = 0;
-my $tkflushdebug = 1;
+my $tkflushdebug = 0;
 my $gsDebug = 0;
+my $gdbDebug = 0;
 my $duplicateDebug = 0;
 my $granularSerialDebug = 0;    # Instruments the escape/unescape mechanism
 my $serializeDebug = 0;			# Instruments the load/save at ghost level
@@ -96,10 +97,12 @@ $main::coreGhostDatabase = undef;
 
 my $OPT_ALL = 0;
 my $OPT_STATS = 0;
+my $OPT_CP = 0;
 my $OPT_GUARDTIME = undef;
 
 &GetOptions( 'all' => \$OPT_ALL,
 			 'G|guard=s' => \$OPT_GUARDTIME,
+			 'C|cp' => \$OPT_CP,
 			 'stats' => \$OPT_STATS );
 
 
@@ -230,12 +233,14 @@ sub CODEPATH($)
 {	
 	my $p = shift; 
 	$codepathCount{$p}++;
-	print( "CODEPATH: $p\n" );
+	print( "CODEPATH: $p\n" ) if $OPT_CP;
 }
 
 sub reportCodepaths
 {
 	return if( not keys %codepathCount > 0 );
+
+	return if not $OPT_CP;
 
 	print "--\n";
 	print "Codepaths:\n";
@@ -271,9 +276,7 @@ sub gfs_escape($)
 
 	$v =~ s/([^\x20\x21\x24\x25-\x39\x41-\x5b\x5d-\x7e])/"\\x(" . unpack('H2', $1) . ")" /gse;
 
-
 	return $v;
-
 }
 
 sub gfs_unescape($)
@@ -282,17 +285,13 @@ sub gfs_unescape($)
 
 	return undef if( $v eq "_");
 
-
 	$v =~ s/\\x\(([\da-fA-F]+)\)/ pack('H2', $1) /gse;
-
 
 	$v =~ s/\\c/:/gs;
 	$v =~ s/\\a/\@/gs;
 	$v =~ s/\\p/\#/gs;
 	$v =~ s/\\n/\n/gs;
 	$v =~ s/\\l/\_/gs;
-
-
 
 	return $v;
 }
@@ -493,6 +492,14 @@ sub handleVerb
 		return;
 	}
 
+
+	if( $verb eq "mkvol" )
+	{
+		doverb_voladd();
+		return;
+	}
+
+
 	if( $verb eq "checksum" )
 	{
 		doverb_checksum();
@@ -617,6 +624,29 @@ sub doverb_store()
 
 	$targetGhost->store( $sourceGhost );
 }
+
+
+
+
+
+sub doverb_voladd()
+{
+	my $origArg = @ARGV;
+
+	my $name = shift @ARGV;
+
+	my $tk = TruthKeeper::get();
+
+	my ($targetGS, $targetStash) = $tk->makeGhostsFromCommandLine( @ARGV );
+
+	my( $targetUserFN, $targetFqlfn, $targetGhost ) = @{$targetStash->[0]};
+
+
+
+
+}
+
+
 
 
 
@@ -1563,7 +1593,7 @@ sub findGhostByAFN
 
 	if( defined $value )
 	{
-		print "Got from DB: $value\n";
+		print "Got from DB: $value\n" if $gdbDebug;
 		my $ghost = Ghost->newFromSerialized( $value );
 		$self->{AFN_TO_GHOST_CACHE}->{$afn} = $ghost; 
 		return $ghost;
@@ -1589,7 +1619,7 @@ sub storeGhostToAFN
 
 	my $serialized = $g->serialize();
 
-	print "GDB:STORE: $serialized\n";
+	print "GDB:STORE: $serialized\n" if $gdbDebug;
 
 	my $status = $self->{AFN_TO_GHOST_DB}->db_put( $afn, $serialized );
 	ckStatus( $status );
@@ -2295,6 +2325,65 @@ sub printWorklist
 
 
 	}
+}
+
+package FilesystemExplorer::Volume;
+
+# use File::Basename;
+# use File::Spec; 
+# use File::Spec::Functions;
+# use File::Path; 
+use base qw(Class::Accessor);
+FilesystemExplorer::ObjectStore->mk_accessors( qw( _rootDir _isInitialized ) );
+
+sub debug($)
+{
+	my $a = shift;
+	main::debug( "fse/OJX: " . $a );
+}
+
+sub new
+{
+	my $class = shift;
+	my $root = shift;
+	my $self = $class->SUPER::new();
+
+	die unless defined $root; 
+	$self->_rootDir( $root );
+	$self->_isInitialized( 0 );
+
+	return $self;
+}
+
+sub finalize
+{
+	my $self = shift;
+
+	# in practice, this is not always called. It may not have entered the FSE
+	# cache. i'm not sure yet if that is an issue or not.
+
+	debug "Shutdown $self.. - no action taken." if $fseOjxDebug;
+}
+
+sub initialize
+{
+	my $self = shift;
+
+	$self->{ROOTDIR} = $self->_rootDir();
+	die unless -w $self->{ROOTDIR};
+
+	$self->_isInitialized(1);
+}
+
+sub setUpRepository
+{
+	my $self = shift;
+
+	$self->internalMkDir( catfile( $self->_rootDir() ));
+	$self->internalMkDir( catfile( $self->_rootDir(), 'ptr' ));
+	$self->internalMkDir( catfile( $self->_rootDir(), 'obj' ));
+
+	$self->initialize();
 }
 
 
@@ -3382,10 +3471,10 @@ sub flushUniversalStore
 	my $gdb = GhostDatabase->getCore();
 	foreach my $g (values %$ghostForLFN )
 	{
-		 debug( "          -> ". $g->quickDebugString() );
-		my $afn = $g->absoluteLFN();
-		 debug( "             |->AFN: $afn");
-	
+		my $afn = $g->absoluteLFN();	
+
+		debug( "          -> ". $g->quickDebugString() ) if $tkflushdebug;
+		debug( "             |->AFN: $afn") if $tkflushdebug;
 
 		my $absGhost = $gdb->findGhostByAFN( $afn );
 		$absGhost->learnFromGhost( $g );
