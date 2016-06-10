@@ -1461,6 +1461,128 @@ sub extractHashComponents
 	return [ $algorithim, $meta, $digest  ];
 }
 
+# This holds everything that represents the core metadata of an object except
+# for size, mtime, and mode.  Anything that should be in lock-step with these
+# fields goes in here. This is really an optimization to prevent new fields
+# from unnecessarily being added into ghosts as our concept of stat-like
+# metadata expands over time.
+
+
+package StatStruct;
+
+sub new
+{
+	my $class = shift;
+	my $self = [];
+	bless $self, $class;
+	return $self; 
+}
+
+sub debug($)
+{
+	my $a = shift;
+	main::debug( "statStruct: " . $a );
+}
+
+sub loadFromPOSIXstat
+{
+	my $self = shift;
+	my $arr = shift;
+
+	# ($dev,$ino,$mode,$nlink,$uid,$gid,$rdev,$size,$atime,$mtime,$ctime,$blksize,$blocks)
+
+	print "StatStruct: Loaded :" . (join ',', @$arr ) . "\n";
+
+	# drop 2,7,9
+
+	splice( @$arr, 2, 1 );
+	splice( @$arr, 6, 1 );
+	splice( @$arr, 7, 1 );
+
+	print "StatStruct: Trimed to :" . (join ',', @$arr ) . "\n";
+
+	$self->[0] = $arr;
+
+	return $self;
+}
+
+sub serialize
+{
+	my $self = shift; 
+
+	my $str = join ',', @{$self->[0]};
+
+	debug( "Serialized to: $str");
+
+	return $str;
+}
+
+sub deserialize
+{
+	my $self = shift; 
+	my $str = shift;
+
+	die unless defined $str;
+	
+	debug( "Deserialized from: [$str]");
+
+	my @arr = split ',', $str;
+	
+	$self->[0] = \@arr;
+
+	return $str;
+}
+
+sub isSameAs
+{
+	my $self = shift;
+	my $other = shift;
+
+	die unless ref $self;
+	die unless ref $other;
+
+	my $result = 0;
+
+	if( 0 ) # $self == $other)
+	{
+		$result = 1;
+	}
+	else
+	{
+		$result = ($self->serialize() eq $other->serialize() ) ? 1 : 0;
+	}
+
+	debug "isSameAs: $self vs $other = $result\n";
+
+	return $result; 
+}
+
+sub hasMeaningfullyChanged
+{
+	my $self = shift;
+	my $other = shift;
+
+	# ($dev,$ino,$nlink,$uid,$gid,$rdev,$atime,$ctime,$blksize,$blocks)
+
+	return 1 if $self->getInode() != $other->getInode();
+	return 1 if $self->getCtime() != $other->getCtime();
+
+	return 0;
+}
+
+
+sub getInode
+{
+	my $self = shift;
+	return $self->[0]->[1];
+}
+
+sub getCtime
+{
+	my $self = shift;
+	return $self->[0]->[7];
+}
+
 
 # GhostStateTransform Class
 #
@@ -1481,6 +1603,8 @@ sub extractHashComponents
 # The GST is done with the currentState = finalState, and a set of work
 # instructions are complete. CurrentState and finalStates typically are
 # invented LFNs.
+
+
 
 
 
@@ -2641,7 +2765,10 @@ sub getStatSourceVerify
 	# die "Ghost [$path] failed stat - probably doesn't exist: $! ($@)" ;
 	my ($dev,$ino,$mode,$nlink,$uid,$gid,$rdev,$size,$atime,$mtime,$ctime,$blksize,$blocks) = @statfields; 
 	
-	return ($size, $mtime, $mode);
+	my $statStruct = new StatStruct;
+	$statStruct->loadFromPOSIXstat( \@statfields );
+
+	return ($size, $mtime, $mode, $statStruct );
 }
 
 
@@ -4292,7 +4419,7 @@ use Cwd qw(abs_path); # best way to get these
 
 # GHOST_NEW_FIELD: Place 4/4 where you add new fields to ghosts
 
-Ghost->mk_accessors( qw(lfn lastFullHash size mode fullHash 
+Ghost->mk_accessors( qw(lfn lastFullHash size mode fullHash statStruct
 	dirty isTKversion lastDirScan lastStat mtime lastEnumerated firstStat fileStatus
 	 children _immutable _debugID) );
 
@@ -4360,6 +4487,7 @@ sub pullValuesFromGhost
 	$self->firstStat( 		$target->firstStat() );
 	$self->fileStatus( 		$target->fileStatus() );
 	$self->mtime( 		$target->mtime() );
+	$self->statStruct( 		$target->statStruct()->copy() );
 
 	$self->dirty( 0 );
 	$self->isTKversion( 0 );
@@ -4400,7 +4528,6 @@ sub newFromSerialized($)
 
 	debug "Post-GUS:" . join '|', map { defined $_ ? $_ : "undef" } @a if $granularSerialDebug;	
 
-
 	my $serialLFN = shift @a;
 
 	if( defined $options{'treeRoot'} )
@@ -4436,6 +4563,19 @@ sub newFromSerialized($)
 	$self->firstStat( shift @a );
 	$self->fileStatus( shift @a );
 	$self->mtime( shift @a );
+
+	my $statStructSerialized = shift @a; 
+	if( defined $statStructSerialized )
+	{
+		my $statStruct = StatStruct->new();
+		$statStruct->deserialize( $statStructSerialized );
+		$self->statStruct( $statStruct );
+	}
+	else
+	{
+		$self->statStruct( undef );
+	}
+
 
 	$self->dirty( 0 );
 	$self->isTKversion( 0 );
@@ -4624,6 +4764,7 @@ sub makeDebugString
 	my $firstStat 		= defined( $self->firstStat() ) 		? $self->firstStat() : "undef";
 	my $fileStatus 		= defined( $self->fileStatus() ) 		? $self->fileStatus() : "undef";
 	my $immutable 		= defined( $self->_immutable() ) 		? $self->_immutable() : "undef";
+	my $statStruct 		= defined( $self->statStruct() ) 		? $self->statStruct()->serialize() : "undef";
 
 	# not technically a field but we should include this
 
@@ -4634,7 +4775,7 @@ my $debugID = $self->_debugID();
 
 	return "ghostDump($debugID): lfn:[$lfn] type:[$type] mode:[$mode] l_FH:[$lastFullHash] ".
 	"full:[$fullHash] ldirscan:[$lastDirScan] l_stat:[$lastStat] size:[$size]".
-	" mtime:[$mtime] immutable[$immutable]";
+	" mtime:[$mtime] immutable[$immutable] statStruct:[$statStruct]";
 
 
 }
@@ -4730,6 +4871,12 @@ sub serialize()
 		$lfn = main::rewriteLFNPathToBasename( $lfn )
 	}
 
+	my $statStructSerialized = undef; 
+	if( defined $self->statStruct() )
+	{
+		$statStructSerialized = $self->statStruct()->serialize();
+	}
+
 	# GHOST_NEW_FIELD: Place 3/4 where you add new fields to ghosts
 
 	my @s = ( $lfn, 
@@ -4742,7 +4889,8 @@ sub serialize()
 			  $self->lastEnumerated(),
 			  $self->firstStat(),
 			  $self->fileStatus(),
-			  $self->mtime()
+			  $self->mtime(),
+			  $statStructSerialized
 			  );
 
 	debug "PRE-GFSE:" . join '|', map { defined $_ ? $_ : "undef" } @s if $granularSerialDebug;	
@@ -5127,14 +5275,15 @@ sub learnFromGhost
 		my $size = $g->size();
 		my $mode = $g->mode();
 		my $mdate = $g->mdate();
+		my $statStruct = $g->statStruct();
 
-		$self->learnStat( $g->lastStat(), $size, $mode, $mdate );
+		$self->learnStat( $g->lastStat(), $size, $mode, $mdate, $statStruct );
 	}
 
 	if( defined $g->lastFullHash() )
 	{
 		my $hash = $g->fullHash();
-		$self->learnStat( $g->lastFullHash(), $hash );
+		$self->learnFullHash( $g->lastFullHash(), $hash );
 	}
 
 }
@@ -5216,15 +5365,18 @@ sub learnStat
 
 	my $size = shift;
 	my $mtime = shift;
-	my $mode = shift; 
+	my $mode = shift;
+	my $statStruct = shift;
 
+	die "invalid call to learnStat" if defined $statStruct and not ref $statStruct;
 
 	my $q = $self->quickDebugString();
 
 	my $__size = defined $size ? $size : "<undef>";
 	my $__mtime = defined $mtime ? $mtime : "<undef>";
 	my $__mode = defined $mode ? $mode : "<undef>";
-	print "LEARN [$__size], [$__mtime], [$__mode] for $q\n";
+	my $__statStruct = defined $statStruct ? $statStruct : "<undef>";
+	print "LEARN [$__size], [$__mtime], [$__mode] [$__statStruct] for $q\n";
 	$self->printDebug();
 
 	# RULE3: ALl stat informaiton must travel together. 
@@ -5254,13 +5406,13 @@ sub learnStat
 		die "Rule2: same date mismatch A" if defined $size  and defined $self->size()  and $self->size() != $size;
 		die "Rule2: same date mismatch B" if defined $mtime and defined $self->mtime() and $self->mtime() != $mtime;
 		die "Rule2: same date mismatch C" if defined $mode  and defined $self->mode()  and $self->mode() ne $mode;
-
-		die "Rule2: same date mismatch D" if defined $size  and not defined $self->size(); 
-		die "Rule2: same date mismatch E" if defined $mtime and not defined $self->mtime();
-		die "Rule2: same date mismatch F" if defined $mode  and not defined $self->mode();
+		# its okay for stat structs to differ slightly
 
 
-
+		die "Rule2: same date mismatch E" if defined $size  and not defined $self->size(); 
+		die "Rule2: same date mismatch F" if defined $mtime and not defined $self->mtime();
+		die "Rule2: same date mismatch G" if defined $mode  and not defined $self->mode();
+		die "Rule2: same date mismatch H" if defined $statStruct  and not defined $self->statStruct();
 	}
 
 	# RULE #6: Error stats revoke all other fields
@@ -5295,10 +5447,11 @@ sub learnStat
 	my $anythingHasChanged = 0;
 
 	if( 
-		(not defined $self->lastStat()) or 
-		(not defined $self->size()) or 
-		(not defined $self->mtime()) or 
-		(not defined $self->mode()) 
+		(not defined $self->lastStat()   ) or 
+		(not defined $self->size()       ) or 
+		(not defined $self->mtime()      ) or 
+		(not defined $self->mode()       ) or
+		(not defined $self->statStruct() )
 		)
 	{
 		$anythingHasChanged = 1; 
@@ -5308,11 +5461,13 @@ sub learnStat
 		$anythingHasChanged = 1 if( ( not defined $size  ) and ( defined $self->size()  ) );
 		$anythingHasChanged = 1 if( ( not defined $mtime ) and ( defined $self->mtime() ) );
 		$anythingHasChanged = 1 if( ( not defined $mode  ) and ( defined $self->mode()  ) );
+		$anythingHasChanged = 1 if( ( not defined $statStruct  ) and ( defined $self->statStruct()  ) );
 
 
 		$anythingHasChanged = 1 if( defined $size and $self->size() != $size );
 		$anythingHasChanged = 1 if( defined $mtime and $self->mtime() != $mtime );
 		$anythingHasChanged = 1 if( defined $mode and $self->mode() ne $mode );
+		$anythingHasChanged = 1 if( defined $statStruct and $self->statStruct()->hasMeaningfullyChanged( $statStruct ) );
 	}
 
 	if( (defined $self->lastStat()) and ($time > $self->lastStat() ))
@@ -5323,6 +5478,7 @@ sub learnStat
 	$self->size($size);
 	$self->mtime($mtime);
 	$self->mode($mode);
+	$self->statStruct($statStruct);
 
 	$self->lastStat( $time );
 
@@ -5469,9 +5625,9 @@ sub getStatSourceVerify
 	my $self = shift;
 	my $time = shift; 
 
-	my ($size, $mtime, $mode) = $self->getFSE()->getStatSourceVerify( $self, $time );
+	my ($size, $mtime, $mode, $statStruct) = $self->getFSE()->getStatSourceVerify( $self, $time );
  
-	$self->learnStat( $time, $size, $mtime, $mode );
+	$self->learnStat( $time, $size, $mtime, $mode, $statStruct );
 
 	return ( $size, $mtime, $mode );
 }
