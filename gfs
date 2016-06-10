@@ -65,6 +65,9 @@ local $main::run_descriptors_read = 0;
 local $main::run_descriptors_write = 0;
 local $main::readdir_invokes = 0;
 local $main::readdir_entries = 0;
+local $main::run_files_copied = 0;
+local $main::run_bytes_copied = 0;
+local $main::run_files_moved = 0;
 
 # Codepatch tracking
 
@@ -441,6 +444,10 @@ sub handleStats
 	print "Local .gfs writs: $main::run_descriptors_write\n";
 	print "Readdir invokes : $main::readdir_invokes\n";
 	print "Readdir entries : $main::readdir_entries\n";
+
+	print "Files copied    : $main::run_files_copied\n";
+	print "Bytes copied    : $main::run_bytes_copied\n";
+	print "Files moved     : $main::run_files_moved\n";
 
 	print "Total Script Time: " . tv_interval( $main::SCRIPT_START_GTOD ) . "\n";	
 }
@@ -2112,7 +2119,8 @@ sub setPointer
 	die "setPointer tried to replace directory with a file" if( -d $targetPath );
 
 	# Super schitzophrenic - shou;dn't this ALL be done via the ghost API?
-	my $dirPath = basename $targetPath;
+	my $dirPath = dirname $targetPath;
+	debug( "Checking readibility of [$dirPath]");
 	if( ! -e $dirPath )
 	{
 		$self->internalMkDir( $dirPath );
@@ -2214,7 +2222,8 @@ sub absorb
 }
 
 
-
+# Core 
+#
 # Forces the ghost, if it exists, to return an absolute file on the local
 # filesystem. This should ALWAYS return a local path (can be a temp file.) the
 # caller must promise to not tamper with this in any way other than a read.
@@ -2222,13 +2231,77 @@ sub absorb
 sub getReadonlyHardFile
 {
 	my $self = shift;
+	my $g = shift;
 
-
-
-
-	die;
+	return $self->getHardFilePathForGhost( $g );
 }
 
+# give a OBJ: style ghost and get a ghost pointing to the underlying file
+
+sub getHardFileGhost
+{
+	my $self = shift;
+	my $g = shift;
+
+			my $tk = TruthKeeper::get();
+			my $targetLFN = $self->getHardFileFQLFNforGhost( $g );
+	my $targetGhost = $tk->obtainGhostForLFN($targetLFN);
+	return $targetGhost; 
+}
+
+
+# Give a OBJ: type ghost and get the hard file local filename corresponding to it
+
+sub getHardFileFQLFNforGhost
+{
+	my $self = shift;
+	my $g = shift;
+
+
+	my $finalPath = $self->getHardFilePathForGhost( $g );
+	my $targetLFN = main::assembleLFN( "fs", "root", $finalPath);
+
+	return $targetLFN;
+}
+
+sub getHardFilePathForGhost
+{
+	my $self = shift;
+	my $g = shift;
+
+	my $path = $g->getPath();
+	my $pointerName = catfile( "adhoc", $path ) . ".ptr";
+	my $hash = $self->getPointer( $pointerName );
+	my $justHash = main::extractHashComponents( $hash )->[2];
+	my $targetPath = catfile( $self->{OBJ_DIR}, $justHash );
+	my $finalPath = catfile( $targetPath, $justHash );
+
+	return $finalPath; 
+
+}
+
+
+
+sub getStatSourceVerify
+{
+	my $self = shift;
+	my $g = shift;
+	my $time = shift;
+	
+	my $hardfile = $self->getHardFileGhost( $g );
+	return( $hardfile->getStatSourceVerify( $time ) );
+}
+
+
+sub getFullHashSourceVerify
+{
+	my $self = shift;
+	my $g = shift;
+	my $time = shift;
+	
+	my $hardfile = $self->getHardFileGhost( $g );
+	return( $hardfile->getFullHashSourceVerify( $time ) );
+}
 
 
 
@@ -2508,6 +2581,7 @@ sub getFullHashSourceVerify
 {
 	my $self = shift;
 	my $g = shift;
+	my $time = shift; 
 
 	my $path = $g->getPath();
 
@@ -2535,6 +2609,8 @@ sub getStatSourceVerify
 {
 	my $self = shift;
 	my $g = shift;
+	my $time = shift;
+
 
 	my $path = $g->getPath();
 
@@ -2660,6 +2736,11 @@ sub store
 
 	print "store(): Invoking full copy [$srcPath]->[$finalPath]\n";
 
+	my $sourceSize = $sourceGhost->getSize();
+
+	 $main::run_files_copied++;
+	 $main::run_bytes_copied += $sourceSize;
+
 	my $r = copy( $srcPath, $finalPath );
 
 	if( !$r )
@@ -2672,7 +2753,7 @@ sub store
 	# Perform a quick verification that the file sizes match. Not strictly
 	# needed. The caller can force more verification if it wants.
 
-	if( $finalTarget->getSize() != $sourceGhost->getSize() )
+	if( $finalTarget->getSize() != $sourceSize )
 	{
 		die "Assert: My copy succeeded but the getSize() no longer matches - what gives?";
 	}
@@ -2716,7 +2797,7 @@ sub moveGhost
 
 	my $originalSize = $source->getSize( time() );
 
-
+	$main::run_files_moved++;
 	my $r = move( $srcPath, $destPath );
 
 	if( !$r )
@@ -4813,6 +4894,7 @@ sub hasAcceptableStat
 
 # TODO factor out hasAcceptable patttern into "bringStatToDateIfNeeded()"
 
+
 sub getMode
 {
 	my $self = shift;
@@ -4827,6 +4909,7 @@ sub getMode
 		return $self->mode();
 	}	
 }
+
 
 sub getSize
 {
@@ -5096,7 +5179,7 @@ sub learnStat
 	die if $self->isImmutable();
 
 	die "learnStat() did not get a time argument" unless defined $time;
-	die "incoming information newer than current time" if $time > time();
+	die "incoming information newer than current time ($time)" if $time > time();
 
 	my $size = shift;
 	my $mtime = shift;
@@ -5230,7 +5313,7 @@ sub learnFullHash
 	die unless defined $time;
 	die unless defined $hash;
 
-	die "incoming information newer than current time" if $time > time();
+	die "incoming information newer than current time ($time)" if $time > time();
 
 	$self->verifyGhostIsMutable();
 
@@ -5341,7 +5424,7 @@ sub getFullHashSourceVerify
 
 	die "Full hash not implemented for directories" if( $self->canHaveChildren() );
 
-	my $fullhash = $self->getFSE()->getFullHashSourceVerify( $self );
+	my $fullhash = $self->getFSE()->getFullHashSourceVerify( $self, $time );
  	$self->learnFullHash( $time, $fullhash );
 
 	return $fullhash;
@@ -5353,11 +5436,11 @@ sub getStatSourceVerify
 	my $self = shift;
 	my $time = shift; 
 
-	my ($size, $mtime, $mode) = $self->getFSE()->getStatSourceVerify( $self );
+	my ($size, $mtime, $mode) = $self->getFSE()->getStatSourceVerify( $self, $time );
  
 	$self->learnStat( $time, $size, $mtime, $mode );
 
-	return undef;
+	return ( $size, $mtime, $mode );
 }
 
 ###

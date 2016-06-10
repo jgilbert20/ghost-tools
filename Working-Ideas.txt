@@ -11,7 +11,7 @@ Working Ideas.txt
 - ADD test case pointer get,set
 
 
-
+- Bug:  "gfs store obj:core:file1 --stats  newfile24" run twice seems to force a spurious hash, suspect its the pass through of sourceVerify. SourceVerify on the pointer seems to force the underlying FS to recheck unnecessarily.
 
 - IMPORTANT BUG CHECK - a cp -r on a directory with a .gfs file seemed to generate really strange errors on the first run.
 - compare has an annoying bug - not really matching paths for the top most node properly. (Everything else seems to work.)
