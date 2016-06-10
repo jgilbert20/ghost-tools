@@ -1,7 +1,23 @@
 
+# About this file
+
+This is a working set of design concepts. There is a retired, scratch version of this file also around. But everything in the code that has been cleaned up as of June 10, 2016 is here.
+
+
+
+
+
+
+
 # Universality and metadata
 
+## Stat meta-data
+Status: Implemented
+
 Less common ghost-level information i think has two different forms. The first is things that are part of the stat. This would include all of the stat variables, plus things that are right off the filesystem, such as the place a symbolic link is pointed. But the rule for this type of information is that it always is in lock step with the stat date. Lets call this the statMisc field. It should follow all places that the mtime, size and mode are carried. We can work on getting the data in their later but I'm worried that as code complexity rises, the number of places in the code that can "ignore" this stat information is rising too.
+
+## Attributes
+Status: Not yet implemented
 
 The second we can imagine is arbitrary n/v pairs that get passed along with a ghost. For instance, there might be a pointer to a hash that contains an ACL. Or a pointer to the result of a compression of a file. In these cases, a name is associated with a value and a assignment date. And the merger operation should be pretty simple.
 
@@ -462,6 +478,204 @@ RULE #6: A dead stat (ERR) always revokes the hash and blanks out size and XXX
 
 
 
+
+
+# Snapshot Design Decisions
+
+STATUS: All of this is current, or at least consistent with implementation
+
+# AFNs and snapshots
+
+technically the B file's only LFN inside the invocation is: 
+
+    snap:testdir/snapshot.gfssnap/b
+
+what is the AFN? One (Wrong) idea:
+
+    /home/jgilbert/testdir/snapshot.gfssnap/b
+
+but what if snapshot.gifssnap moves?
+
+The funny thing in the case of a snapshot is that snapshot.gfssnap is 
+probably not going to change.
+
+So you'd be good actually saying the AFN is: 
+
+    snap:423fe15a4757767bb4d2a04702f8572d3421179d/a/b
+
+
+If the snapshot changes, you'd automatically get "revocation" of those AFNs
+
+
+
+# Interesting hanging chad around ghosts
+
+say you want to write a snapshot to a new place. you get a ghost for
+[snap:snapshot-5419.out:] and get the FSE to write to it. You store some
+objects in it, and finalize the FSE. But there is a significant gap - what is
+the purpose of [snap:snapshot-5419.out:]? Does it need to be finalized?
+
+it is technically a valid path. its a valid thing in the world. its the head
+position of a snapshot. its even been read and written to a few times. the
+ghost represents a real thing, and you could potentially even want to do an LS
+on it later. So who is supposed to write it to disk?
+
+I decided to handle this by a finalize() pass on the FSE. But its not clear how this interacts with the dirty flag so the hanging chad remains.
+
+# root renames on snapshot loads
+
+a strange corner case - you write out a snapshot, a bunch of ghosts.  what is
+the proper root of the snapshot file? Its actually not clear what that should
+be. for instance:
+
+    gfs snapshot foo bar -> snapshot123.snap
+
+    gfs ls snap:snapshot123.snap:foo snap:snapshot123.snap:bar
+
+    cp snapshot123.snap jeremy.snap
+
+    gfs ls snap:jeremy.snap:foo
+
+Technically, the root here was just a transitory thing. Its basically an local
+relative filename. 
+
+Design decision: The written version will always just be "root". but on LOADs, we'll rewrite the LFNs/root so they make sense to the user.
+
+# Dealing with the obnoxiousness of absolute paths and snapshots
+
+We decided earlier that the permanent root of a snapshot is the hash of the file that stores it. This seems to work well for git(1). But what happens with the framework wants an absolute LFN before its written? Current design decision is this is not allowed.
+
+this is a pretty wide ranging issue, turns out. Say I invoke the following
+
+    gfs ls snap:snapshot-5803.out:quxx
+
+Technically, "snap:snapshot-5803.out:quxx" will trigger creation of a FSE all of these ghosts are sort of not real.
+
+Ghosts that are not real should never be attempted to convert to AFNs? Is that true? they certainly shouldn't find their way into a persistent store. If that were true, the truthkeeper has to learns that it is actualized, and thats when it does and AFN test.
+
+Decision: Snapshot ghosts are by definition immutable(). But they can have AFNs.
+
+
+
+
+# About LFNS
+
+STATUS: All of this is current
+
+LFN - local file name - whatever is colloquial to the USER to
+describe something. LFNs can never presume to be universally unique between
+invocations of GFS because they may be relative paths or tags/references may
+change. But the user's maximal intent must be captured in the LFN.
+
+    for instance fs:a depends on your CWD
+    for a different PWD, fs:a could refer to a different file
+
+However, there are many different handlers.
+
+    /foo
+    fs:/foo
+    snap:foo.snap:file123
+    remote:jgilbert@auspice.net:file123
+
+In this case, the "LFN" is a composite of a handler, a root and a path. The
+user may provide some or all of these peices on the command line. We need to
+be be able to intelligently construct the rest.
+
+LFN's can be fullqualified, which means fully specify the missing strings and
+to canonicalized the path.
+
+To determine if two LFNs are the same inside one running instance of GFS, the
+only way to do it is to canonicalize that path portion both to remove . and
+../ etc. Then you need you make sure to attach the ROOT and the HANDLER.
+
+Across instances, the only way is to convert to an AFN (absolute file name)
+The AFN is a unique permanent name for the location
+
+FQAFN - fully qualified AFN: handler:root:afn
+FQLFN - fully qualified LFN: handler:root:path (can be local)
+
+Snapshots will generally represent LFNs, typically from the point of view of the PWD but their power is that they should NOT be foreced to contain AFNs - the snapshot could be reconstructed anywhere and we'll leave it to the user to either feed a snapshot the AFNs or the LFNS.
+
+In the nested case, assume the following data is stored
+
+    snap:testdir/snapshot.gfssnap:
+    snap:testdir/snapshot.gfssnap:a
+    snap:testdir/snapshot.gfssnap:b
+
+in this case, the LFN of the snapshot file itself is testdir/snapshot.gfssnap
+
+So LFNs are designed to hold three peices of information, and together forms a unique namespace.
+
+# What is truth? What is the single source of truth?
+
+STATUS: All of this is current
+
+Ghost is a description of the potential state of a file.
+
+Currently, contracts look like this
+
+- No obligation for a specific ghost to be up to date
+- Only the ghosts from the TK are guarnteed to be single source of truth
+- Ghosts find their FSE by looking at their handler value
+- Ghosts can be in any number of ghost stores
+- TruthKeeper should make all ghosts that are intended to hold present state
+- The only reason TK is not used to make ghosts is in cases where you are deliverably
+- TK holds all ghost pointers and knows if they are dirty or not
+- Generally, the FSE doesn't hold links back to ghosts except in cases where a ghost is a root (like a snapshot)
+
+
+# Command Invocation Ideas
+
+all of this is in the idea phase
+
+
+    reconstruct-test A B C
+      makes sure that everything in A and B be reconstructed in target C
+      as long as there is at least one valid duplicate, we move on
+              first, best approach is to look for hashed AFN
+                     ask FSE if it "owns" that file
+                     then call "hasIdenticalContent()"
+                  if that doens't work, check the cache of sizes
+                      call hasIdenticalContent
+                     as soon as one returns "hasIdenticalContent", we return
+                  finally, force the full cache of sizes
+
+    copy-delta A B C
+       Anything in A and B that is not in C is going to get copied over 
+       into a "delta" directory
+
+    rsync A B C
+       C is reconfigured to look exactly like A and B. Files that no longer
+       belong can be identified and removed as an option.
+       this works by MOVING files around inside of C. depending on how
+       slashes are used, we either merge or replace (rsync ffo/ behavior)
+       $fse->move( a, b );
+              the move tool has to move the ghosts too
+              and that may invalidate certain descriptor files
+
+
+    gfs snapshot .
+    generates a snapshot file
+    gfs condense /etc /var snap:barf.gs
+    gfs condense snap:barf.gs snap:arf.gs snap:new.gs
+    will reconstruct using known afns, keeps orphans
+    gfs reconstruct --test snap:barf.gs foo/
+    150 files reconstructed, 4 not located (see gfsrun.3234.orphaned.txt for details)
+
+     make symlinks rather than copy files
+     gfs reconstruct --symlink 
+     uses xxx and yyy as hash sources
+     gfs reconstruct --test snap:barf.gs foo/ --source=xxx --source=yyyy
+     verify all descriptors in /etc
+     gfs verify /etc
+     
+     creates a GFS entity that can be pushed to
+     gfs gfs create /etc gfs:foo.gfs
+     gfs gfs push /etc gfs:foo.gfs
+     makes sure that /etc can be reconstructed by gfs:foo.gfs
+
+     gfs gfs add gfs:goo.
+     a .gfs file can contain storage and 
 
 
 
