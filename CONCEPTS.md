@@ -58,6 +58,8 @@ Then during cleanup of a run (or even at periodic intervals), we can always comp
 
 # Aliases and volumes
 
+*Update*: I decided not to handle volumes with aliases. There seem to be better ways to manage volumes using this overlay concept, at least for the time being. 
+
 We need a definitive way to store volume data.
 
     @volume/a/b/c
@@ -150,16 +152,14 @@ filesystem ghosts. Or maybe its better thought of as a "retreival", rather
 than a dereference. If it were a remote file, we'd want to pull it down when
 the dereference occurs.
 
-SO dereferencing/retreivals are not normally done. The only time you really do
-them is when you copy something or have to make the file.
+SO dereferencing/retreivals are not normally done. The only time you really do them is when you copy something or have to make the file.
 
     gfs copy vol:23432:test.txt bar
     # this will dereference vol:23432:test.txt -> to a ghost on disk
     that is then handled like any other file. Dereferencing could be quite 
     expensive in the case of a file retrieval.
 
-That implies that a bucket manager like S3 needs to maintain a map of what is
-stored at its location and where a copy exists internally when its pulled down.
+That implies that a bucket manager like S3 needs to maintain a map of what is stored at its location and where a copy exists internally when its pulled down.
 
 This "dereferencing" needs to be maximially lazy - you'd never do it unless you had to.
 
@@ -170,14 +170,9 @@ An ls operation wouldn't actually derference.
 
 asking one of these things to verify itself is pointless. They are immutable. 
 
-Verification happens explicity when you force these things to be dereferenced
-and then you can learn the checksum or data from the dereferenced thing. Or you
-have the server retrieve that file or perform some task, and then send you new
-ghosts.
+Verification happens explicity when you force these things to be dereferenced and then you can learn the checksum or data from the dereferenced thing. Or you have the server retrieve that file or perform some task, and then send you new ghosts.
 
-So learn() needs to work on immutable things but it should never occur from a
-getSize() or getMode(). hasAcceptable() must always be true for immutable
-things.
+So learn() needs to work on immutable things but it should never occur from a getSize() or getMode(). hasAcceptable() must always be true for immutable things.
 
 To do all of this, i need a super fundamental tiny layer above the fs:root. I suspect this thing will be like an FSE.
 
@@ -190,49 +185,284 @@ To do all of this, i need a super fundamental tiny layer above the fs:root. I su
     # gives me back the ghost that points to that thing
     $OJS->setPointer( 'volumes/my-usb-stick','234df355562dd');
 
-Does the object store have its own LFNs? I have no idea. I think its just a
-naming service. But lets plauy around with the idea that its smarter than
-that and exposes some type of LFN.
+Does the object store have its own LFNs? I have no idea. I think its just a naming service. But lets plauy around with the idea that its smarter than that and exposes some type of LFN.
 
     gfs ls obj:CORE:^234df355562dd
     gfs ls obj:CORE:my-usb-stick
 
-A "path" in this name space is a named object. And it always resolves to a
-ghost sitting in the object store.
+A "path" in this name space is a named object. And it always resolves to a ghost sitting in the object store.
 
 Basically, its a thing that can always generate FS ghostnames for you. It can be super limited. Doenstn' have to support fancy aliases or checkpoints. Just translate a tag -> data.
 
-Its any fancy. It basically something almost as primitive as the fs: guys. No
-caching needed No AFNS needed. I'm not even sure it strictly needs a ghost-
-like interface.
+Its any fancy. It basically something almost as primitive as the fs: guys. No caching needed No AFNS needed. I'm not even sure it strictly needs a ghost- like interface.
 
-So now, to get our volume behavior, there is a more advanced FSE::Volume. Say
-this tool is given something like vol:lacie-drive:foo.txt and asks to
-derefernece it. The API would call
+So now, to get our volume behavior, there is a more advanced FSE::Volume. Say this tool is given something like vol:lacie-drive:foo.txt and asks to derefernece it. The API would call
 
     $g = $OJS->getPointer( 'lacie-drive' );
     now, slurp the ghost $g into a ghost store and save it
     hit my ghost store for foo.txt 
     and now i have my primary record of that thing.
 
-Lets make the objectstores technically be rooted in different places. But
-there will be a special one called CORE. SetPointer and GetPointer are super
-flexible and cache their answers. Also the value they point to can be any
-string, not just a hash. But as a hack, setPointerHash will check that Hash is
-actually stored by OJS.
+Lets make the objectstores technically be rooted in different places. But there will be a special one called CORE. SetPointer and GetPointer are super flexible and cache their answers. Also the value they point to can be any string, not just a hash. But as a hack, setPointerHash will check that Hash is actually stored by OJS.
 
-OJS doesn't have to hang onto any ghosts but it will definitely make rich use
-of the global ghost cache so that its super speedy.
+OJS doesn't have to hang onto any ghosts but it will definitely make rich use of the global ghost cache so that its super speedy.
 
-Interesting implication of this design: it means that LFNS like "obj:CORE:my-
-usb-stick" are technically pointers. Say we make a ghost and call getSize().
-What is the getSize() of such a thing? Shpuld it automatically follow down to
-the FS? I'm not sure it really matters. I'm fine with that bombing out the
-system. Or maybe delegating back to the ghost of the file it points to is just
-fine - they will always be filesystem objects, special cases don't need to be
-considered since this is really just a light layer over the filesystem. Only
-trick is in the case where the Pointer goes to something that is not a hash.
+Interesting implication of this design: it means that LFNS like "obj:CORE:my- usb-stick" are technically pointers. Say we make a ghost and call getSize(). What is the getSize() of such a thing? Shpuld it automatically follow down to the FS? I'm not sure it really matters. I'm fine with that bombing out the system. Or maybe delegating back to the ghost of the file it points to is just fine - they will always be filesystem objects, special cases don't need to be considered since this is really just a light layer over the filesystem. Only trick is in the case where the Pointer goes to something that is not a hash.
 
 OJS can have a rule - pointers may not end in a slash!
+
+
+
+# Existence
+
+STATUS: Implemented as described here. 
+
+A stat on a file either has to tell you that the file has certain information, or that it DOESN't have this information (e.g. the file doesn't exists). A third option is that we cannot know (e.g permission issue.) How should this data be passed back up the chain?
+
+Simplest way I can think of is a modification to the stat rules. One of the returned fields is basically a status, which can be considered a code of these three situations. THe other parameters should be undef'ed. But that raises a contradition - we'd have undefined data and a valid stat date.
+
+Simplest Solution: Size is undef, mtime is undef, mode is "DELETED" or "NOACCESS"
+
+## user verification of existence
+
+I think if the user bothers to list something, we can take it as a given  that its OK to actually source verify it.  To not do that could cause a lot of problems -- for isntance, if there were a global cache, user could ask to LS things that were long gone and never be the wiser not expected behavior... so we can't do that.
+
+## Checking for a real file2
+
+the question is how should the caller be aware of the deleted file in this subcase? i've got a ghost, and maybe i think its a deleted thing. i call exists() to make sure it really is deleted and instead i get a true. should my ghost now change? probably overthinking this case.
+
+if you have a ghost and its marked as deleted. you soruce verify it, and its there. refresh its stat, and mark it found. if the hash changes, so be it. maybe the immutable flag plays a role here. if immutable, we can't source verify it.
+
+Resolution: basically, exists() can source verify, and it source verifies by doing a stat. That stat will bring in new knowlege, and may change flags on things to bring the ghost to a point where it is consistent with reality.
+
+So what if we have a ghost and our purpose is to test if it conforms to reality? well, the answer would be to create a new ghost with that LFN and verify that one. not sure why you'd want this, but it probably will come up. suggests a semantic where you can ask a ghost to "checkDiscrepencies" and you get a new ghost back with the actual state.
+
+# RSYNC Emulation
+
+STATUS: Not yet implemented this way, but heading in that direction.
+
+## What does RSync Do?
+
+Rsync has some quirks I'd like to recreate. First, it doesn't matter if target is there or not, it gets created. Secondly, the trailing slash seems to be irrelevant to the target.
+
+    rsync -av /bar/foo quxx target
+        target/foo
+        target/quxx
+
+    rsync -av /bar/foo quxx target/
+        target/foo
+        target/quxx
+
+The -R switch means that the entire provided path is taken as the root for the transfer
+
+    rsync -av -R /bar/foo quxx target
+        target/bar/foo
+        target/quxx
+
+    rsync -r dirA dirB destination
+        destination/dirA/..
+        destination/dirB/..
+
+A trailing slash basically means treat the passed argument as a collection of files
+
+    rsync -r dir-a/ dir-b destination
+        destination/filea1
+        destination/filea2
+        destination/filea3
+        destination/dirB/fileb1 
+        destination/dirB/fileb2 
+        destination/dirB/fileb3
+
+Using this -R switch turns off the trailing slash behavior too
+
+    rsync -r -R dir-a/ dir-b destination
+        destination/dirA/filea1
+        destination/dirA/filea2
+        destination/dirA/filea3
+        destination/dirB/fileb1 
+        destination/dirB/fileb2 
+        destination/dirB/fileb3
+
+This creates some counter-intuitive behavior when the user is thinking about true mirrors
+
+    rsync -r -R dir-a dir-b destination/dir-a
+        destination/dir-a/dir-a/filea1
+        destination/dir-a/dir-a/filea2
+        destination/dir-a/dir-a/filea3
+
+Because presumably you wanted it to make dir-a "look the same".
+
+So in short, a trailing slash on TARGET is ignored
+And a trailing slash on a SOURCE is only relevant if -R is off
+
+## Translation to the gfs(1) tool
+
+Lets say that foodir is a directory.
+
+    gfs ls foodir 
+    -> one result, representing the entry of foodir itself
+
+    gfs ls foodir/
+    -> a result for every entry under foodir
+
+My guess is that its better to emulate the rsync(1) usage than the ls(1) usage
+since most of the time you're handling directories of things.
+
+## Playing devil's advocate on this decision
+
+Devil's advocate.. Lets say you do a sync operation
+
+    gfs sync foodir bardir
+
+What is more logical? Would you want to think that foodir and bardir should look the same afterwards? Or would you think that foodir should be synced underneath bardir? After all, both are entries, and a sync operation suggests that one should look like the other. More cognitive load to remember to place things under other things.
+
+    gfs sync foodir bardir/
+
+To my eyes, the above seems to clearly say "stick foodir under bardir".
+
+So the question is do we create our own new convention?
+
+What about 
+
+    gfs store foodir bardir
+
+This seems to clearly call out for foodir to be stored as a full entry under something else.
+
+So in this alternative scenario, a trailing slash always means "take what is underneath here".
+
+    gfs sync foodir bardir
+    # make them the same
+    # if bardir had stuff not in foodir, remove it
+
+    gfs sync foodir/ bardir
+    # take everything under foodir and make sure each is the same as bardir
+    # probably should result in an error - what does it mean to sync 3 things to 1 thing?
+    # or maybe we pretent bardir had a trailing slash
+    # or maybe this says that bardir should have exactly the contents of foodir in it
+
+    gfs sync foodir bardir/
+    # take foodir as an entry and make sure its the same as bardir/foodir
+    # don't remove anything from bardir
+
+    gfs sync foodir/ bardir/
+    # make sure the contents of foodir appear under bardir.
+
+Decision: NOT MADE - appears we may want flexibility to emulate multiple
+formats in the future
+
+
+
+
+# Learn semantics: Time to get these right
+
+Status: "Canon" - the program is forced to conformed to this
+
+There are two different kinds of stat overrides. Some stat overrides imply
+immediately that the file is different, or are such a warning sign that they
+cannot be ignored.
+
+    - The size has changed (hash by definition cannot be the same)
+
+Other stat overrides merely suggest suspicion.
+
+    - Modification date changes
+    - Inode has changed
+    - Creation date has changed
+
+## Logical Truth Statements
+
+Entity(truth name / time name)
+
+statA/B - A=size B=everything else
+hash - hash
+
+A(statA/A/1) <- A(statB/B/1) = ERROR
+
+    Error. Times are identical. 
+
+A(statA/A/2) <- A(statB/B/1) = A(statA/A/2)
+
+    Newer stat in learner remains over older one from teacher
+
+A(statA/A/2) <- A(statB/B/1) = A(statA/A/2)
+
+    Newer stat in learner remains over older one from teacher
+
+A(statA/A/2) <- A(statB/B/1) = A(statA/A/2)
+
+    Newer stat in learner remains over older one from teacher
+
+A(statA/A/1) <- A(statB/B/2) = A(statB/B/2)
+
+    Newer stat from teacher enters learner 
+
+Simple cases, old replacing new (as a compound step)
+
+    A(statA/A/1,hashA/1) <- A(statB/B/2,hashB/2) = A(statB/B/2,hashB/2)
+
+Simple case, older data is is ignored
+
+    A(statA/A/3,hashA/3) <- A(statB/B/2,hashB/2) = A(statA/A/3,hashA/3)
+  
+Stat B is different, hashB is different 
+
+    A(statA/A/1,hashA/1) <- A(statB/B/2,hashB/1) = ERROR - two conflicting hashes w/ same timestamp
+
+    A(statA/1,hashA/2) <- A(statB/B/2,hashB/1) = IMPOSSIBLE - 
+        A would never have a stat older than the snapapshot
+
+Harder case, B is more recently stated, but has older hash. Size same
+
+    A(statA/X/2,hashA/2) <- A(statB/X/3,hashB/1) = A(statB/X/3,hashA/2)
+    # take stat B as a refresh, allow the older hash to live on
+
+    A(statA/X/2,hashA/2) <- A(statB/Y/3,hashB/1) = A(statB/Y/3,<revoked>)
+
+Now break down into smaller logical steps
+
+    A(statA/X/2,hashA/2) <- A(statB/X/3) = A(statB/X/3,hashA/2)
+    # allow the B to come in
+
+    A(statA/X/2,hashA/2) <- A(statB/Y/3) = A(statB/Y/3,<revoked>)
+    # Hash "revocation" case
+
+    A(statA/X/2,hashA/2) <- A(hashB/3) = A(statB/Y/3,hashB/3)
+    # new has enters as long as its same or newer than the stat on A
+
+Now try it without an explicit recovcation - can it work?
+
+    A(statA/X/2,hashA/2) <- A(statB/Y/4) = A(statB/Y/4,hashA/2)**
+    # Hash "revocation" case, A is now dirty
+
+    A(statB/Y/4,hashA/2)** <- A(hashB/3) = A(statB/Y/4,hashA/2)**
+
+    # Entry of a hash older that stat, but newer than hash. Allow it. 
+
+The revocation plays a role here -- it conveys information.  In the case that the hash and the stat date are identical, we know the ghost is maximally correct. If the stat date is newer, we cannot distinguish between the case that innocent data came along and really corrupting data came aloing.
+
+Theoretically, there is nothing "wrong" with keeping the old hash. Technically, the information is out of date and caller could decide. But we've lost the change to tell the caller just how badly out of date that information is.
+
+I think the optimal policy then is to signal this case with recovcation.. If I ask a ghost for a hash, its the best knowledge of the ghost's current state. If I learn that my data is wrong, i'm failing in the contract even if I return the "best known."
+
+Basiclaly, the best known hash of a ghost who has received a size change is no hash at all.
+
+# The rules in summary now that we have them
+
+RULE #1: A stat can never be older than the hash in a given ghost. Cause for immediate program termination.
+
+RULE #2: Two peices of information with the same date must be the same, otherwise ERROR
+
+RULE #3: The date corresponding to the size is lockstep with the date on rest of the stat
+
+RULE #4: A new provided hash will be accepted into a learner as long as its date is newer than both the hash and the stat
+
+RULE #5: A new stat that represents a change in size should invalidate the existing hash, unless the hash has the exact same date as the stat. (If the existing hash is newer than the incoming stat, but older than the existing stat, we have a logical violation of RULE #1)
+
+RULE #6: A dead stat (ERR) always revokes the hash and blanks out size and XXX
+
+
+
+
+
 
 
