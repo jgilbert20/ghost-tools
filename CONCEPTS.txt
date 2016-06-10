@@ -51,6 +51,63 @@ that.
 GFS also tries to stay flexibile about how blobs are backed up. The lowest
 common denominator of a backed up file is just a user-level copy of the file.
 
+
+# Universality and metadata
+
+Less common ghost-level information i think has two different forms. The first
+is things that are part of the stat. This would include all of the stat
+variables, plus things that are right off the filesystem, such as the place a
+symbolic link is pointed. But the rule for this type of information is that it
+always is in lock step with the stat date. Lets call this the statMisc field.
+It should follow all places that the mtime, size and mode are carried. We can
+work on getting the data in their later but I'm worried that as code
+complexity rises, the number of places in the code that can "ignore" this stat
+information is rising too.
+
+The second we can imagine is arbitrary n/v pairs that get passed along with a
+ghost. For instance, there might be a pointer to a hash that contains an ACL.
+Or a pointer to the result of a compression of a file. In these cases, a name
+is associated with a value and a assignment date. And the merger operation
+should be pretty simple. 
+
+I'd rather get this facility loaded into the system earlier so that it breaks
+fewer things than it might if adding it in later.
+
+# What should an AFN mean?
+
+As long as an AFN is more general and not wrong, I think it is OK to use it. We don't need to be perfect. Things can be renamed, etc. but as long as the AFN is storing something that has a fighting chance to be right and is easily repudiated as wrong, we should use it. 
+
+# Volumes revisited
+
+A volume has a name which I think is presumed to be universal in the setup of
+the users stuff. However, its contents can change. So you look up its current
+snapshot by looking at a pointer.
+
+There is some kind of action that consolidates a volumes content in case the underlying more fundamental things have shifted. 
+
+Maybe there is some kind of dirty flag that can be processed.
+
+
+
+there is probably also a type of thing called an opener.. 
+
+expand:foo/bar.gz:bar
+
+The AFN for an opener is the hash of the object being openeed
+
+expand:234fc234ffeeaab3234b:
+
+
+
+
+
+
+
+
+
+
+
+
 # Aliases and volumes
 
 We need a definitive way to store volume data.

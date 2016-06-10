@@ -1,20 +1,27 @@
 Working Ideas.txt
 
+- [ ] wire in copy and move to sync operation now that they are implemented
+- [ ] Properly implement volumes
+- [ ] Implement an AFN cache in a test (non-live capability) - lets not get too reliant on caching for the time being. But lets update the cache on saves/exits, and do a test “learn” that intentionally doesn’t hit operational code so we can surface cases where the absoluteLFN scenario breaks down
+- [ ] properly fix the idea of a "fundamental"
 
-- make sure undef is really clear in serialization/deserialization [DONE]
-- finish implementing learn() [DONE]
-- fix the incorporation logic code. [DONE]
-
-- core test cases for move/copy inside filesystem fs:
-- ADD TEST CASE FOR COPY (both for overlap, duplicate files, etc)
-- ADD TEST CASE FOR MOVE (check no conflcits, etc, etc)
-- ADD test case pointer get,set
+- [ ] test cases
+	- [ ] core test cases for move/copy inside filesystem fs:
+	- [ ] ADD TEST CASE FOR COPY (both for overlap, duplicate files, etc)
+	- [ ] ADD TEST CASE FOR MOVE (check no conflcits, etc, etc)
+	- [ ] ADD test case pointer get,set
+	- [ ] store and retreive from objectstores
 
 
-- Bug:  "gfs store obj:core:file1 --stats  newfile24" run twice seems to force a spurious hash, suspect its the pass through of sourceVerify. SourceVerify on the pointer seems to force the underlying FS to recheck unnecessarily.
+- [ ] Bug:  "gfs store obj:core:file1 --stats  newfile24" run twice seems to force a spurious hash, suspect its the pass through of sourceVerify. SourceVerify on the pointer seems to force the underlying FS to recheck unnecessarily.
 
-- IMPORTANT BUG CHECK - a cp -r on a directory with a .gfs file seemed to generate really strange errors on the first run.
-- compare has an annoying bug - not really matching paths for the top most node properly. (Everything else seems to work.)
+- [ ] IMPORTANT BUG CHECK - a cp -r on a directory with a .gfs file seemed to generate really strange errors on the first run.
+- [ ] compare has an annoying bug - not really matching paths for the top most node properly. (Everything else seems to work.)
+
+
+- [x] make sure undef is really clear in serialization/deserialization [DONE]
+- [x] finish implementing learn() [DONE]
+- [x] fix the incorporation logic code. [DONE]
 
 
 # Priorities

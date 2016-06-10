@@ -35,7 +35,7 @@ sub debug($);
 
 my $icDebug = 0;
 my $tkdebug = 0;
-my $tkflushdebug = 0;
+my $tkflushdebug = 1;
 my $gsDebug = 1;
 my $duplicateDebug = 0;
 my $granularSerialDebug = 0;    # Instruments the escape/unescape mechanism
@@ -2098,8 +2098,6 @@ sub internalMkDir
 	# main::mkdirs( File::Spec->catfile( $self->{ROOTDIR}, "foo" ));
 }
 
-
-
 sub setPointer
 {
 	my $self = shift;
@@ -2167,6 +2165,24 @@ sub getPointer
 
 	return $value; 
 }
+
+
+# Provides a universal name for the LFN that should be completely invarient to
+# CWD, time and space, etc. Basically, this ghost should be the same no matter
+# where in the cluster of machines the user is running it.
+# 
+# CORE
+
+sub getAbsoluteLFNForGhost
+{
+	my $self = shift;
+	my $g = shift;
+
+	# By design, object store references are already universal
+
+	return $g->lfn();
+}
+
 
 # One of the universal methods. It basically says make a copy of the things
 # I'm pointing to and gives you the name of the place to store it. If there is
@@ -2277,9 +2293,7 @@ sub getHardFilePathForGhost
 	my $finalPath = catfile( $targetPath, $justHash );
 
 	return $finalPath; 
-
 }
-
 
 
 sub getStatSourceVerify
@@ -2342,8 +2356,6 @@ sub getAbsoluteLFNForGhost
 
 	return main::rewriteLFNreplaceRoot( $g->lfn(), "HACKED_HASH_GOES_HERE");
 }
-
-
 
 
 sub absorb
@@ -2413,7 +2425,6 @@ sub finalize
 		foreach my $g ( $store->getAllGhosts() )
 		{
 			$g->dirty(0);
-
 		}
 
 		$self->dirty(0);
@@ -3080,10 +3091,26 @@ sub printInternallyTrackedAFN
 		 	 . $g->absoluteLFN()
 		     . "  " );
 
-		 debug( "          -> ". $g->makeDebugString() );
+		 debug( "          -> ". $g->quickDebugString() );
 	}
 	return;
 }
+
+
+sub flushUniversalStore
+{
+	my $self = shift;
+	my $ghostForLFN = $self->ghostForLFN();
+	foreach my $g (values %$ghostForLFN )
+	{
+		 debug( "          -> ". $g->quickDebugString() );
+		my $afn = $g->absoluteLFN();
+		 debug( "             |-> $afn")
+	}
+
+}
+
+
 
 sub flush
 {
@@ -3104,6 +3131,12 @@ sub flush
 	debug "---- Ghost Cache Writes ---\n" if $tkflushdebug;
 
 	$self->flushGhostDescriptorCache();
+
+	debug "---- AFN ---\n" if $tkflushdebug;
+
+	$self->flushUniversalStore();
+
+
 
 	debug "---- Verify ---\n" if $tkflushdebug;
 
