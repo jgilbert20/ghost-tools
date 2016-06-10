@@ -38,11 +38,12 @@ my $tkdebug = 0;
 my $tkflushdebug = 0;
 my $gsDebug = 1;
 my $duplicateDebug = 0;
-my $fseSnapshotDebug = 0;
 my $granularSerialDebug = 0;    # Instruments the escape/unescape mechanism
 my $serializeDebug = 0;			# Instruments the load/save at ghost level
 my $gChildDebug = 0;
-
+my $fseDebug = 0;
+my $fseOjxDebug = 1;
+my $fseSnapshotDebug = 0;
 
 # Major globals
 
@@ -2040,6 +2041,16 @@ sub new
 	return $self;
 }
 
+sub finalize
+{
+	my $self = shift;
+
+	# in practice, this is not always called. It may not have entered the FSE
+	# cache. i'm not sure yet if that is an issue or not.
+
+	debug "Shutdown $self.. - no action taken." if $fseOjxDebug;
+}
+
 sub initialize
 {
 	my $self = shift;
@@ -2089,12 +2100,23 @@ sub setPointer
 	my $value = shift;
 
 	die unless $self->_isInitialized();
+	die "Pointers cannot be empty strings" if length($name) < 1;
+	die "Pointers cannot have trailing slashes" if $name =~ /\/$/;
 
-	debug( "setPtr: [$name]=>[$value]");
+	debug( "setPtr: [$name]=>[$value]") if $fseOjxDebug;
 
 	$self->{PTR}->{$name} = $value;
 
-	my $targetPath = catfile( $self->{PTR_DIR}, $name );
+	my $targetPath = catfile( $self->{PTR_DIR}, ($name . ".ptr" ));
+
+	die "setPointer tried to replace directory with a file" if( -d $targetPath );
+
+	# Super schitzophrenic - shou;dn't this ALL be done via the ghost API?
+	my $dirPath = basename $targetPath;
+	if( ! -e $dirPath )
+	{
+		$self->internalMkDir( $dirPath );
+	}
 
 	open FILE, ">$targetPath" or die "Could not open [$targetPath] for pointer: $!";
 	print FILE $value;
@@ -2107,20 +2129,22 @@ sub getPointer
 	my $name = shift;
 	
 	die unless $self->_isInitialized();
+	die "Pointers cannot have trailing slashes" if $name =~ /\/$/;
+	die "Pointers cannot be empty strings" if length($name) < 1;
 
 	my $targetPath = catfile( $self->{PTR_DIR}, $name );
 
 	if( exists $self->{PTR}->{$name})
 	{
 		my $value = $self->{PTR}->{$name};
-		debug( "getPtr: [$name]=>[$value] (cache)");
+		debug( "getPtr: [$name]=>[$value] (cache)") if $fseOjxDebug;
 		return $value;
 	}
 
 	if( ! -e $targetPath )
 	{
 		my $value = undef; 
-		debug( "getPtr: [$name]=>[undef] (stat)");
+		debug( "getPtr: [$name]=>[undef] (stat)") if $fseOjxDebug;
 		return $value;
 	}
 
@@ -2131,7 +2155,7 @@ sub getPointer
 	close FILE,
 
 	$self->{PTR}->{$name} = $value;
-	debug( "getPtr: [$name]=>[$value] (disk)");
+	debug( "getPtr: [$name]=>[$value] (disk)") if $fseOjxDebug;
 
 	return $value; 
 }
@@ -2146,6 +2170,7 @@ sub store
 	my $source = shift;
 	my $target = shift;
 
+	die "file to store does not exist" unless $source->exists();
 	die "store only works for single files" unless $source->isSingleFile();
 
 	# my $hardFilename = $source->getHardFile();
@@ -2156,7 +2181,7 @@ sub store
 	my $targetPath = catfile( $self->{OBJ_DIR}, $justHash );
 
 	# Super schitzophrenic - shou;dn't this ALL be done via the ghost API?
-	# $self->internalMkDir( $targetPath );
+	$self->internalMkDir( $targetPath );
 
 	my $finalPath = catfile( $targetPath, $justHash );
 
@@ -2165,6 +2190,13 @@ sub store
 	my $targetGhost = $tk->obtainGhostForLFN($targetLFN);
 	$targetGhost->store( $source );
 
+	my $targetUserPath = $target->getPath();
+
+	if( length($targetUserPath) > 0 )
+	{
+		my $pointerName = catfile( "adhoc", $targetUserPath );
+		$self->setPointer( $pointerName, $hash );
+	}
 }
 
 
@@ -2424,8 +2456,6 @@ use File::Copy;
 use base qw(Class::Accessor);
 FilesystemExplorer::FS->mk_accessors( qw(topLevelLFNs sizeToFNs) );
 
-my $fseDebug = 0;
-
 # Return new FSE
 # CORE - any FSE must implement
 
@@ -2584,6 +2614,7 @@ sub store
 	my $sourceGhost = shift;
 	my $target = shift;
 
+	die "file to store does not exist" unless $sourceGhost->exists();
 	die "store only works for single files" unless $sourceGhost->isSingleFile();
 
 	# this extra overhead forces the file to be a filesystem object and
@@ -2653,7 +2684,6 @@ sub store
 }
 
 
-
 # 
 #
 # CORE  
@@ -2667,6 +2697,9 @@ sub moveGhost
 	my $self = shift;
 	my $source = shift;
 	my $target = shift;
+
+
+	die "file to move does not exist" unless $source->exists();
 
 	die "store only works for single files" unless $source->isSingleFile();
 	die "store only works for single files" unless $target->isSingleFile();
@@ -2732,7 +2765,6 @@ sub generateAlternativeLocation
 
 	while( not $newOrphanNameFound )
 	{
-		
 		# Calculate a new name for this file
 		my $orphanNewPathName = $g->getPath() . ".gsfmoved-$datestr";
 		$orphanNewPathName .= "-$scramble" if $scramble > 0;
@@ -2755,10 +2787,7 @@ sub generateAlternativeLocation
 		return $orphanGhost;
 	}
 
-	die;
-
-
-
+	die "Logic error.";
 }
 
 
@@ -3039,6 +3068,12 @@ sub verifyNoDirtyGhostsRemain
 				my $lfn = $g->lfn();
 				debug "Wierd straggler case - I haven't figured out yet who, if anyone flushes this type of object.: $lfn";
 			}
+			elsif( $g->getHandler() eq 'obj')
+			{	
+				my $lfn = $g->lfn();
+				debug "Wierd straggler case - I haven't figured out yet who, if anyone flushes this type of object.: $lfn";
+			}
+
 			else
 			{
 				$error++;
@@ -3334,9 +3369,9 @@ sub obtainGhostForLFN
 		}
 	}
 
-	# Wow, we've totally stuck out here - make a new thing
-	# when we get to this point, how do we decide if this guy is going to be virtual
-	# or if its going to be real?
+	# Wow, we've totally stuck out here - make a new thing. When we get to
+	# this point, how do we decide if this guy is going to be virtual or if
+	# its going to be real?
 
 	debug( "TK:Obtain: Making new ghost for f:[$lfn]\n")  if $tkdebug;
 	my $g = Ghost->make_private( $lfn );
@@ -3360,9 +3395,9 @@ sub obtainGhostForLFN
 
 ##########
 #
-# GhostIterator -- A helper for iterating over nested directories
-# Note: Does not use File::Find! Everything is done through
-# ghosts that request subdirectories so this is uber-clean.
+# GhostIterator -- A helper for iterating over nested directories Note: Does
+# not use File::Find! Everything is done through ghosts that request
+# subdirectories so this is uber-clean.
 #
 # Recurse mode = everything goes back to TK
 # NonRecurse Mode = only thigns in the parent are returned. 
@@ -4104,24 +4139,32 @@ sub hasDuplicate
 #
 # Ghost - an imprint of a file that may or may not exist at a particular place
 #
-# The ghost is a carrier of information about a file, and intended to be lightweight
-# More than one ghost can exist for a given file, and they can be different.
-# To obtain an "authoritiative" ghost, the TruthKeeper is used to resolve them
-# for instance a snapshot could have one version of a ghost, a descriptor a different
-# and the one from the file system could yet again be different. Ghosts are intended
-# to be so lightweight that they can be used as proxies for filename everywhere
-# as of the "everthing-is-a-ghost" update, ghosts are used universally to handle
-# files. 
+# The ghost is a carrier of information about a file, and intended to be
+# lightweight More than one ghost can exist for a given file, and they can be
+# different. To obtain an "authoritiative" ghost, the TruthKeeper is used to
+# resolve them for instance a snapshot could have one version of a ghost, a
+# descriptor a different and the one from the file system could yet again be
+# different. Ghosts are intended to be so lightweight that they can be used as
+# proxies for filename everywhere as of the "everthing-is-a-ghost" update,
+# ghosts are used universally to handle files.
 #
-# The ghost class does not itself hit the disk - everything is delegated to the FSE
+# Ghosts are never expected to change LFNs under any circumstances. The only
+# acceptable time to assing an LFN is during deserialization or creation.
+#
+# Immutability is a key aspect of ghosts; an immutable ghost does not change
+# any of its fields. Normal ghosts are expected to update themselves based on
+# filesystem or data state. There are a set of atomic definable rules that say
+# when new types of state refresh each ghost.#
+#
+# The ghost class does not itself hit the disk - everything is delegated to
+# the FSE. This allows multiple different handlers to interpret the LFN the
+# way they see fit.
 #
 # Terminology used in function names has some nuance
 #
 # -     size() - the internal size descriptor, never use this!!
 # GET   getSize - gets an ACCEPTABLE size
-# LEARN learnSize - tell me that you've definitively got a new size from disk
-# MERGE mergeSize(g) - learn whatever I can from the ghost, update myself with the
-# newest information 
+# LEARN learnSize - tell me about new information pretaining to this ghost
 #
 
 package Ghost;
