@@ -45,6 +45,8 @@ gfs verify X, Y
 
 
 
+
+
 # Motivation
 
 If you're anything like me, you've got files scattered in an annoying number of different places. Much of this is compounded by the fact that i am both a tech geek (with lots of old programs, projects etc) and a photo-geek who inisists on saving raw photos and photoshop originals. 

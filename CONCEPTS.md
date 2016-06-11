@@ -5,6 +5,14 @@ This is a working set of design concepts. There is a retired, scratch version of
 
 
 
+Make /src back up to two different volumes 
+
+    gfs rule add /src/ vol:abc,vol:yzx
+    [4] /src/ -> vol:abc,vol:yzx [2 copies]
+
+    gfs run
+
+
 
 
 
