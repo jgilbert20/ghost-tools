@@ -206,11 +206,69 @@ Another way of looking at this is that most of the metadata that gives GFS its m
 
 But GFS is designed to be able to start from the ground up in any and all cases. In fact, its test cases routinely blow away its own metadata during the test runs, to ensure it doesn’t rely on anything. 
 
+# Ghosts
+
+The smallest unit of metadata is a ghost. A ghost is an imprint of a file. It says that name, size, location, checksums, permissions, etc of a file that either is on disk or once was on disk.
+
+Every GFS operation (move, backup, etc) works by making ghosts of your files, and then applying formal logic rules to those ghosts. Making a ghost is extremely low-cost; basically just allocation of a small amount of memory. Data such as size, mode, file checksums, etc is added to the ghost on-demand.
+
 # Lineage
 
-GFS has 
+GFS has a concept of files having a limited-use universal name. When a file is turned into a ghost, GFS tries to find a UUID for it. The UUID is a combination of the filename, size, modification date and inode plus some random data. When the file changes or moves, it will obviously get a new UUID. But if GFS can figure out where the file came from, it will mark an upstream UUID and an upstream checksum. This lets it understand lineage.
+
+Say that a file ~/work-dir/jeremy.txt changes. GFS will look for the most recent ghost for that file. That recent ghost becomes the upstream ghosts.
+
+This is how lshistory works. When you want the history of file X, it attempts to walk through a tree of upstream pointers, gathering the other file versions. 
+
+When a file is backed up, it stores its original source LFN, creating a family of related files. It also flags the ghost of any file version to get saved along with.  
+
+GFS doesn’t need this data to be correct to make backups, but it does need it to provide the most intelligble reports on the histories of files and directories. 
+
+fields to add
+
+UUID
+upstreamUUID
+lineageUUID
+lineageHash
+upstreamHash
+effectiveDate
+
+WAIT, we don’t actually need all of these.
+
+ghost->assignUUID();
+
+any time a ghost is saved with a change (effectiveDate increases), it could get dropped into the FVDB.
+
+iside learn is a “triggerNewIdentity()” which roles over the UUID. But when is this called? cna’t think of a single case. if it has the same AFN, we’d always want it to pick up previous. 
+
+during pre-save, any node without a lineage could get one. look in the FVDB for the same AFN. or same inode and size (later point). 
+
+Only write to FVDB if has stat and hash, and if effective date has changed.
+
+effective date is propogated when marking dirty. dirty also ups the sequence number.
+
+learn should always take the max of the two sequence numbers, and absorb a UUID if one is not already assigned.
+
+UUID should be assigned during pre-save.
 
 
+
+fileversions dont’ learn. we just take them all together.
+
+That means that AFN+effective_date is unique inside the FVDB. 
+ 
+so.. should now a backed up thing should know what AFN it backed up??? 
+
+It doesn’t need to. lshistory enumerates all ghosts with that AFN. that tells us the checksums.
+
+as long as the FVDB entries get passed along to the backup location in a way they can be re-integrated, we’re fine.
+
+and i think they are!! why? because the snapshot stored there could be a bunch of non:SNAP things. which owuld be implicit file versions.
+
+so we got all of this with just effectiveDate, sequence # and UUID.
+
+what if user clears .gfs
+then 
 
 
 
