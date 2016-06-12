@@ -208,19 +208,9 @@ sub verifyWorkingDirectories
 
 sub setupDatabases
 {
-	# my $bdb_env = new BerkeleyDB::Env 
-	#     -Verbose => 1,
-	#     -Home => $DBDIR,
-	#     -Flags => DB_CREATE|DB_INIT_MPOOL|DB_INIT_CDB,
-	#     -ErrFile => "$DBDIR/Errors-$$",
-	#     -ErrPrefix => "GFS";
-
 	my $gdb = GhostDatabase->new( $PATH_DEFAULT_DB_DIR );
 	$gdb->init();
-
 	$main::coreGhostDatabase = $gdb;
-
-
 }
 
 sub debug ($)
@@ -242,7 +232,6 @@ sub CODEPATH($)
 sub reportCodepaths
 {
 	return if( not keys %codepathCount > 0 );
-
 	return if not $OPT_CP;
 
 	print "--\n";
@@ -258,10 +247,13 @@ sub init
 {
 	verifyWorkingDirectories();
 	setupDatabases();
+
+	# Set up default file system management object
 	$main::localFileSystemFSE = new FilesystemExplorer::FS();
+
+	# Set up object store
 	my $ojx = FilesystemExplorer::ObjectStore->new( $PATH_DEFAULT_OBJECT_STORE );
 	$ojx->setUpRepository();
-
 	$main::coreOjxFSE = $ojx; 
 }
 
