@@ -777,7 +777,7 @@ sub doverb_compare()
 		my $sourceLFN = $g->lfn();
 		my $sourcePath = $g->getPath(); 
 		my $basename = basename $g->getPath();
-		my $newPath = File::Spec->catfile( $targetPath, $basename );
+		my $newPath = File::Spec->catfile( $targetPath, $sourcePath );
 		my $targetLFN = main::assembleLFN( $targetHandler, $targetRoot, $newPath );
 
 		print "--- INITIAL SCAN -------------------\n";
@@ -1020,9 +1020,10 @@ sub doverb_rsync
 	while( my $g = $sourceGSiterator->next() )
 	{
 		my $sourceLFN = $g->lfn();
+		next if ! $g->isSingleFile();
 		my $sourcePath = $g->getPath(); 
 		my $basename = basename $g->getPath();
-		my $newPath = File::Spec->catfile( $targetPath, $basename );
+		my $newPath = File::Spec->catfile( $targetPath, $sourcePath );
 		my $targetLFN = main::assembleLFN( $targetHandler, $targetRoot, $newPath );
 
 		print "--- INITIAL SCAN -------------------\n";
@@ -1046,7 +1047,7 @@ sub doverb_rsync
 	$gst->printDebug();
 	print "******************* Post Orphan Pillage\n";
 	$gst->printDebugWithPaths();
-
+	
 
 	$gst->handleLocalCopyFromGS( $gst->obtainCurrentStateAsGS() );
 
@@ -2239,8 +2240,8 @@ sub verifyCorrectness
 		}
 		if( defined $final )
 		{
-		die "Hash mismatch @ $lfn"  unless $final->isDuplicateOf($current);
-	}
+			die "Hash mismatch @ $lfn"  unless $final->isDuplicateOf($current);
+		}
 	}
 
 }

@@ -261,7 +261,7 @@ sub test_rsyncmega
 	mkfile '/tmp/gfstest/source/file9a',  'K';
 	mkfile '/tmp/gfstest/source/file9b',  'K';
 	mkfile '/tmp/gfstest/source/file9c',  'K';
-	
+	`touch  /tmp/gfstest/source/zero`;
 
 }
 
