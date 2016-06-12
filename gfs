@@ -1183,7 +1183,7 @@ sub doverb_rsync
 	print "******************* Long Haul \n";
 	$gst->printDebugWithPaths();
 
-$gst->handleZeroLengthFiles();
+	$gst->handleZeroLengthFiles();
 
 	my $xgs = $gst->obtainCurrentStateAsGS();
 
