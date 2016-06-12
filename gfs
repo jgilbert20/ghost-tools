@@ -612,6 +612,9 @@ sub doverb_dbtest()
 
 	# $ng->printDebug();
 	$gdb->storeAFNforHash( "f", "bar");
+	$gdb->storeAFNforHash( "f", "bar2");
+	$gdb->storeAFNforHash( "f", "bar3");
+	$gdb->storeAFNforHash( "f", "bar4");
 	$gdb->storeAFNforHash( "f2", "bar");
 	$gdb->storeAFNforHash( "f3", "bar");
 	print $gdb->findAFNsForHash( "f");
@@ -1795,17 +1798,18 @@ sub revokeAFNforHash
 #	my $status = $cursor->db
 }
 
-sub storeAFNforHash
+sub performOperationOnPerlStructFromKey
 {
 	my $self = shift;
-	my $hash = shift;
-	my $afn = shift;
-	
+	my $db = shift;
+	my $key = shift;
+	my $sub = shift;
+
 	my $content;
 	my $unpacked;
 	my $status; 
 
-	$status = $self->{HASH_TO_AFN_DB}->db_get( $hash, $content );
+	$status = $db->db_get( $key, $content );
 	if( $status == DB_NOTFOUND )
 	{	
 		$unpacked = [];
@@ -1813,19 +1817,41 @@ sub storeAFNforHash
 	else
 	{	
 		ckStatus( $status );
-
 		$unpacked = thaw( $content );
-
 	}
 
+	$main::run_db_gets++;
 	$main::run_db_puts++;
 
-	push @$unpacked, $afn;
-	
-	$status = $self->{HASH_TO_AFN_DB}->db_put( $hash, freeze( $unpacked ) );
-	ckStatus( $status );
+	$sub->($unpacked);
 
-	# pish @$unpacked 
+	$status = $self->{HASH_TO_AFN_DB}->db_put( $key, freeze( $unpacked ) );
+	ckStatus( $status );
+}
+
+sub storeAFNforHash
+{
+	my $self = shift;
+	my $hash = shift;
+	my $afn = shift;
+
+	my $db = $self->{HASH_TO_AFN_DB};
+
+	my $func = 
+	sub 
+	{ 
+		my $var = shift; 
+		foreach my $m ( @$var )
+		{
+			return if $m eq $afn;
+		}
+
+		push @$var, $afn;
+
+	};
+
+	$self->performOperationOnPerlStructFromKey( $db, $hash, $func );
+
 
 
 
