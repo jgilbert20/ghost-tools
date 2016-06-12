@@ -3479,6 +3479,17 @@ sub flushUniversalStore
 		$absGhost->learnFromGhost( $g );
  		$gdb->storeGhostToAFN( $g, $afn );
 
+
+ 		if( $g->everWasDirtyThisRun() )
+ 		{
+ 			open FILE, ">>__gfslog" or die;
+ 			print FILE $g->serialize();
+ 			print FILE "\n";
+ 			close FILE; 
+
+ 		}
+
+
  	}
 }
 
@@ -4359,8 +4370,9 @@ sub writeAsDescriptor($)
 
 	print FILE "### This is a checksum tracking file written by $0\n";
 	print FILE "### File written on $date\n";
+	print FILE "### It can be removed at any time with no harmful effects\n";
 	print FILE "### \n";
-	print FILE "### To remove this and others like it, try this command\n";
+	print FILE "### To remove this dotfile and others like it, try this command\n";
 	print FILE "###    find . -name '$DESCRIPTOR_FILENAME' -print0  | xargs -0 rm -iv\n";
 	print FILE "### \n";
 	print FILE "@@@ version = $SERIALIZATION_VERSION_NUMBER\n";
@@ -5672,6 +5684,17 @@ sub markDirty
 	$self->dirty(1);
 
 	$self->effectiveDate( time() );
+
+	$self->{_onceWasDirty} = 1; 
+}
+
+sub everWasDirtyThisRun
+{
+	my $self = shift; 
+	return 1 if( exists $self->{_onceWasDirty} );
+	return 0;
+
+
 }
 
 
