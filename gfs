@@ -427,6 +427,8 @@ sub handleVerb
 {
 	my $verb = shift;
 
+	die "No verb defined" if not defined $verb;
+
 	if( $verb eq "lsdup")
 	{
 		doverb_lsdup();
@@ -4669,8 +4671,9 @@ use Cwd qw(abs_path); # best way to get these
 # GHOST_NEW_FIELD: Place 4/4 where you add new fields to ghosts
 
 Ghost->mk_accessors( qw(lfn lastFullHash size mode fullHash statStruct
+	uuid sequence effectiveDate attributes
 	dirty isTKversion lastDirScan lastStat mtime lastEnumerated firstStat fileStatus
-	 children _immutable _debugID) );
+	children _immutable _debugID) );
 
 
 my $GHOST_DEBUG_ID = 100000; 
@@ -4725,18 +4728,25 @@ sub pullValuesFromGhost
 
 	# GHOST_NEW_FIELD: Place 5/5 where you add new fields to ghosts
 
-	$self->lfn( 		 $target->lfn() );
-	$self->lastFullHash( $target->lastFullHash() );
-	$self->size( 		 $target->size() );
-	$self->mode( 		 $target->mode() );
-	$self->fullHash( 	 $target->fullHash() );
-	$self->lastDirScan(  $target->lastDirScan() );
-	$self->lastStat( 		$target->lastStat() );
-	$self->lastEnumerated( 		$target->lastEnumerated() );
-	$self->firstStat( 		$target->firstStat() );
-	$self->fileStatus( 		$target->fileStatus() );
-	$self->mtime( 		$target->mtime() );
-	$self->statStruct( 		$target->statStruct()->copy() );
+	$self->lfn( 		     $target->lfn() );
+	$self->lastFullHash(     $target->lastFullHash() );
+	$self->size( 		     $target->size() );
+	$self->mode( 		     $target->mode() );
+	$self->fullHash( 	     $target->fullHash() );
+	$self->lastDirScan(      $target->lastDirScan() );
+	$self->lastStat( 	     $target->lastStat() );
+	$self->lastEnumerated(   $target->lastEnumerated() );
+	$self->firstStat( 	     $target->firstStat() );
+	$self->fileStatus( 	     $target->fileStatus() );
+	$self->mtime( 		     $target->mtime() );
+
+	$self->uuid( 		     $target->uuid() );
+	$self->sequence( 	     $target->sequence() );
+	$self->effectiveDate(    $target->effectiveDate() );
+	$self->attributes( 	     $target->attributes() );
+
+	$self->statStruct( 	     $target->statStruct()->copy() );
+
 
 	$self->dirty( 0 );
 	$self->isTKversion( 0 );
@@ -4812,6 +4822,10 @@ sub newFromSerialized($)
 	$self->firstStat( shift @a );
 	$self->fileStatus( shift @a );
 	$self->mtime( shift @a );
+	$self->uuid( shift @a );
+	$self->sequence( shift @a );
+	$self->effectiveDate( shift @a );
+	$self->attributes( shift @a );
 
 	my $statStructSerialized = shift @a; 
 	if( defined $statStructSerialized )
@@ -5014,6 +5028,12 @@ sub makeDebugString
 	my $fileStatus 		= defined( $self->fileStatus() ) 		? $self->fileStatus() : "undef";
 	my $immutable 		= defined( $self->_immutable() ) 		? $self->_immutable() : "undef";
 	my $statStruct 		= defined( $self->statStruct() ) 		? $self->statStruct()->serialize() : "undef";
+	my $uuid 		= defined( $self->uuid() ) 		? $self->uuid() : "undef";
+	my $sequence 		= defined( $self->sequence() ) 		? $self->sequence() : "undef";
+	my $effectiveDate 		= defined( $self->effectiveDate() ) 		? $self->effectiveDate() : "undef";
+	my $attributes 		= defined( $self->attributes() ) 		? $self->attributes() : "undef";
+
+
 
 	# not technically a field but we should include this
 
@@ -5022,11 +5042,9 @@ sub makeDebugString
 
 my $debugID = $self->_debugID();
 
-	return "ghostDump($debugID): lfn:[$lfn] type:[$type] mode:[$mode] l_FH:[$lastFullHash] ".
+	return "ghostDump($debugID): lfn:[$lfn] uuid:[$uuid] seq:[$sequence] eDT:[$effectiveDate] type:[$type] mode:[$mode] l_FH:[$lastFullHash] ".
 	"full:[$fullHash] ldirscan:[$lastDirScan] l_stat:[$lastStat] size:[$size]".
-	" mtime:[$mtime] immutable[$immutable] statStruct:[$statStruct]";
-
-
+	" mtime:[$mtime] immutable[$immutable] statStruct:[$statStruct] attr:[attributes]";
 }
 
 sub isSameFilename
@@ -5139,6 +5157,10 @@ sub serialize()
 			  $self->firstStat(),
 			  $self->fileStatus(),
 			  $self->mtime(),
+			  $self->uuid(),
+			  $self->sequence(),
+			  $self->effectiveDate(),
+			  $self->attributes(),
 			  $statStructSerialized
 			  );
 
@@ -5597,7 +5619,7 @@ sub learnDirscan
 sub learnContentsChanged
 {
 	my $self = shift;
-	my $effectiveTime = shift;
+	my $time = shift;
 
 	$self->size( undef );
 	$self->mtime( undef );

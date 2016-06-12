@@ -3,6 +3,115 @@
 It is a collection of retired ideas.. anything that is current has been moved to the full concept file. 
 
 
+# File Versions - how should they work?
+
+We need some way to address file versions. 
+
+I can copy older versions of files by referring to tree state objects or by dates. 
+
+	Cp a b
+
+Copies file a to position b
+
+	Cp a --state-before timespec
+
+This looks for a copy of a that was the most recent before a certain date. 
+
+We also need a concept of a snapshot where it's a set of file versions. And it's okay for them to be tied to an absolute afb. 
+
+Also nice if the ghost points to that snapshot like isMemberOf 
+
+That way even if the record of the snapshot is lost we are okay.
+
+This means that learn may revoke the version which should clear out memberOf. Any change to core stat or hash should do this. 
+
+If 5 files are needed to construct file x nice to have source afn. This could enable striping. 
+
+So the original afn stands. But we gain 5 new split objects each pointing back to the hash they reconstruct. So this can actually live in the afn. But nice if splits carry along the ghost of the thing they reconstruct. 
+
+Same logic for tar files and one to manies. 
+
+The hash of tar file is the afn. 
+
+But nice if we can store the path of the tar file. Wait. Why? We can reverse look that up. Hash to file names are assumed to be o(1) basically
+
+So the split can be subclassed to handle par
+
+And the merge can beb
+
+
+
+
+# Lineage
+
+GFS has a concept of files having a limited-use universal name. When a file is turned into a ghost, GFS tries to find a UUID for it. The UUID is a combination of the filename, size, modification date and inode plus some random data. When the file changes or moves, it will obviously get a new UUID. But if GFS can figure out where the file came from, it will mark an upstream UUID and an upstream checksum. This lets it understand lineage.
+
+Say that a file ~/work-dir/jeremy.txt changes. GFS will look for the most recent ghost for that file. That recent ghost becomes the upstream ghosts.
+
+This is how lshistory works. When you want the history of file X, it attempts to walk through a tree of upstream pointers, gathering the other file versions. 
+
+When a file is backed up, it stores its original source LFN, creating a family of related files. It also flags the ghost of any file version to get saved along with.  
+
+GFS doesn’t need this data to be correct to make backups, but it does need it to provide the most intelligble reports on the histories of files and directories. 
+
+fields to add
+
+UUID
+upstreamUUID
+lineageUUID
+lineageHash
+upstreamHash
+effectiveDate
+
+WAIT, we don’t actually need all of these.
+
+ghost->assignUUID();
+
+any time a ghost is saved with a change (effectiveDate increases), it could get dropped into the FVDB.
+
+iside learn is a “triggerNewIdentity()” which roles over the UUID. But when is this called? cna’t think of a single case. if it has the same AFN, we’d always want it to pick up previous. 
+
+during pre-save, any node without a lineage could get one. look in the FVDB for the same AFN. or same inode and size (later point). 
+
+Only write to FVDB if has stat and hash, and if effective date has changed.
+
+effective date is propogated when marking dirty. dirty also ups the sequence number.
+
+learn should always take the max of the two sequence numbers, and absorb a UUID if one is not already assigned.
+
+UUID should be assigned during pre-save.
+
+
+
+fileversions dont’ learn. we just take them all together.
+
+That means that AFN+effective_date is unique inside the FVDB. 
+ 
+so.. should now a backed up thing should know what AFN it backed up??? 
+
+It doesn’t need to. lshistory enumerates all ghosts with that AFN. that tells us the checksums.
+
+as long as the FVDB entries get passed along to the backup location in a way they can be re-integrated, we’re fine.
+
+and i think they are!! why? because the snapshot stored there could be a bunch of non:SNAP things. which owuld be implicit file versions.
+
+so we got all of this with just effectiveDate, sequence # and UUID.
+
+what if user clears .gfs
+then it assings a new UUID. that might not match the older ones.
+that is true. but a new operation could theoretically link them.  we can write this idea into a formerUUID field, which now creates a forward-looking link between the new UUID and the old one.
+
+is there a generalization of this mechanism for splits and merges?
+
+say 5 different versions of bigfile.PSD are stored in one packfile
+
+or bigfile.PSD is split across 5 different files
+
+maybe that creates a use for “upstream AFN, upstream UUID”??
+
+
+
+
 
 
 # Cool tools to check

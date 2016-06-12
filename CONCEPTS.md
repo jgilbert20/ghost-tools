@@ -4,15 +4,30 @@
 This is a working set of design concepts. There is a retired, scratch version of this file also around. But everything in the code that has been cleaned up as of June 10, 2016 is here.
 
 
+# Ghosts
 
-Make /src back up to two different volumes 
+The smallest unit of metadata is a ghost. A ghost is an imprint of a file. It says that name, size, location, checksums, permissions, etc of a file that either is on disk or once was on disk.
 
-    gfs rule add /src/ vol:abc,vol:yzx
-    [4] /src/ -> vol:abc,vol:yzx [2 copies]
+Every GFS operation (move, backup, etc) works by making ghosts of your files, and then applying formal logic rules to those ghosts. Making a ghost is extremely low-cost; basically just allocation of a small amount of memory. Data such as size, mode, file checksums, etc is added to the ghost on-demand.
 
-    gfs run
+Ghosts can represent files or objects on your local computer as well as remote one. They are entirely generalized to point to any kind of data asset that can have a checksum.
 
 
+
+# File Versions
+
+(How I think they should work.)
+
+GFS generates a ghost object for every file or object it touches. In some cases, these files or objects have been seen before, and the GFS infrasture is fairly efficient at loading the old ghost record. As long as the file has the same name, GFS will see it as continuing the history of previous files of that name. 
+
+When new ghosts are discovered, they are assigned a random bit of data called a UUID. The UUID means that even as that file might get moved from place to place, it can be linked back to the ghosts representing it’s previous places.
+
+Ghosts are stores in several places. There is always a pointer to the “latest”, most up-to-date ghost for a given absolute location. This is the %afnToGhost cache. Every time GFS is invoked, it will attempt to store new state back into this cache. If that data has changed, GFS will also insert records into an ongoing multi-value hash called the %afnToFileHistoryGhost table. This table’s key is the AFN + effective date of the ghost.
+
+To reconstruct the history and locations of a ghost, one simply traverses this afnToFileHistoryGhost() for the AFN of interest. One might also identify other AFNS with the same UUID and add them. Then sort the records and you have the output.
+
+On flush, ghosts with an effective date on or after the time the script started are checkpointed out to journals. 
+ 
 
 
 
