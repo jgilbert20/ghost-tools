@@ -606,12 +606,15 @@ sub doverb_dbtest()
 	my $gdb = GhostDatabase->getCore();
 	my $tk = TruthKeeper::get();
 
-	my $g = $tk->obtainGhostForLFN( $afn );
-	$gdb->storeGhostToAFN( $g, $afn );
-	my $ng = $gdb->findGhostByAFN( $afn );
+	# my $g = $tk->obtainGhostForLFN( $afn );
+	# $gdb->storeGhostToAFN( $g, $afn );
+	# my $ng = $gdb->findGhostByAFN( $afn );
 
-	$ng->printDebug();
-
+	# $ng->printDebug();
+	$gdb->storeAFNforHash( "f", "bar");
+	$gdb->storeAFNforHash( "f2", "bar");
+	$gdb->storeAFNforHash( "f3", "bar");
+	print $gdb->findAFNsForHash( "f");
 
 
 }
@@ -1633,6 +1636,7 @@ package GhostDatabase;
 use BerkeleyDB;
 use BerkeleyDB::Hash;
 use BerkeleyDB::Btree;
+use Storable qw( freeze thaw );
 
 sub new
 {
@@ -1686,11 +1690,23 @@ sub init
 	    -Filename => "afn-to-ghost.db";
 
 	die "Failed to create afnToGhost: $!, $BerkeleyDB::Error" unless $afnToGhost;
+	$self->{AFN_TO_GHOST_DB} = $afnToGhost;	
 
-	my $status = $afnToGhost->db_put("foo","bar");
-	ckStatus( $status );
+	my $hashToAFN = new BerkeleyDB::Hash
+	    -Flags    => DB_CREATE,
+	   # -Propery  => DB_DUP,
+	    -Env => $bdb_env,
+	    -Filename => "hash-to-afn.db";
 
-	$self->{AFN_TO_GHOST_DB} = $afnToGhost;
+	die "Failed to create hashToAFN: $!, $BerkeleyDB::Error" unless $hashToAFN;
+	$self->{HASH_TO_AFN_DB} = $hashToAFN;	
+
+
+
+#	my $status = $afnToGhost->db_put("sdfsf","bar");
+#	ckStatus( $status );
+
+	
 }
 
 sub ckStatus
@@ -1698,6 +1714,16 @@ sub ckStatus
 	my $status = shift;
 
 	die "DB error: $!, $BerkeleyDB::Error" if $status; 
+}
+
+sub findAFNsbyHashAndPrefix
+{
+	my $self = shift;
+	my $hash = shift;
+	my $prefix = shift;
+
+
+
 }
 
 sub findGhostByAFN
@@ -1735,6 +1761,73 @@ sub findGhostByAFN
 	$self->{AFN_TO_GHOST_CACHE}->{$afn} = $gAFN;
 
 	return $gAFN; 
+
+}
+
+sub findAFNsForHash
+{
+	my $self = shift;
+	my $hash = shift;
+
+	my $content;
+	my $unpacked;
+	my $status; 
+
+	$status = $self->{HASH_TO_AFN_DB}->db_get( $hash, $content );
+	if( $status == DB_NOTFOUND )
+	{	
+		return undef; 
+	}
+	else
+	{	
+		ckStatus( $status );
+		$unpacked = thaw( $content );
+		return $unpacked; 
+	}
+}
+
+sub revokeAFNforHash
+{
+	my $self = shift;
+	my $afn = shift;
+	my $hash = shift;
+#	my $cursor = $self->{HASH_TO_AFN_DB}->cursor();
+#	my $status = $cursor->db
+}
+
+sub storeAFNforHash
+{
+	my $self = shift;
+	my $hash = shift;
+	my $afn = shift;
+	
+	my $content;
+	my $unpacked;
+	my $status; 
+
+	$status = $self->{HASH_TO_AFN_DB}->db_get( $hash, $content );
+	if( $status == DB_NOTFOUND )
+	{	
+		$unpacked = [];
+	}
+	else
+	{	
+		ckStatus( $status );
+
+		$unpacked = thaw( $content );
+
+	}
+
+	$main::run_db_puts++;
+
+	push @$unpacked, $afn;
+	
+	$status = $self->{HASH_TO_AFN_DB}->db_put( $hash, freeze( $unpacked ) );
+	ckStatus( $status );
+
+	# pish @$unpacked 
+
+
 
 }
 
@@ -3492,6 +3585,16 @@ sub hasDuplicateUnderTree
 	my $self = shift;
 	my $topLevel = shift;
 	my $target = shift;
+
+
+	my $hash = $target->getFullHash();
+	my $gdb = GhostDatabase->getCore();
+
+	my $afns = $gdb->findAFNsbyHashAndPrefix($hash,$target->absoluteLFN());
+
+
+
+
 
 	# We have to decide at this point if the universal cache is up to date. 
 	# Each FSE might handle this differently.
@@ -6344,7 +6447,7 @@ sub learnFullHash
 		# RULE 1: A stat can never be older than the hash in a given ghost
 
 		if( ($self->lastFullHash() < $time) and 
-			($self->lastStat() < $time ))
+			($self->lastStat() < $time ))	
 		{	
 			die "stat cannot be older than hash";
 		}
