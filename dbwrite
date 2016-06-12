@@ -1,0 +1,25 @@
+#!/usr/bin/perl 
+
+use strict ;
+use BerkeleyDB ;
+
+my $filename = "fruitx" ;
+# unlink $filename ;
+my $db = new BerkeleyDB::Btree
+           -Filename => $filename,
+           -Flags    => DB_CREATE
+   or die "Cannot open file $filename: $! $BerkeleyDB::Error\n" ;
+sub ckStatus
+{
+  my $status = shift;
+
+  die "DB error: $!, $BerkeleyDB::Error" if $status; 
+}
+
+
+while( <> )
+{
+	chomp;
+  my $status = $db->db_put( $_, $_ );
+  ckStatus( $status );
+}

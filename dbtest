@@ -1,0 +1,17 @@
+#!/usr/bin/perl 
+
+           use strict ;
+           use BerkeleyDB ;
+
+           my $filename = "fruit" ;
+           # unlink $filename ;
+           my $db = new BerkeleyDB::Hash
+                       -Filename => $filename,
+                       -Flags    => DB_CREATE
+               or die "Cannot open file $filename: $! $BerkeleyDB::Error\n" ;
+
+           # Add a few key/value pairs to the file
+           $db->db_put("apple", "red") ;
+           $db->db_put("orange", "orange") ;
+           $db->db_put("banana", "yellow") ;
+           $db->db_put("tomato", "red") ;

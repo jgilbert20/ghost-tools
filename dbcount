@@ -1,0 +1,53 @@
+#!/usr/bin/perl 
+
+use strict ;
+use BerkeleyDB ;
+
+
+my $start = (shift @ARGV) || '/private';
+
+
+my $filename = "fruitx" ;
+# unlink $filename ;
+my $db = new BerkeleyDB::Btree
+      -Filename => $filename,
+      -Flags    => DB_CREATE
+      or die "Cannot open file $filename: $! $BerkeleyDB::Error\n";
+
+sub ckStatus
+{
+  my $status = shift;
+
+  die "DB error: $!, $BerkeleyDB::Error" if $status; 
+}
+
+my $key = '/Users/jgilbert';
+my $value = shift;
+my $status = shift;
+
+# my $cursor = $db->db_cursor();
+
+# $status = $cursor->c_get($key, $value, DB_SET);
+
+# print "got $key\n";
+
+# $status = $cursor->c_get($key, $value, DB_NEXT);
+
+# print "got $key\n";
+
+my ($k, $v) = ($start, "") ;
+
+my $cursor = $db->db_cursor() ;
+$status = $cursor->c_get($k, $v, DB_SET_RANGE);
+print "First: $k\n";
+my $c =0;
+while ($cursor->c_get($k, $v, DB_NEXT) == 0)
+{ 
+  my $postfix = (substr $k, 0, (length $start));
+    last if $start ne $postfix;
+ # print "$k $postfix $start\n";
+  $c++;
+}
+
+
+print "$c\n";
