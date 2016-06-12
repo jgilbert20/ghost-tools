@@ -45,6 +45,7 @@ GFS gives you nearly instant, hyper-efficient incremental backups. It lets you s
 Sound too good to be true? The downsides:
 
 - GFS is not complete
+- To some, GFS's internals will seem overly complicated (most likely because it's design goals differ from similiar projects.)
 - GFS's test suite is not complete (about 5% done)
 - GFS is not built on git (even though we admire and love git, its not right for our use cases)
 - GFS is fast because it is highly reliant on lazy caching, which doesn't suit some software developers who want formal deterministic behavior from their caching

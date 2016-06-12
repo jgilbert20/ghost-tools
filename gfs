@@ -5828,7 +5828,6 @@ sub markDirty
 {
 	my $self = shift;
 
-
 	if( not defined $self->dirty() or ($self->dirty() == 0 ))
 	{
 		# print "***** First time dirty record\n";
