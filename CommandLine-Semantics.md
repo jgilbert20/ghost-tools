@@ -55,7 +55,7 @@ Inside, ~/backups, you’ll find directories like this:
 	~/backups/backup-20160502/work-dir/.... 
 	~/backups/backup-20160503/work-dir/.... 
 
-Inside each folder is everything that had changed on that particular date. The only think you have to watch out for is that a duplicated file is never stored twice, so you might not find every file necessarily where you’d expect it.
+Inside each folder is everything that had changed on that particular date. The only think you have to watch out for is that a duplicated file is never stored twice, so you might not find every file necessarily where you’d expect it. But GFS has tools to reconstruct those missing files if you want them. 
 
 However, simple file access to the “delta” directories is not particularly satisfying. We might prefer to actually reconstruct a copy of work-dir on a particular date, duplicates and all. Or we might want to do a diff between two arbitrary versions of your file tree, sort of like git. Or maybe we just want to look at the version history of one file.
 
@@ -112,7 +112,7 @@ If you want, you can move these backed up files to some new location, like a fla
 
 	mv ~/backups/201605*/work-dir/big-file.PSD /Volumes/usbstick
 
-Belive it or not, GFS is perfectly find with this. YOu still have valid backups, just in a different place. The key is that GFS needs to learn you’ve copied those files. Its philosophy is “do what you want, I’ll catch up later”
+Belive it or not, GFS is perfectly fine with this. YOu still have valid backups, just in a different place. The key is that GFS needs to learn you’ve copied those files. Its philosophy is “do what you want, I’ll catch up later”
 
 Of course, GFS isn’t a mindreader. It doesn’t run a damon or a background process. It has no idea you’ve just done this henious act. As far as its concerned, those backups don’t exist anymore. 
 
@@ -144,7 +144,13 @@ But the metadata isn’t even all that critical. In most cases, GFS can reconstr
 
 “Wait! Metadata! I don’t like that,” you say. “I want the freedom to not have extra sticky metadata directories that i have to back up!”
 
-Well, here is the real miracle: GFS can *recover* its metadata automatically. Even if you blow away ~/.gfs, it can usually reconstruct the history of your digital life. It does this by spreading your metadata around in different places. It writes spare copies of its metadata into little files called ‘.gfs_ip’ in each of your directories. It also pushes copies of its master metadata repositories into other places, including backup locations. 
+Bear in mind you don't ever need metadata. File backups always look like real files on your file system. So throwing away GFS is never going to cause you to loose data or backups. 
+
+But some people don't like metadata at all. More stuff to keep track of.
+
+We feel your pain, brother. 
+
+So here is the real miracle: GFS can *recover* its metadata automatically. Even if you blow away ~/.gfs, it can usually reconstruct the history of your digital life. It does this by spreading your metadata around in different places. It writes spare copies of its metadata into little files called ‘.gfs_ip’ in each of your directories. It also pushes copies of its master metadata repositories into other places, including backup locations. 
 
 This generally means you don’t need to worry about preserving or backing up anything in ~/.gfs, the magic directory where GFS keeps track of things. Even if you take away its special working directory, GFS is generally smart enough to look for other places (like your backup drives), and will start to rebuild its collection of meta information.
 
@@ -180,7 +186,7 @@ Say you issue a backup command like this one after removing all of its pointers 
 
 GFS doesn’t actually need metadata to track backups its made. It can infer the correct behavior without knowing what happened earlier. 
 
-In the case of big-file.PSD, GFS is smart enough to go back and look to see if had a hash duplicate of big-file.PSD inside of the ~/backups directory. If it doesn’t, a copy is initiated. If it does have a copy, it will will avoid backing up. It doesn’t need meta-data to tell us if a backup has been made. Of course, it doesn’t know what is in the backups directory anymore because you destroyed its tracking pointers. So GFS will simply reconstruct the information it formally had “on demand”. 
+In the case of big-file.PSD, GFS is smart enough to go back and look to see if had a hash duplicate of big-file.PSD inside of the ~/backups directory. If it doesn’t, a copy is initiated. If it does have a copy, it will will avoid backing up. It doesn’t need meta-data to tell us if a backup has been made. Of course, it doesn’t know what is in the backups directory anymore because you destroyed its tracking pointers. So GFS will simply reconstruct the information it formally had “on demand” by reading the source files.
 
 The principal GFS always uses is: *The correctness of the operation is not defined by the metadata, its defined by the actual files on the disk*.
 
@@ -196,7 +202,7 @@ But lets say there does happen to be a file that is 230043593 bytes already in t
 
 In the process of all of this size checking and (rare) checksum operations, GFS is going to learn new things about the files on your disk. It’s going to want a place to store that new information so it doesn’t have to be expensive the next time you ask it to do things. So it going to start writing bits of metadata to prevent having to do the work again in the future.
 
-Eventually, almost all of the source-record verifiable information in your backup directory will be reacquired, and GFS’s metadata will return to it’s (mostly) former state!
+Eventually, almost all of the source-record verifiable information in your backup directory will be reacquired, and GFS’s metadata will return to it’s (mostly) former state! The major thing that will be lost is lshistory. GFS will loose its understanding that all of these backed up files used to live in the same place. But that has very few implications to the user. 
 
 Another way of looking at this is that most of the metadata that gives GFS its magic is mostly just a cache of things that can be verified on disk. There are only really 3 reasons for this metadata in the first place:
 

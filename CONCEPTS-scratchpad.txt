@@ -114,27 +114,6 @@ maybe that creates a use for “upstream AFN, upstream UUID”??
 
 
 
-# Cool tools to check
-
-https://github.com/bup/bup
-
-http://superuser.com/questions/730592/compressing-many-similar-big-files/730598
-https://git-annex.branchable.com/future_proofing/
-http://ck.kolivas.org/apps/lrzip/README
-https://raw.githubusercontent.com/bup/bup/master/DESIGN
-
-
-git annex is cool! i want it to do what i want! but it doesn.t its stuck doign
-everything like a big git repository that knows how to shuffle files around.
-you have to manually add things into the annex and commit them. My style is
-more to just put files around in any place I want them and then worry about
-redudancy later. Annex is nice though becuase it seems to provide closure
-around a set of "managed" files so there is no confusion as to what your
-archive looks like no matter where the peices are scattered.
-
-and bup is way cool too, but also seemingly tied to being a backup tool. But
-its got way awesome large file saving and incremental backup support.
-
 in my ideal tool, i'd do the following
 
 	gfs init-volume /              laptop-root
