@@ -37,7 +37,7 @@ my $ZERO_LEN_FILE = [];
 
 my $icDebug             = 0;
 my $tkdebug             = 0;
-my $tkflushdebug        = 1;
+my $tkflushdebug        = 0;
 my $gsDebug             = 0;
 my $gdbDebug            = 0;
 my $duplicateDebug      = 0;
@@ -52,7 +52,6 @@ my $statStructDebug     = 0;
 my $provenanceDebug     = 1;
 
 # Major globals
-
 
 my $PATH_DEFAULT_OBJECT_STORE = '__xx-GFS-ojx/test';
 my $PATH_DEFAULT_DB_DIR = "__db-test";
@@ -493,6 +492,11 @@ sub handleVerb
 		return;
 	}
 
+	if( $verb eq "backup" )
+	{
+		doverb_backup();
+		return;
+	}
 
 	if( $verb eq "mkvol" )
 	{
@@ -517,6 +521,14 @@ sub handleVerb
 	if( $verb eq "rsync")
 	{
 		doverb_rsync();
+		return;
+	}
+
+
+
+	if( $verb eq "stat")
+	{
+		doverb_stat();
 		return;
 	}
 
@@ -627,7 +639,99 @@ sub doverb_store()
 }
 
 
+sub doverb_backup()
+{
+	my $command = shift @ARGV;
 
+	if( $command eq 'run' )
+	{
+		doverb_backup_run();
+	}
+	else
+	{
+		die "Unrecognized backup command: $command.";
+	}
+}
+
+# For every named file, ask if it is present in the destination path We'd
+# rather not do a recurive check, save this for a checkpoint operation
+#
+# I don't know if ghost stores are the right way to handle this. they would be
+# unable to reconstruct the hash filters from disk in an efficient way. (E.g.
+# BDB, or bloom filters, etc.)
+#
+# So I'm going to instead implement some ghost semantics for this type of
+# question with the idea that we can use the AFN caches and other things over time.
+#
+# This is redundant functionality to the GhostStore approach, but I think will be needed
+# for scalability and performance reasons. 
+#
+# Ghost->getHashUnderPath();
+
+
+
+
+sub doverb_backup_run()
+{
+	my $target = pop @ARGV;
+	my @source = @ARGV;
+	my $tk = TruthKeeper::get();
+	my ($targetGS, $targetStash) = $tk->makeGhostsFromCommandLine( $target );
+	my ($sourceGS, $sourceStash) = $tk->makeGhostsFromCommandLine( @source );
+	
+	my( $targetUserFN, $targetFqlfn, $targetGhost ) = @{$targetStash->[0]};
+
+	if( not $targetGhost->exists() )
+	{
+		die "Cannot stat() target: $targetUserFN! $!";
+	}
+
+	die unless $targetGhost->canHaveChildren();
+
+	my ($targetHandler, $targetRoot, $targetPath)  = $targetGhost->getLFNcompontents();
+
+	my $sourceGSiterator = $sourceGS->getIterator();
+	while( my $g = $sourceGSiterator->next() )
+	{
+		my $sourceLFN = $g->lfn();
+		my $sourcePath = $g->getPath(); 
+		my $basename = basename $g->getPath();
+		my $newPath = File::Spec->catfile( $targetPath, "backup-$$", $sourcePath );
+		my $targetLFN = main::assembleLFN( $targetHandler, $targetRoot, $newPath );
+
+		print "--- BACKUP -------------------\n";
+		print "[$sourcePath] -> [$newPath]\n";
+
+
+		$targetGhost->hasDuplicateUnderTree();
+		# how to implement?
+		# one way is to hit BDB
+		#    we first look for size duplicates across that entire path
+		#        then check the hashes
+		#        if too many, we force a hash strategy
+		#    second way is to check for a hash
+		#        and then filter out results not under that path
+		#	 the final check is hasAcceptableChecksum() 
+		#
+		# a volume would be able to do this more efficiently by letting us
+		# create a BDB locally
+		# 
+		# if we don't trust BDB is up to date, we'd have to checkpoint the working tree entirely.
+		# ghost can pass this up to its FSE (And should) 
+
+
+
+
+
+
+	}
+
+
+
+
+
+
+}
 
 
 sub doverb_voladd()
@@ -639,8 +743,9 @@ sub doverb_voladd()
 	my $tk = TruthKeeper::get();
 
 	my ($targetGS, $targetStash) = $tk->makeGhostsFromCommandLine( @ARGV );
-
 	my( $targetUserFN, $targetFqlfn, $targetGhost ) = @{$targetStash->[0]};
+
+	die "not implemented."
 }
 
 
@@ -875,7 +980,7 @@ sub doverb_checksum()
 	while( my $g = $i->next() )
 	{
 		my $lfn = shift; 
-
+		next if $g->canHaveChildren();
 
 
 		my $fullHash = $g->getFullHash();
@@ -885,6 +990,26 @@ sub doverb_checksum()
 	}
 }
 
+
+# Scans, generating a stat for every file recursively.
+
+sub doverb_stat()
+{
+	my $tk = TruthKeeper::get();
+	my ($targetGS, $targetStash) = $tk->makeGhostsFromCommandLine( @ARGV );
+	my $i = $targetGS->getIterator();
+	while( my $g = $i->next() )
+	{
+		my $lfn = shift; 
+
+
+
+		my $fullHash = $g->getFullHash();
+		# $g->printDebug();
+
+		print +(join "\t", $fullHash, $g->lfn()), "\n";
+	}
+}
 
 
 
@@ -1584,7 +1709,6 @@ sub findGhostByAFN
 	{
 		# return $self->{AFN_TO_GHOST_CACHE}->{$afn};
 	}
-
 
 	my $value;
 
@@ -3361,6 +3485,52 @@ sub moveGhost
 }
 
 
+
+
+sub hasDuplicateUnderTree
+{
+	my $self = shift;
+	my $topLevel = shift;
+	my $target = shift;
+
+	# We have to decide at this point if the universal cache is up to date. 
+	# Each FSE might handle this differently.
+
+	# I think the check would recurively look at subdirectories? Or maybe just
+	# simple time based? I'd like to find some way to prevent the need for the
+	# user to be smart enough to know that a checkpoint is needed.
+	#
+	# One way to handle this is there is some kind of
+	# "hasAcceptableDirscan()". If dirscan is popualted for an AFN, we could avoid
+	# the full traversal. But an acceptable dirscan on the .gfs_ip doesn't mean the
+	# one inside the cache is up to date.
+	#
+	# you'd want two fields (most recent enumer, and oldest enum.) 
+	# 
+	# maybe there is a recursive way. I can "test my own" understanding.
+	# first, i get the GFS_IP for the current directory
+	# its going to have some stats in it about sizes and file counts and whatnot.
+	# and i compare that to my own db enumeration.
+	#
+	# BDB may or may not be quick enough to allow this..?
+	# but doesn't its Btree have some sort of "# records between?"
+	# that would be optimal
+	# that is the check?
+	#
+	# the problem of a cache of a cahce of this kind it hat the "full deal" is what matters.
+	# it seems to take about 1.4 user seconds to enumerate 1.36M rows in BDB
+	# that tells me we've got a lot of room to grow here
+	#
+	# 
+
+
+
+}
+
+
+
+
+
 # Returns a new available location for a file that is writeable and guarenteed
 # to not be re-used
 
@@ -4888,6 +5058,14 @@ sub clone
 
 	$c->pullValuesFromGhost( $self );
 	
+	if( $provenanceDebug )
+	{
+		my $sid = $self->debugID();
+		my $cid = $c->debugID();
+		$self->addDebugProvenance( "cloneto($cid)");
+		$c->addDebugProvenance( "clonefrom($sid)");
+	}
+
 	return $c;
 }
 
@@ -4937,7 +5115,6 @@ sub pullValuesFromGhost
 	$self->attributes( 	     $target->attributes() );
 
 	$self->statStruct( 	     $target->statStruct()->copy() );
-
 
 	$self->dirty( 0 );
 	$self->isTKversion( 0 );
@@ -5632,6 +5809,21 @@ sub moveGhost
 }
 
 
+
+
+############
+
+
+sub hasDuplicateUnderTree()
+{
+	my $self = shift;
+	my $thing = shift;
+
+	return $self->getFSE()->hasDuplicateUnderTree( $self, $thing );
+}
+
+
+
 ###########
 # Getting a hardfile
 #
@@ -5809,6 +6001,7 @@ sub learnFromGhost
 		$self->markDirty();
 	}
 
+
 	if( defined $g->lastStat() )
 	{
 		my $size = $g->size();
@@ -5903,7 +6096,7 @@ sub markDirty
 	if( 1 )
 	{
 		my $gid = $self->debugID();
-		debug "Ghost ($gid) marked dirty";
+		debug "Ghost ($gid) marked dirty" if $learnDebug;
 	}
 }
 
@@ -6007,10 +6200,18 @@ sub learnStat
 
 	$self->verifyGhostIsMutable();
 
-	# RULE1: t(stat) > t(hash) or BOMB
+	# RULE1: t(stat) > t(hash) 
+	# We may learn about a stat done after a hash
 
-	if( (defined $self->lastFullHash()) && ($time < $self->lastFullHash() ))
+	if( (defined $self->lastFullHash()) && 
+		($time < $self->lastFullHash()) &&
+		($time > $self->lastStat() ))
 	{
+
+		warn "ERROR case where last full hash  > time (time=$time)";
+		print "WARN: Self:\n";
+		$self->printDebug();
+
 		die "RULE 1: RULE1: t(stat) > t(hash) or BOMB";
 	}
 
@@ -6125,8 +6326,14 @@ sub learnFullHash
 
 	# RULE 1: A stat can never be older than the hash in a given ghost
 
-	if( defined $self->lastFullHash() and defined $self->lastStat() )
+	if( (defined $self->lastFullHash()) and 
+		(defined $self->lastStat()) and
+		($time > $self->lastStat() ))
 	{	
+		warn "ERROR case where last full hash  > time (time=$time)";
+		print "ERRR: Self:\n";
+		$self->printDebug();
+
 		die "stat cannot be older than hash (assert)" unless $self->lastFullHash() <= $self->lastStat();
 	}	
 
@@ -6136,7 +6343,11 @@ sub learnFullHash
 	{
 		# RULE 1: A stat can never be older than the hash in a given ghost
 
-		die "stat cannot be older than hash" unless $self->lastFullHash() <= $time;
+		if( ($self->lastFullHash() < $time) and 
+			($self->lastStat() < $time ))
+		{	
+			die "stat cannot be older than hash";
+		}
 	
 		# Rule 2: New information with same date must be same information
 
