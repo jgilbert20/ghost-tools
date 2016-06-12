@@ -3218,7 +3218,7 @@ sub generateAlternativeLocation
 	my $scramble = 0;
 	my $finalNewOrphanLFN = 0; 
 
-	my $datestr = POSIX::strftime( "%Y%m%d", gmtime() );
+	my $datestr = POSIX::strftime( "%Y%m%d", localtime() );
 
 	while( not $newOrphanNameFound )
 	{
@@ -3866,7 +3866,7 @@ sub obtainGhostForLFN
 	my $g = Ghost->make_private( $lfn );
 	# registers 
 	$self->incorporateGhostData( $g );
-	$g->dirty(1);
+	$g->markDirty();
 	$g->isTKversion(1);
 
 	if( $handler eq "fs" )
@@ -4809,19 +4809,19 @@ sub newFromSerialized($)
 	# GHOST_NEW_FIELD: Place 1/4 where you add new fields to ghosts
 
 	$self->lfn( $serialLFN );
+	$self->effectiveDate( shift @a );
+	$self->sequence( shift @a );
+	$self->uuid( shift @a );
+	$self->lastStat( shift @a );
 	$self->lastFullHash( shift @a );
 	$self->size( shift @a );
 	$self->mode( shift @a );
+	$self->mtime( shift @a );
 	$self->fullHash( shift @a );
 	$self->lastDirScan( shift @a );
-	$self->lastStat( shift @a );
 	$self->lastEnumerated( shift @a );
 	$self->firstStat( shift @a );
 	$self->fileStatus( shift @a );
-	$self->mtime( shift @a );
-	$self->uuid( shift @a );
-	$self->sequence( shift @a );
-	$self->effectiveDate( shift @a );
 	$self->attributes( shift @a );
 
 	my $statStructSerialized = shift @a; 
@@ -4990,17 +4990,15 @@ sub quickDebugString
 
 	my $debugID = $self->_debugID();
 	my $size 			= defined( $self->size() ) 		? $self->size() : "_";
-my $lfn 			= defined( $self->lfn() ) 		? $self->lfn() : "_";
+	my $lfn 			= defined( $self->lfn() ) 		? $self->lfn() : "_";
 # my $immutable 		= defined( $self->_immutable() ) 		? $self->_immutable() : "_";
 	my $fullHash 		= defined( $self->fullHash() ) 		? $self->fullHash() : "_";
 
-		$fullHash =~ /(\w{5,5})$/;
-		my $fh = $1 || "_";
-		my $ix = defined $self->_immutable() ? ($self->_immutable() >0 ? "I+" : "I-" ) : 'I_'; 
+	$fullHash =~ /(\w{5,5})$/;
+	my $fh = $1 || "_";
+	my $ix = defined $self->_immutable() ? ($self->_immutable() >0 ? "I+" : "I-" ) : 'I_'; 
 
-		return "$debugID/$size/$fh/$ix/$lfn"
-
-
+	return "$debugID/$size/$fh/$ix/$lfn";
 }
 
 sub makeDebugString
@@ -5144,19 +5142,19 @@ sub serialize()
 	# GHOST_NEW_FIELD: Place 3/4 where you add new fields to ghosts
 
 	my @s = ( $lfn, 
+			  $self->effectiveDate(),
+			  $self->sequence(),
+			  $self->uuid(),
+			  $self->lastStat(),
 			  $self->lastFullHash(),
 			  $self->size(),
 			  $self->mode(),
+			  $self->mtime(),
 			  $self->fullHash(),
 			  $self->lastDirScan(),
-			  $self->lastStat(),
 			  $self->lastEnumerated(),
 			  $self->firstStat(),
 			  $self->fileStatus(),
-			  $self->mtime(),
-			  $self->uuid(),
-			  $self->sequence(),
-			  $self->effectiveDate(),
 			  $self->attributes(),
 			  $statStructSerialized
 			  );
@@ -5547,6 +5545,53 @@ sub learnFromGhost
 		debug "++++++++++++++++++++++++++++++++++ END\n";
 	}
 
+	die if $g->effectiveDate() > time();
+
+	my $sequence = $self->sequence();
+
+	if( defined $g->sequence() )
+	{
+		if( not defined $self->sequence() )
+		{
+			# i must not be dirty 
+			die "assert" if $self->dirty();
+			$self->sequence( $g->sequence() );
+			# this next call will ensure that the sequence number is bumped.
+			$self->markDirty();
+		}
+		else
+		{
+			# I want to be equal to or greater than the other ghost unless I
+			# am already dirty, in which case bump one more.
+			if( $self->dirty() )
+			{
+				if( $g->sequence() >= $self->sequence )
+				{
+					$self->sequence( $g->sequence() + 1 );
+				}
+			}
+			else
+			{
+				if( $g->sequence() >= $self->sequence )
+				{
+					$self->sequence( $g->sequence() );
+				}
+			}
+		}
+	}
+
+	if( defined $g->uuid() and !defined $self->uuid() )
+	{
+		$self->uuid( $g->uuid() );
+		$self->markDirty();
+	}
+
+	if( defined $g->sequence() and !defined $self->uuid() )
+	{
+		$self->uuid( $g->uuid() );
+		$self->markDirty();
+	}
+
 	if( defined $g->lastStat() )
 	{
 		my $size = $g->size();
@@ -5562,6 +5607,25 @@ sub learnFromGhost
 		my $hash = $g->fullHash();
 		$self->learnFullHash( $g->lastFullHash(), $hash );
 	}
+
+	# if after all of this stuff above we are still somehow not >= to the
+	# target's effective date, something is wrong.
+
+	if( defined $g->effectiveDate() )
+	{
+		if( defined $self->effectiveDate() )
+		{
+			if( $self->effectiveDate() < $g->effectiveDate() )
+			{
+				die "Internal assert - doesn't seem right to not be one step ahead of target";
+			}
+		}
+		else
+		{
+			die "How did we learn nothing from the target? suspicious!";
+		}
+	}
+
 
 }
 
@@ -5581,6 +5645,34 @@ sub learnPresent
 }
 
 
+sub markDirty
+{
+	my $self = shift;
+
+
+	if( not defined $self->dirty() or ($self->dirty() == 0 ))
+	{
+		print "***** First time dirty record\n";
+
+		if( defined $self->sequence() )
+		{
+			$self->sequence( $self->sequence() + 1 );
+		}
+		else
+		{
+			$self->sequence( 0 );
+		}
+
+		if( not defined $self->uuid() )
+		{
+			my $datestr = POSIX::strftime( "%Y%m%d-%H%M%S", localtime() );
+			$self->uuid( "uuid-$$-$datestr")
+		}
+	}
+	$self->dirty(1);
+
+	$self->effectiveDate( time() );
+}
 
 
 
@@ -5600,7 +5692,7 @@ sub learnDirscan
 	# TODO: Do we want a dirscan to always force an update to the ghost?
 	# With this next line commented out, a new directory scan will not by itself
 	# force an update
-	# $self->dirty(1);
+	# $self->markDirty()
 
 	$self->learnPresent( $time );
 }
@@ -5770,7 +5862,7 @@ sub learnStat
 		CODEPATH( "new stat did not mark dirty" );
 	}
 
-	$self->dirty(1) if $anythingHasChanged;
+	$self->markDirty() if $anythingHasChanged;
 }
 
 sub learnFullHash
@@ -5832,7 +5924,7 @@ sub learnFullHash
 
 	$self->lastFullHash( $time );
 	$self->fullHash( $hash );
-	$self->dirty(1);
+	$self->markDirty();
 }
 
 # Deleted means that we did not see the ghost on a recent scan. Mark as
@@ -5850,7 +5942,7 @@ sub learnDeleted
 	$self->lastDirScan( $time );
 
 	# TODO: Do we want a dirscan to always force an update to the ghost?
-	$self->dirty(1);
+	$self->markDirty();
 }
 
 use Fcntl ':mode';
