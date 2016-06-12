@@ -615,11 +615,8 @@ sub doverb_dbtest()
 	$gdb->storeAFNforHash( "f", "bar2");
 	$gdb->storeAFNforHash( "f", "bar3");
 	$gdb->storeAFNforHash( "f", "bar4");
-	$gdb->storeAFNforHash( "f2", "bar");
-	$gdb->storeAFNforHash( "f3", "bar");
-	print $gdb->findAFNsForHash( "f");
-
-
+	$gdb->revokeAFNforHash( "f", "bar2");
+	print join '|||', @{$gdb->findAFNsForHash( "f")};
 }
 
 # doverb_store
@@ -643,7 +640,6 @@ sub doverb_store()
 
 	$targetGhost->store( $sourceGhost );
 }
-
 
 sub doverb_backup()
 {
@@ -673,9 +669,6 @@ sub doverb_backup()
 # for scalability and performance reasons. 
 #
 # Ghost->getHashUnderPath();
-
-
-
 
 sub doverb_backup_run()
 {
@@ -1725,6 +1718,9 @@ sub findAFNsbyHashAndPrefix
 	my $hash = shift;
 	my $prefix = shift;
 
+	print "Looking for hash:$hash under prefix:$prefix\n";
+
+
 
 
 }
@@ -1772,12 +1768,42 @@ sub findAFNsForHash
 	my $self = shift;
 	my $hash = shift;
 
+	my $db = $self->{HASH_TO_AFN_DB};
+	return $self->performRetreivalOnPerlStructFromKey($db, $hash );
+}
+
+sub revokeAFNforHash
+{
+	my $self = shift;
+	my $hash = shift;
+	my $afn = shift;
+
+	my $db = $self->{HASH_TO_AFN_DB};
+
+	my $func = 
+	sub 
+	{ 
+		my $var = shift;
+		@$var = grep { $_ ne $afn; } @$var;
+	};
+
+	$self->performOperationOnPerlStructFromKey( $db, $hash, $func );
+}
+
+sub performRetreivalOnPerlStructFromKey
+{
+	my $self = shift;
+	my $db = shift;
+	my $key = shift;
+
 	my $content;
 	my $unpacked;
 	my $status; 
 
-	$status = $self->{HASH_TO_AFN_DB}->db_get( $hash, $content );
-	if( $status == DB_NOTFOUND )
+	$main::run_db_gets++;
+
+	$status = $db->db_get( $key, $content );
+	if( !defined $status or $status == DB_NOTFOUND )
 	{	
 		return undef; 
 	}
@@ -1787,15 +1813,7 @@ sub findAFNsForHash
 		$unpacked = thaw( $content );
 		return $unpacked; 
 	}
-}
 
-sub revokeAFNforHash
-{
-	my $self = shift;
-	my $afn = shift;
-	my $hash = shift;
-#	my $cursor = $self->{HASH_TO_AFN_DB}->cursor();
-#	my $status = $cursor->db
 }
 
 sub performOperationOnPerlStructFromKey
@@ -1845,16 +1863,10 @@ sub storeAFNforHash
 		{
 			return if $m eq $afn;
 		}
-
 		push @$var, $afn;
-
 	};
 
 	$self->performOperationOnPerlStructFromKey( $db, $hash, $func );
-
-
-
-
 }
 
 sub storeGhostToAFN
@@ -3836,6 +3848,12 @@ sub debug($)
 	main::debug( "TK: " . $a );
 }
 
+sub CODEPATH($)
+{	
+	my $p = shift; 
+	main::CODEPATH( "TK: $p" );
+}
+
 
 # Takes ghosts provided by a command line and  blows out a fully qualified LFN
 # and gets the ghosts returns a nice structure of data you'd need for iteration
@@ -3936,9 +3954,34 @@ sub flushUniversalStore
 		debug( "             |->AFN: $afn") if $tkflushdebug;
 
 		my $absGhost = $gdb->findGhostByAFN( $afn );
-		$absGhost->learnFromGhost( $g );
- 		$gdb->storeGhostToAFN( $g, $afn );
 
+		my $originalAbsFH = $absGhost->fullHash();
+		my $originalGhostFH = $g->fullHash(); 
+
+		$absGhost->learnFromGhost( $g );
+
+		my $newAbsFH = $absGhost->fullHash();
+
+		if( !defined $newAbsFH )
+		{
+			if( defined $originalAbsFH )
+			{
+				CODEPATH( "Revoke AFN/Hash, no new hash");
+				$gdb->revokeAFNforHash( $afn, $originalAbsFH );
+			}
+		}
+		else
+		{
+			if( (defined $originalAbsFH) && $newAbsFH ne $originalAbsFH )
+			{
+				CODEPATH( "Revoke AFN/Hash, new hash");
+				$self->revokeAFNforHash( $afn, $originalAbsFH );
+			}
+
+			$gdb->storeAFNforHash( $afn, $newAbsFH );
+		}
+
+ 		$gdb->storeGhostToAFN( $g, $afn );
 
  		if( $g->everWasDirtyThisRun() )
  		{
@@ -3946,7 +3989,6 @@ sub flushUniversalStore
  			print FILE $g->serialize();
  			print FILE "\n";
  			close FILE; 
-
  		}
 
 

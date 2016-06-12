@@ -16,6 +16,14 @@ a --test-harness mode
 	makes debug statements go to STDERR
 	should dump out run variables at the end
 
++++++++++++++++
+
+Verify that adding and removing AFNs properly propogates through to the AFN global cache, within and across invocations.
+
+
+
+
+
 ++++++
 
 found a really nasty situation -- RESOLVED, DUE TO AFN CACHE SAVE
