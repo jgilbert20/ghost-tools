@@ -30,6 +30,9 @@ use MLDBM qw( BerkeleyDB::Hash Storable );
 sub debug($);
 
 
+my $ZERO_LEN_FILE = [];
+
+
 # Debug control
 
 my $icDebug = 0;
@@ -1047,7 +1050,7 @@ sub doverb_rsync
 	$gst->printDebug();
 	print "******************* Post Orphan Pillage\n";
 	$gst->printDebugWithPaths();
-	
+
 
 	$gst->handleLocalCopyFromGS( $gst->obtainCurrentStateAsGS() );
 
@@ -1064,6 +1067,7 @@ sub doverb_rsync
 	print "******************* Long Haul \n";
 	$gst->printDebugWithPaths();
 
+$gst->handleZeroLengthFiles();
 
 	my $xgs = $gst->obtainCurrentStateAsGS();
 
@@ -2032,7 +2036,10 @@ sub debugStringForLFN
 else
 {
 	$original = $original->debugID() if ref $original;
+
+	$current = "<ZEROLEN>" if $current == $ZERO_LEN_FILE;
 	$current = $current->debugID() if ref $current;
+
 	$final = $final->debugID() if ref $final;
 }
 
@@ -2073,6 +2080,21 @@ sub createClearanceMoves
 			$ogs->addGhost( $current );
 		}
 	}
+}
+
+# operation to create a zero length file. 
+
+sub touchLFN
+{
+	my $self = shift;
+	my $to = shift;
+
+	# largely unimplemented now. Used to touch zero length files. 
+
+	$self->addWorklist( -action=>'TOUCH', -destination=>$to, -debug=>"X" );
+	my $o = $self->_getCurrent($to);
+	die if defined $o; 
+	$self->_setCurrent($to, $ZERO_LEN_FILE);
 }
 
 sub moveLFN
@@ -2134,6 +2156,7 @@ sub obtainCurrentStateAsGS
 	{
 		my ( $original, $current, $final ) = @{$lfnState->{$lfn}};
 		next if not defined $current; 
+		next if $current == $ZERO_LEN_FILE;
 		next if $seen{$current->lfn()}++;
 		$gs->addGhost( $current );
 	}
@@ -2234,11 +2257,16 @@ sub verifyCorrectness
 
 		print "Verify: GST=".$self->debugStringForLFN( $lfn )."\n";
 
+		if( $current == $ZERO_LEN_FILE )
+		{
+			die unless $final->getSize() == 0;
+		}
+
 		if( defined $final and !defined $current)
 		{
 			die "Position not defined: $lfn";
 		}
-		if( defined $final )
+		if( defined $final && $final->getSize() > 0 )
 		{
 			die "Hash mismatch @ $lfn"  unless $final->isDuplicateOf($current);
 		}
@@ -2246,6 +2274,32 @@ sub verifyCorrectness
 
 }
 
+
+sub handleZeroLengthFiles
+{
+
+	my $self = shift;
+	my $lfnState = $self->_lfnState();
+	foreach my $lfn ( sort keys %$lfnState )
+	{
+		my ( $original, $current, $final ) = @{$lfnState->{$lfn}};
+
+		print "handleZero: GST=".$self->debugStringForLFN( $lfn )."\n";
+
+		if( defined $final and !defined $current)
+		{
+			if( $final->getSize() == 0 )
+			{
+				$self->touchLFN( $lfn );
+			}
+		}
+	}
+}
+
+
+# Looks for items in the passed in ghost-store as a source for the hash
+# information needed at the final destination and generates
+# haul records to copy those in. 
 
 sub handleLongHaulCopyFromGS
 {
@@ -2296,8 +2350,8 @@ sub addWorklist
 
 	my $action = $hash{-action};
 
-	my $S = $hash{-source};
-	my $D = $hash{-destination};
+	my $S = defined $hash{-source} ? $hash{-source} : "undef";
+	my $D = defined $hash{-destination} ? $hash{-destination} : "undef";
 
 	print "Adding Worklist: $action [$S] [$D]\n";
 
@@ -2318,8 +2372,8 @@ sub printWorklist
 	{
 			my $action = $hash->{-action};
 
-	my $S = $hash->{-source};
-	my $D = $hash->{-destination};
+	my $S = defined $hash->{-source} ? $hash->{-source} : "undef";
+	my $D = defined $hash->{-destination} ? $hash->{-destination} : "undef";
 
 	print "$action $S $D\n";
 
