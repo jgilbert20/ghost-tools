@@ -49,6 +49,9 @@ my $statStructDebug = 0;
 
 # Major globals
 
+
+my $PATH_DEFAULT_OBJECT_STORE = '__xx-GFS-ojx/test';
+my $PATH_DEFAULT_DB_DIR = "__db-test";
 my $DESCRIPTOR_FILENAME = ".gfs_ip";
 my $SERIALIZATION_VERSION_NUMBER = 5;
 my $GENERAL_DEBUG = 1;
@@ -212,7 +215,7 @@ sub setupDatabases
 	#     -ErrFile => "$DBDIR/Errors-$$",
 	#     -ErrPrefix => "GFS";
 
-	my $gdb = GhostDatabase->new();
+	my $gdb = GhostDatabase->new( $PATH_DEFAULT_DB_DIR );
 	$gdb->init();
 
 	$main::coreGhostDatabase = $gdb;
@@ -256,7 +259,7 @@ sub init
 	verifyWorkingDirectories();
 	setupDatabases();
 	$main::localFileSystemFSE = new FilesystemExplorer::FS();
-	my $ojx = FilesystemExplorer::ObjectStore->new( 'xx-GFS-ojx/test' );
+	my $ojx = FilesystemExplorer::ObjectStore->new( $PATH_DEFAULT_OBJECT_STORE );
 	$ojx->setUpRepository();
 
 	$main::coreOjxFSE = $ojx; 
@@ -1504,7 +1507,6 @@ sub globalMkPath
 
 }
 
-
 # Encapsulation around a fast disk-based database of ghost information
 
 package GhostDatabase;
@@ -1516,8 +1518,11 @@ use BerkeleyDB::Btree;
 sub new
 {
 	my $class = shift;
+	my $path = shift;
 	my $self = {};
 	bless $self, $class;
+
+	$self->{PATH} = $path;
 	return $self; 
 }
 
@@ -1542,7 +1547,7 @@ sub init
 {
 	my $self = shift;
 
-	my $DBDIR = "db-test";
+	my $DBDIR = $self->{PATH};
 
 	main::globalMkPath( $DBDIR );
 
