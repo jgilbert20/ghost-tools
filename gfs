@@ -640,14 +640,7 @@ sub doverb_voladd()
 	my ($targetGS, $targetStash) = $tk->makeGhostsFromCommandLine( @ARGV );
 
 	my( $targetUserFN, $targetFqlfn, $targetGhost ) = @{$targetStash->[0]};
-
-
-
-
 }
-
-
-
 
 
 
@@ -997,7 +990,6 @@ sub doverb_rsync
 	my ($targetGS, $targetStash) = $tk->makeGhostsFromCommandLine( $target );
 	my ($sourceGS, $sourceStash) = $tk->makeGhostsFromCommandLine( @source );
 	
-
 	my( $targetUserFN, $targetFqlfn, $targetGhost ) = @{$targetStash->[0]};
 
 	if( not $targetGhost->exists() )
@@ -1010,7 +1002,6 @@ sub doverb_rsync
 	my ($targetHandler, $targetRoot, $targetPath)  = $targetGhost->getLFNcompontents();
 
 	my $gst = new GhostStateTransform();
-
 	my $targetGSiterator = $targetGS->getIterator();
 	while( my $g = $targetGSiterator->next() )
 	{	
@@ -1076,8 +1067,13 @@ $gst->handleZeroLengthFiles();
 	$gst->handleLocalCopyFromGS( $xgs );
 
 
-	$gst->printWorklist();
+	
 	$gst->verifyCorrectness();
+
+
+	$gst->printWorklist();
+
+	$gst->execute();
 
 	#$gst->printDebug();
 
@@ -1496,7 +1492,7 @@ sub extractHashComponents
 sub globalMkPath
 {
 	my $p = shift; 
-	# debug "Mkpath: $p";
+	debug "Mkpath: $p";
 	File::Path::make_path( $p );
 
 	$@ and die "Couldn't create dir path: $@";
@@ -1815,6 +1811,9 @@ sub new
 
 	$self->_lfnState( {} );
 	$self->orphanGS( GhostStore->new() );
+
+
+	$self->{WL} = [];
 
 	return $self;
 }
@@ -2346,7 +2345,6 @@ sub addWorklist
 {
 	my $self = shift;
 	my %hash = @_;
-	my $worklist = 
 
 	my $action = $hash{-action};
 
@@ -2364,20 +2362,83 @@ sub addWorklist
 }
 
 
+sub execute
+{
+	my $self = shift;
+	my $worklist = $self->{WL};
+
+	my $numOperations = @$worklist;
+	my $i = 0;
+
+	my $tk = TruthKeeper::get();
+
+
+	foreach my $hash (@$worklist)
+	{
+		print "------------------ Operation $i / $numOperations\n";
+
+
+		my $action = $hash->{-action};
+
+		my $S = defined $hash->{-source} ? $hash->{-source} : undef;
+		my $D = defined $hash->{-destination} ? $hash->{-destination} : undef;
+
+		my $SG = $tk->obtainGhostForLFN( $S ) if defined $S;
+		my $DG = $tk->obtainGhostForLFN( $D ) if defined $D;
+
+		my $Sdebug = defined $hash->{-source} ? $hash->{-source} : "undef";
+		my $Ddebug = defined $hash->{-destination} ? $hash->{-destination} : "undef";
+
+
+		print "Action->[$action] source:[$Sdebug] destination:[$Ddebug]\n";
+
+		if( $action eq 'HAUL' )
+		{
+			print "Source: " . $SG->quickDebugString() . "\n";
+			print "Dest  : " . $DG->quickDebugString() . "\n";
+			$DG->store( $SG );
+		}
+		elsif( $action eq 'COPY' )
+		{
+			print "Source: " . $SG->quickDebugString() . "\n";
+			print "Dest  : " . $DG->quickDebugString() . "\n";
+			$DG->store( $SG );
+		}
+		elsif( $action eq 'MOVE' )
+		{
+			print "Source: " . $SG->quickDebugString() . "\n";
+			print "Dest  : " . $DG->quickDebugString() . "\n";
+			$SG->moveGhost( $DG );
+		}
+		elsif( $action eq 'TOUCH' )
+		{
+			$DG->touchSmallfile();
+		}
+		else
+		{
+			die "Unacceptable action=$action"
+		}
+
+
+
+
+		$i++;
+	}
+}
+
+
 sub printWorklist
 {
 	my $self = shift;
 	my $worklist = $self->{WL};
 	foreach my $hash (@$worklist)
 	{
-			my $action = $hash->{-action};
+		my $action = $hash->{-action};
 
-	my $S = defined $hash->{-source} ? $hash->{-source} : "undef";
-	my $D = defined $hash->{-destination} ? $hash->{-destination} : "undef";
+		my $S = defined $hash->{-source} ? $hash->{-source} : "undef";
+		my $D = defined $hash->{-destination} ? $hash->{-destination} : "undef";
 
-	print "$action $S $D\n";
-
-
+		print "$action $S $D\n";
 	}
 }
 
@@ -2599,6 +2660,7 @@ sub getAbsoluteLFNForGhost
 
 	return $g->lfn();
 }
+
 
 
 # One of the universal methods. It basically says make a copy of the things
@@ -2899,8 +2961,6 @@ sub loadRootIfNeeded
 
 	TruthKeeper::get()->incorporateGhostStore( $rgs );
 
-
-
 	return $rgs;
 }
 
@@ -3103,6 +3163,34 @@ sub getImmediateChildren
 	return @files;
 }
 
+
+# Generate a "smallfile" from a ghost. Currently used for zero length files,
+# which cannot be content-addressed but the user often wants to keep around
+# anyway. Right now focuses on zero-length, but the intention is that this
+# would allow ghost's themselves to contain small amounts of file content,
+# which could save us some reads and writes.
+
+sub touchSmallfile
+{
+	my $self = shift;
+	my $target = shift;
+
+	my $destPath = $target->getPath();
+	my $dirname = File::Basename::dirname( $destPath );
+
+
+	print "touch() - TOUCH - [$destPath]\n";
+
+	main::globalMkPath( $dirname );
+
+	open FILE, ">$destPath" or die "cannot open $destPath to make a smallfile" ;
+	close FILE; 
+}
+
+
+
+
+
 # 
 #
 # CORE
@@ -3134,8 +3222,13 @@ sub store
 
 	my $srcPath = $sourceFileGhost->getPath();
 	my $destPath = $target->getPath();
+	my $dirname = File::Basename::dirname( $destPath );
+
 
 	print "store() - COPY - [$srcPath]->[$destPath]\n";
+
+	main::globalMkPath( $dirname );
+
 
 	my $finalTarget; 
 
@@ -5470,12 +5563,25 @@ sub verifyGhostIsMutable
 # wonderful things that we just pass over to the FSE.
 #
 
+
+
 sub store
 {
 	my $self = shift;
 	my $thing = shift;
 
 	return $self->getFSE()->store( $thing, $self );
+}
+
+# Makes a smallfile file - needed because GFS does not copy files that are
+# zero bytes. In the future, can also be used to speed up files with very
+# small amounts of data where the ghost itself is sufficent to recover the contents.
+
+sub touchSmallfile
+{
+	my $self = shift;
+
+	return $self->getFSE()->touchSmallfile( $self );
 }
 
 ######
@@ -5684,6 +5790,12 @@ sub learnFromGhost
 		{
 			if( $self->effectiveDate() < $g->effectiveDate() )
 			{
+
+				print "ERROR: Self:\n";
+				$self->printDebug();
+				print "ERROR: Teacher:\n";
+				$g->printDebug();
+
 				die "Internal assert - doesn't seem right to not be one step ahead of target";
 			}
 		}
@@ -5719,7 +5831,7 @@ sub markDirty
 
 	if( not defined $self->dirty() or ($self->dirty() == 0 ))
 	{
-		print "***** First time dirty record\n";
+		# print "***** First time dirty record\n";
 
 		if( defined $self->sequence() )
 		{
