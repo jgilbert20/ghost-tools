@@ -40,7 +40,7 @@ GFS's game of "pretend" is fast and quite resiliant. It transforms your filesyst
 
 Best of all: GFS imposes no conventions - by default your backups and files, repositories and archives stay as 100% files and directories you can recognize, search and recover at any time. They don't even have to be renamed. That means you can walk away from GFS -- destory some or all of its metadata -- and your backups stay valid and recoverable on a per-file (or even per-directory) basis. 
 
-GFS gives you nearly instant, hyper-efficient incremental backups. It lets you spread your files over many drives with and without redudancy. GFS is indifferent if you use gfs(1) or other more familiar tools (Finder, cp(1), rsync(1)) to move files around. And it does this all without reliance on opaque databases, demons, or persistent processes. Nor does it require creation of "repositories" or "volumes."
+GFS gives you nearly instant, hyper-efficient incremental backups. It lets you spread your files over many drives with and without redudancy. GFS is indifferent if you use gfs(1) or other more familiar tools (Finder, cp(1), rsync(1)) to move files around. And it does this all without reliance on opaque databases, demons, or persistent processes. Nor does it require creation of "repositories" or "volumes" - if its a writeable directory, it can contain blobs.
 
 Sound too good to be true? The downsides:
 

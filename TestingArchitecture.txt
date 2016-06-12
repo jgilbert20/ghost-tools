@@ -16,6 +16,15 @@ a --test-harness mode
 	makes debug statements go to STDERR
 	should dump out run variables at the end
 
+++++++
+
+found a really nasty situation -- RESOLVED, DUE TO AFN CACHE SAVE
+
+gfs rsync source dest/
+remove the fiels in dest, not the .gfs file
+now get crashes as two ghosts point to same filename, with the older ghost trying to learn from the newer one.
+can't reproduce see reproduceme.txt, line with text string "Internal assert - doesn't seem right to not be one step ahead of target at";
+### motr investiation - can't rule out a stale .gfs_ip file that written with old format
 
 ++++++++++++++++++
 

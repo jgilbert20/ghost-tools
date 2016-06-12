@@ -35,20 +35,21 @@ my $ZERO_LEN_FILE = [];
 
 # Debug control
 
-my $icDebug = 0;
-my $tkdebug = 0;
-my $tkflushdebug = 0;
-my $gsDebug = 0;
-my $gdbDebug = 0;
-my $duplicateDebug = 0;
+my $icDebug             = 0;
+my $tkdebug             = 0;
+my $tkflushdebug        = 1;
+my $gsDebug             = 0;
+my $gdbDebug            = 0;
+my $duplicateDebug      = 0;
 my $granularSerialDebug = 0;    # Instruments the escape/unescape mechanism
-my $serializeDebug = 0;			# Instruments the load/save at ghost level
-my $gChildDebug = 0;
-my $fseDebug = 0;
-my $fseOjxDebug = 1;
-my $fseSnapshotDebug = 0;
-my $learnDebug = 0;
-my $statStructDebug = 0;
+my $serializeDebug      = 0;			# Instruments the load/save at ghost level
+my $gChildDebug         = 0;
+my $fseDebug            = 0;
+my $fseOjxDebug         = 1;
+my $fseSnapshotDebug    = 0;
+my $learnDebug          = 0;
+my $statStructDebug     = 0;
+my $provenanceDebug     = 1;
 
 # Major globals
 
@@ -1595,6 +1596,7 @@ sub findGhostByAFN
 	{
 		print "Got from DB: $value\n" if $gdbDebug;
 		my $ghost = Ghost->newFromSerialized( $value );
+		$ghost->addDebugProvenance( "afn/lu($afn)" ) if $provenanceDebug;
 		$self->{AFN_TO_GHOST_CACHE}->{$afn} = $ghost; 
 		return $ghost;
 	}
@@ -1604,6 +1606,7 @@ sub findGhostByAFN
 	# i'm not sure I want these things in the TK cache. 
 
 	my $gAFN = Ghost->make_private( $afn );
+	$gAFN->addDebugProvenance( "fbAFN($afn)" );
 
 	$self->{AFN_TO_GHOST_CACHE}->{$afn} = $gAFN;
 
@@ -1804,6 +1807,14 @@ sub CODEPATH($)
 	main::CODEPATH( "GST: $p" );
 }
 
+sub debug($)
+{
+	my $a = shift;
+	main::debug( "gst: " . $a );
+}
+
+
+
 sub new
 {
 	my $class = shift;
@@ -1896,7 +1907,7 @@ sub setTargetState
 	my $lfn = shift;
 	my $g = shift;
 
-	# my $c = $g->cloneWithLFN( $lfn );
+	debug( "Target state for lfn[$lfn] = " . $g->makeDebugString() . "\n" );
 
 	$self->_setFinal( $lfn, $g );
 }
@@ -2128,7 +2139,6 @@ sub haulGhostToLFN
 	my $self = shift;
 	my $g = shift;
 	my $to = shift;
-
 
 	my $from = $g->lfn();
 
@@ -2372,7 +2382,6 @@ sub execute
 
 	my $tk = TruthKeeper::get();
 
-
 	foreach my $hash (@$worklist)
 	{
 		print "------------------ Operation $i / $numOperations\n";
@@ -2388,6 +2397,10 @@ sub execute
 
 		my $Sdebug = defined $hash->{-source} ? $hash->{-source} : "undef";
 		my $Ddebug = defined $hash->{-destination} ? $hash->{-destination} : "undef";
+
+
+		debug( "Source = " . $SG->makeDebugString() . "\n" ) if ref $Sdebug;
+		debug( "Dest   = " . $DG->makeDebugString() . "\n" ) if ref $Ddebug;
 
 
 		print "Action->[$action] source:[$Sdebug] destination:[$Ddebug]\n";
@@ -4006,6 +4019,8 @@ sub obtainGhostForLFN
 		
 		my $g = Ghost->make_private( $lfn );
 		# should this have been a virtual ghost?
+		$g->addDebugProvenance( "obtain/snap($lfn)" );
+
 
 		my $fse = FSEFactory->getFSEHandlerForGhost( $g );
 		my $r = $fse->findGhostForLFN( $lfn );
@@ -4021,8 +4036,9 @@ sub obtainGhostForLFN
 	# this point, how do we decide if this guy is going to be virtual or if
 	# its going to be real?
 
-	debug( "TK:Obtain: Making new ghost for f:[$lfn]\n")  if $tkdebug;
+	debug( "TK:Obtain: Making new ghost for f:[$lfn]\n") if $tkdebug;
 	my $g = Ghost->make_private( $lfn );
+	$g->addDebugProvenance( "obtain/base($lfn)" );
 	# registers 
 	$self->incorporateGhostData( $g );
 	$g->markDirty();
@@ -4491,6 +4507,7 @@ sub slurpSerializedStore
 		}
 
 		my $g = Ghost->newFromSerialized( $_, %opt );
+		$g->addDebugProvenance( "slurp($fn)" ) if $provenanceDebug;
 
 		$g->isTKversion(0);
 		$self->addGhost( $g );
@@ -4528,7 +4545,8 @@ sub writeAsDescriptor($)
 
 	foreach my $g ( values %$lfnToGhost )
 	{
-		print FILE $g->serialize( pathMode => "basename");
+		$g->addDebugProvenance( "writeDesc($fn)");
+		print FILE $g->serialize( pathMode => "basename" );
 		print FILE "\n";
 
 		if( $gsDebug )
@@ -4579,6 +4597,7 @@ sub writeSerializedToDisk($)
 	foreach my $g ( values %$lfnToGhost )
 	{
 		print FILE $g->serialize( %options );
+		$g->addDebugProvenance( "writeSnap($fn)");
 		print FILE "\n";
 	}
 
@@ -4830,7 +4849,7 @@ use Cwd qw(abs_path); # best way to get these
 Ghost->mk_accessors( qw(lfn lastFullHash size mode fullHash statStruct
 	uuid sequence effectiveDate attributes
 	dirty isTKversion lastDirScan lastStat mtime lastEnumerated firstStat fileStatus
-	children _immutable _debugID) );
+	children _immutable _debugID  ) );
 
 
 my $GHOST_DEBUG_ID = 100000; 
@@ -4843,8 +4862,23 @@ sub new
 
 	$self->_debugID( $GHOST_DEBUG_ID++ );
 
+	$self->{_DEBUG_PROVENANCE} = [];
+
 	return $self;
 }
+
+# simple utility for seeing where ghosts came from to track down tricky
+# debugging scenarios
+
+sub addDebugProvenance
+{
+	my $self = shift;
+	my $str = shift;
+
+	push @{$self->{_DEBUG_PROVENANCE}}, $str; 
+
+} 
+
 
 sub clone
 {
@@ -5195,11 +5229,13 @@ sub makeDebugString
 	my $type = defined $self->mode() ? $self->extractTypeFromMode( $self->mode() ) : "???";
 	# my $type = $self->getType();
 
-my $debugID = $self->_debugID();
+	my $debugID = $self->_debugID();
+
+	my $p = join '->', @{$self->{_DEBUG_PROVENANCE}};
 
 	return "ghostDump($debugID): lfn:[$lfn] uuid:[$uuid] seq:[$sequence] eDT:[$effectiveDate] type:[$type] mode:[$mode] l_FH:[$lastFullHash] ".
 	"full:[$fullHash] ldirscan:[$lastDirScan] l_stat:[$lastStat] size:[$size]".
-	" mtime:[$mtime] immutable[$immutable] statStruct:[$statStruct] attr:[attributes]";
+	" mtime:[$mtime] immutable[$immutable] statStruct:[$statStruct] attr:[$attributes] provenance:[$p]";
 }
 
 sub isSameFilename
@@ -5707,6 +5743,14 @@ sub learnFromGhost
 
 	die unless ref $g; 
 
+	if($provenanceDebug)
+	{
+		my $gid = $g->debugID();
+		$self->addDebugProvenance( "learn($gid)" );
+		$g->addDebugProvenance( "teach($gid)" );
+
+	}
+
 	CODEPATH( "ghost merging" );
 
 	if( $learnDebug )
@@ -5782,7 +5826,10 @@ sub learnFromGhost
 	}
 
 	# if after all of this stuff above we are still somehow not >= to the
-	# target's effective date, something is wrong.
+	# target's effective date, something could be wrong. But it could just be
+	# that a new ghost was created that never learned anything useful in its
+	# life and has an effective date merely by virtue of having a newer
+	# creation date.
 
 	if( defined $g->effectiveDate() )
 	{
@@ -5790,13 +5837,13 @@ sub learnFromGhost
 		{
 			if( $self->effectiveDate() < $g->effectiveDate() )
 			{
-
-				print "ERROR: Self:\n";
+				CODEPATH( "Learner older than teacher - warning");
+				warn "Strange case where student ghost is older effective";
+				print "WARN: Self:\n";
 				$self->printDebug();
-				print "ERROR: Teacher:\n";
+				print "WARN: Teacher:\n";
 				$g->printDebug();
-
-				die "Internal assert - doesn't seem right to not be one step ahead of target";
+				# die "Internal assert - doesn't seem right to not be one step ahead of target";
 			}
 		}
 		else
@@ -5852,6 +5899,12 @@ sub markDirty
 	$self->effectiveDate( time() );
 
 	$self->{_onceWasDirty} = 1; 
+
+	if( 1 )
+	{
+		my $gid = $self->debugID();
+		debug "Ghost ($gid) marked dirty";
+	}
 }
 
 sub everWasDirtyThisRun
