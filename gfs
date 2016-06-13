@@ -510,6 +510,14 @@ sub handleVerb
 		doverb_checksum();
 		return;
 	}
+
+	if( $verb eq "checksum-single" )
+	{
+		doverb_checksum_single();
+		return;
+	}
+
+
 	# Writes a permanent file of this entire tree
 
 	if( $verb eq "snapshot")
@@ -973,14 +981,10 @@ sub doverb_checksum()
 	my $tk = TruthKeeper::get();
 	my ($targetGS, $targetStash) = $tk->makeGhostsFromCommandLine( @ARGV );
 	my $i = $targetGS->getIterator();
-
-
-
 	while( my $g = $i->next() )
 	{
 		my $lfn = shift; 
 		next if $g->canHaveChildren();
-
 
 		my $fullHash = $g->getFullHash();
 		# $g->printDebug();
@@ -988,6 +992,19 @@ sub doverb_checksum()
 		print +(join "\t", $fullHash, $g->lfn()), "\n";
 	}
 }
+
+
+sub doverb_checksum_single()
+{
+	my $tk = TruthKeeper::get();
+	my ($targetGS, $targetStash) = $tk->makeGhostsFromCommandLine( @ARGV );
+	my $i = $targetGS->getIterator();
+	my( $targetUserFN, $targetFqlfn, $targetGhost ) = @{$targetStash->[0]};
+
+
+	my $c = $targetGhost->getFullHash();
+}
+
 
 
 # Scans, generating a stat for every file recursively.

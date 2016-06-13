@@ -1,6 +1,247 @@
+
 # What is this document
 
 It is a collection of retired ideas.. anything that is current has been moved to the full concept file. 
+
+
+
+# TruthKeeper evolved
+
+You wnat multiple directories of ghost information -
+	e.g. a backing store using BDB, .gfs_ip
+
+THe truthkeeper ALWAYS makes the ghost first during obtain. Then state is gathered from the others each in turn. 
+
+When a ->save() is issued, the ghost is dropped out of the caches,
+and the ->saveGhost() message is given to each GDB
+
+We need some mechanism to be sure the ghosts are actually finalized on save, otherwise operations that create millions of ghost are going to drive crazy amounts of memory use.
+
+Ghost act like a transaction, and you can play them forward.
+
+obtainGhostForLFN
+obtainFomerGhostForLFN( priorToDate );
+obtainFomerGhostForLFN( versionSpec );
+
+We can also ask
+
+obtainGhostsUnderLFN( LFN )
+canObtainGhostsUnderLFN()
+	- checks if the cache is fully populated
+obtainGhostsForHash()
+
+# New semantics for directories
+
+In an ideal backup scenario, I obtain a hash representing a particular directory. Primary source verification occurs by getting the hashes of all directories underneath. Therefore “has hash duplicate” still works. As long as the directory is EXACTLY the way it was, we are all good.
+
+This model starts to break down when it comes to multiple snapshots or whatever you want to call them. 
+
+In that case, I need to represent that having a copy of hash XYZ  is equivilent to having the TREE object for that directory, the tree object for all subdirectories, and every file referenced in between.
+
+Similiar case for splits and merges. I can say I have a file if either:
+
+- I have an exact has duplicate
+- I have a metadata file saying that the file can be reconstructed with parts P1-Pn, and each of P1-Pn’s hashes can be located somewhere.
+- I have a metadata object saying that the file is a split from some other object Q, and I can find and checksum Q.
+
+canReconstructHash() is a semantic that could apply to any ghost or path. (I think.)
+
+if I ask canReconstructHash() on a fs:: type object that is a FILE, the best I can do is see if that file is the hash. My answer is a definitive YES/NO.
+
+if I ask canReconstructHash() on a fs:: directory object, I can answer YES if calling it on all of my children is a YES. If my enumeration date is within the guard time, I can answer definitive NO. Otherwise, its a PROVISIONAL NO.
+
+lets say we have some understanding of an object with an object TYPE known. Say an object is just a file that starts with GFS magic.
+
+if I ask if I ask canReconstructHash() on a object “XXXX”? It depends if i trust that object. Say I slurp in that object into some sort of provisional cache object. And say it passes whatever sort of validation I care to put on it. The object might refer to local or remotely verifiable things. canReconstructHash() can be called on each of those things.
+
+if i have a ghost
+
+	split:tar|tarfile_fc123)|a/b/c/ -> ab6004
+
+than I can reconstruct XYZ as long as I have an object fc123. 
+
+That means fc123->canReconstructHash( abs6004 ) should be true, just like a directory.
+
+I can cache my answers. A->CRH(B) can be cached as a pathway of hashes. This is nice because it locates an answer but I can check it at any time, if needed, untaring the file, pulling the remote, etc.
+
+what about a merge?
+
+	merge:origfile_fc123:abs6001
+	merge:origfile_fc123:abs6002
+
+This object preferably has the hash fc123 when queried. 
+
+So how does this work? I have objects on disk whose SHA hashes will NOT match the ghosts the point to them. 
+
+Two ways to handle this. Either i have a logical hash separate from a physical hash. Or I’m just cool with physical hashes being a lie for certain metadata objects that I maintain anyway. 
+
+Actually, for tamper-proofing, maybe its work considering a compound hash?
+
+Or maybe we go back to the idea of pointers for this sort of thing.
+
+The file listed here describes out a few files can be joined together to form fc123. For efficiency, we probably want flexibility to put mutliple files in this object
+
+	merge:origfile_fc123:abs6001
+	merge:origfile_fc123:abs6002
+	merge:origfile_cce99:xxx6003
+	merge:origfile_cce99:xxx6004
+
+call this a merge index file.  Say it has a hash of d99abc.
+
+d99abc->canReconstruct(fc123) is TRUE as long as we can find abs6001 in other places.
+
+It would be nice if splits could somehow store along with them the things they restore. But they can’t store pointers to each other -- that would be impossible to calculate a hash that incldues another hash in advance (assuming SHA stays unbroken)
+
+so how do we know to find this merge file and learn how to reconstruct fc123?
+
+I need somewhere to “learn” when I scan the merge index file, i generate these AFNS
+
+	split:d99abc:fc123
+
+This bit of information is always source reconstructable (amazingly enough), just by re-reading the merge file.
+
+So mergers actually can be handled by storing splits.
+
+Bizzare!
+
+In theory, a directory is also a split
+
+	directory [hash=ABC]
+		file 1 [hash=01]  
+		file 2 [hash=02]
+
+When we make this into ghosts
+
+	fs:root:directory        : ABC
+	fs:root:directory/file1  : 01
+	fs:root:directory/file2  : 02
+
+However, if we go to a strict split syntx, its also storing
+
+	split:ABC:01   -> 01
+	split:ABC:02   -> 02
+
+Lets get the terminology exactly right. 
+
+Consider this LFN:
+
+	split:X:path -> HASH 
+
+This LFN stores the idea that if you split up the thing pointed to at X, using information in path() you can get to an object called HASH.
+
+Consider the alternative
+
+	merge:X:path -> HASH
+
+This says that in order to get thing X, I need a peice at path(), and it should have hash HASH
+
+In this case, [merge:X:path]->CRH(X) is false. But a merge index file FOO is assumed to be a complete set of mappings. Would be nice to also verify that at the ghost level. So the rule is that if we intake the whole chunk of the merge file, we’ll give ourselves permission to enter these new AFNS.
+
+So the MIF needs some sort of magic keyword at the top. And we need some concept of “gives closure to”.  For instance, a gfs_ip file for a directory can be verified as complete, at least at a point in time, by seeing that the sum of the key hash information matches the directory. 
+
+Maybe the MIF works the same way? Or maybe its more syntactically pure if we call it a SIF. 
+
+	merge:origfile_fc123:CLOSURE -> hashOfSignatures(abs6001,abs6002)
+	split:origfile_fc123:(1/2) -> abs6001
+	split:origfile_fc123:(2/2) -> abs6002
+
+This does actually seem a lot better and mirrors the way that a directory works.
+
+
+A packfile is some special concept of a of a split with syntax to tell how to reconstruct something. 
+
+
+  
+I think I need to implement this whole thing the “slow” way before I can figure out how to do it the “fast” way
+
+So step one is getting to the point where we have an easy way to invoke CRH. The recon could just print yes or no if target is sufficent or “contains” the source.
+
+	gfs recon ^fd35 ^2dfse
+	gfs recon source target
+
+How do we automagically learn and absorb merge index files?
+
+If you pass me obtainGhostByHash( ^fds34 ), I’ll check my truth sources. I’ll get several objects. One of them will be for the things in the filesystem. The second will be the thing for the merge: file.
+
+The recon should support
+- Finding a file inside of directory object
+- Finding a file inside a nested directory object
+- finding a subdirectory inside of a directory
+
+so now, calling getFullHash() on a directory object has a meaning. As a container object, it means getGhostSig() on each child (which forces stat and hash)..
+
+GIT would handle that differently. It would make a tree object, and the hash of the tree object would be the hash of the directory.
+
+Is there some way to get both things? After all, I will want to be able to serilizeImmediate objects. But we need some way to avoid the spurious sorts of stuff. You’d ideally want multiple calls to serializeImmediate to always return the same thing.
+
+So maybe you make a new ghost: cloneAsChildSignature. And you use newlines as the delimiters and escape what you’ve got.
+
+As an optimization later, we can pack the structure so we don’t have a shit ton of ::::: 
+
+	my @s = ( $lfn,                  YES, but must be relative
+			  $self->effectiveDate(),    NO
+			  $self->sequence(),         NO
+			  $self->uuid(),             NO
+			  $self->lastStat(),         NO
+			  $self->lastFullHash(),     NO
+			  $self->size(),             YES
+			  $self->mode(),             YES
+			  $self->mtime(),            YES
+			  $self->fullHash(),         YES
+			  $self->lastDirScan(),
+			  $self->lastEnumerated(),
+			  $self->firstStat(),
+			  $self->fileStatus(),
+			  $self->attributes(),
+			  $statStructSerialized
+			  );
+
+
+Okay, so version one of this 
+
+
+
+
+# notes on filename compression
+
+
+http://codegolf.stackexchange.com/questions/4771/text-compression-and-decompression-nevermore
+
+http://www.mit.edu/afs.new/athena/astaff/source/src-9.3/third/findutils/locate/frcode.cache
+
+
+
+
+# Notes on easy native C interfaces
+
+http://www.thegeekstuff.com/2012/03/swig-perl-examples/
+
+
+gcc -fpic -c -Dbool=char -I/System/Library/Perl/5.18/darwin-thread-multi-2level/CORE  area_wrap.c area.c -D_GNU_SOURCE
+
+gcc -shared area.o area_wrap.o -o area.so
+
+
+	gcc -c `perl -MConfig -e 'print join(" ", @Config{qw(ccflags optimize cccdlflags)}, "-I$Config{archlib}/CORE")'`  area.c area_wrap.cache
+
+http://www.swig.org/tutorial.html
+
+- replace .so with dylib
+
+	gcc `perl -MConfig -e 'print $Config{lddlflags}'` area.o area_wrap.o -o area.dylib
+
+Works
+
+	#!/usr/bin/perl
+	use strict;
+	use warnings;
+	use area;
+	my $area_of_cir = area::area_of_circle(5);
+	my $area_of_squ = area::area_of_square(5);
+	print "Area of Circle: $area_of_cir\n";
+	print "Area of Square: $area_of_squ\n";
+	print "$area::pi\n";
+
 
 
 # File Versions - how should they work?
