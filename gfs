@@ -30,8 +30,6 @@ use MLDBM qw( BerkeleyDB::Hash Storable );
 sub debug($);
 
 
-my $ZERO_LEN_FILE = [];
-
 # These parameters control our acceptable "out of dateness". If undefined,
 # than any available cached data is used. These variables alone do not fully
 # influence how changes are directed. For instance, a changed size() ALWAYS
@@ -61,6 +59,11 @@ my $fseSnapshotDebug    = 0;
 my $learnDebug          = 0;
 my $statStructDebug     = 0;
 my $provenanceDebug     = 1;
+
+
+# Constants
+
+my $ZERO_LEN_FILE = [];
 
 # Major globals
 
