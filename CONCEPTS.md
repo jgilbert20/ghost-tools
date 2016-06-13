@@ -489,6 +489,15 @@ Basiclaly, the best known hash of a ghost who has received a size change is no h
 
 RULE #1: A stat can never be older than the hash in a given ghost. Cause for immediate program termination.
 
+    What is the benefit of this RULE?
+    WHY?
+    It doesn't hold up for directories, where the hash has nothing to do with the directory itself. 
+    But why enforce it for regular files? Who benefits?
+    Say I stat a file, and then get a hash later. I don't know if that new hash is consistent with the stat or not. That's why the software is careful
+    to set these two values to the same when the hash is calculated.
+
+    RULE #1-B Except for directories
+
 RULE #2: Two peices of information with the same date must be the same, otherwise ERROR
 
 RULE #3: The date corresponding to the size is lockstep with the date on rest of the stat

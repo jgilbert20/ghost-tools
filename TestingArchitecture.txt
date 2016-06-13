@@ -26,6 +26,13 @@ Need test case to see what happens when a file is removed and directory is resca
 
 theoretically, the ls should show the deleted advisory and the hash should be revoked.
 
+this can happen inside the process during a run, so we need to be sure things are kosher
+
++++
+devilish cases:
+directories that become files and visca versa
+
+
 
 
 ++++++

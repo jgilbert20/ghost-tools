@@ -32,6 +32,15 @@ sub debug($);
 
 my $ZERO_LEN_FILE = [];
 
+# These parameters control our acceptable "out of dateness". If undefined,
+# than any available cached data is used. These variables alone do not fully
+# influence how changes are directed. For instance, a changed size() ALWAYS
+# revokes the hash. But a changed modification date does not trigger a re-
+# hash.
+
+local $main::GUARD_TIME_SECONDS_STAT = undef; 
+local $main::GUARD_TIME_SECONDS_ENUMERATION = undef; 
+local $main::GUARD_TIME_SECONDS_FULLHASH = undef; 
 
 # Debug control
 
@@ -63,7 +72,6 @@ my $GENERAL_DEBUG = 1;
 my $USUAL_IGNORE = 1;
 local $main::SCRIPT_START = time();
 local $main::SCRIPT_START_GTOD = [gettimeofday];
-local $main::GUARD_TIME_SECONDS = undef; 
 
 # Run statistics - globals
 
@@ -116,7 +124,9 @@ my $OPT_GUARDTIME = undef;
 
 if( defined $OPT_GUARDTIME )
 {
-	$main::GUARD_TIME_SECONDS = $OPT_GUARDTIME;
+	$main::GUARD_TIME_SECONDS_STAT        = $OPT_GUARDTIME;
+	$main::GUARD_TIME_SECONDS_ENUMERATION = $OPT_GUARDTIME;
+	$main::GUARD_TIME_SECONDS_FULLHASH    = $OPT_GUARDTIME;
 	debug "Guard time set to: $main::GUARD_TIME_SECONDS\n";
 }
 
@@ -167,11 +177,15 @@ sub mkdirs
    return 1;
 }
 
-# Helper function - if user requests it, ignores shit things like .git and .DS_Store
-# Returns true if the file is good to go, or false if it is usually ignored
-# This is not to be used for avoiding actual logic or recursion errors
-# (such as scanning our own descriptors).
-# User should be free to turn this feature off and the program must work as intended. 
+# Helper function - if user requests it, ignores shit things like .git and
+# .DS_Store Returns true if the file is good to go, or false if it is usually
+# ignored This is not to be used for avoiding actual logic or recursion errors
+# (such as scanning our own descriptors). User should be free to turn this
+# feature off and the program must work as intended.
+#
+# This feature is especially important when tracking files that contribute to
+# directory hashes. .DS_Store files can change at VERY random times, either
+# due to dropbox or some other process I'm not aware of. 
 
 sub fileIsUsuallyIgnored
 {
@@ -5629,11 +5643,11 @@ sub hasAcceptableEnumeration
 		return 0;
 	}
 	
-	if( defined $main::GUARD_TIME_SECONDS )
+	if( defined $main::GUARD_TIME_SECONDS_ENUMERATION )
 	{
 		my $age = $main::SCRIPT_START - $self->lastEnumerated();
 
-		if( $age > $main::GUARD_TIME_SECONDS )
+		if( $age > $main::GUARD_TIME_SECONDS_ENUMERATION )
 		{
 			CODEPATH( "lastEnumerated too old, recheck forced" );
 			debug ( join '', "Forcing enumeration recalculation (", main::expressRelativeTime( $age ), ")\n");
@@ -5718,12 +5732,13 @@ sub calculateSignatureHashOverChildren
 	my $time = shift;
 
 	my $earliestDate = time();
-	my $buffer; 
+	my $buffer = ""; 
 
 	my $tk = TruthKeeper::get();
 
 	foreach my $lfn ( @{$self->getChildrenLFNs( $time )} )
 	{
+		next if main::fileIsUsuallyIgnored( $lfn );
 		my $g = $tk->obtainGhostForLFN($lfn);
 		$g->getFullHash($time);
 		$g->get($time);
@@ -6116,11 +6131,11 @@ sub hasAcceptableFullhash
 		return 0;
 	}
 	
-	if( defined $main::GUARD_TIME_SECONDS )
+	if( defined $main::GUARD_TIME_SECONDS_FULLHASH )
 	{
 		my $age = $main::SCRIPT_START - $self->lastFullHash();
 
-		if( $age > $main::GUARD_TIME_SECONDS )
+		if( $age > $main::GUARD_TIME_SECONDS_FULLHASH )
 		{
 			CODEPATH( "Hash too old, recheck forced" );
 			debug ( join '', "Forcing hash recalculation (", main::expressRelativeTime( $age ), ")\n") if $staleInfoDebug;
@@ -6177,11 +6192,11 @@ sub hasAcceptableStat
 		return 0;
 	}
 
-	if( defined $main::GUARD_TIME_SECONDS )
+	if( defined $main::GUARD_TIME_SECONDS_STAT )
 	{
 		my $age = $main::SCRIPT_START - $self->lastStat();
 
-		if( $age > $main::GUARD_TIME_SECONDS )
+		if( $age > $main::GUARD_TIME_SECONDS_STAT )
 		{
 			CODEPATH( "Hash too old, recheck forced" );
 			debug (join '', "Forcing recalculation (", main::expressRelativeTime( $age ), ")\n" ) if $staleInfoDebug;
@@ -6815,10 +6830,11 @@ sub learnFullHash
 
 	$self->verifyGhostIsMutable();
 
-	# RULE 1: A stat can never be older than the hash in a given ghost
+	# RULE 1: A stat can never be older than the hash in a given ghost (unless it is a directory)
 
 	if( (defined $self->lastFullHash()) and 
 		(defined $self->lastStat()) and
+		(! $self->canHaveChildren() ) and 
 		($time > $self->lastStat() ))
 	{	
 		warn "ERROR case where last full hash  > time (time=$time)";
@@ -6834,7 +6850,8 @@ sub learnFullHash
 	{
 		# RULE 1: A stat can never be older than the hash in a given ghost
 
-		if( ($self->lastFullHash() < $time) and 
+		if( (! $self->canHaveChildren() ) and
+			($self->lastFullHash() < $time) and 
 			($self->lastStat() < $time ))	
 		{	
 			die "stat cannot be older than hash";
@@ -6864,6 +6881,16 @@ sub learnFullHash
 	if( (defined $self->fullHash()) and ($hash ne $self->fullHash() ))
 	{
 		CODEPATH( "Newer hash information accepted"); 
+
+		my $lfn = $self->lfn();
+		my $ch = $self->fullHash();
+		print "************************************************ CHANGE!!!\n";
+		print "  LFN: $lfn\n";
+		print "  NEW: $hash\n";
+		print "  OLD: $ch\n";
+
+
+
 		$isAnythingChanged = 1; 
 	}
 
