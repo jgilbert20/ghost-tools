@@ -3006,8 +3006,8 @@ sub getHardFileGhost
 	my $self = shift;
 	my $g = shift;
 
-			my $tk = TruthKeeper::get();
-			my $targetLFN = $self->getHardFileFQLFNforGhost( $g );
+	my $tk = TruthKeeper::get();
+	my $targetLFN = $self->getHardFileFQLFNforGhost( $g );
 	my $targetGhost = $tk->obtainGhostForLFN($targetLFN);
 	return $targetGhost; 
 }
@@ -3948,6 +3948,8 @@ sub flushUniversalStore
 	my $gdb = GhostDatabase->getCore();
 	foreach my $g (values %$ghostForLFN )
 	{
+		next unless $g->dirty(); 
+
 		my $afn = $g->absoluteLFN();	
 
 		debug( "          -> ". $g->quickDebugString() ) if $tkflushdebug;
@@ -4003,10 +4005,6 @@ sub flushUniversalStore
 }
 
 
-
-
-
-
 sub flush
 {
 	my $self = shift;
@@ -4023,13 +4021,31 @@ sub flush
 
 	$self->printInternallyTrackedAFN() if $tkflushdebug;
 
-	debug "---- Ghost Cache Writes ---\n" if $tkflushdebug;
 
-	$self->flushGhostDescriptorCache();
+
+	# At this point, dirty ghosts in the truthkeeper could be dirty from what
+	# they learned from other knowledge sources, or from what they learned on
+	# disk. There doesn't seem to be any way to know which things have to be
+	# pushed out to remote sources. Right now, the only strategy I'm using for
+	# the universal store is to aquire the object, and learn it back,
+	# and then do a write if anythign changes.
+
+	# Is there a simpler way? Would be nicer to have a "copy on write"
+	# facility of some sort.
 
 	debug "---- AFN ---\n" if $tkflushdebug;
 
 	$self->flushUniversalStore();
+
+
+
+
+
+
+
+	debug "---- Ghost Cache Writes ---\n" if $tkflushdebug;
+
+	$self->flushGhostDescriptorCache();
 
 
 
@@ -6570,7 +6586,6 @@ sub learnFullHash
 	$self->fullHash( $hash );
 
 	debug "Learn HASH: isAnythingChanged? $isAnythingChanged" if $learnDebug; 	
-
 
 	$self->markDirty() if $isAnythingChanged;
 }
