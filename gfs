@@ -47,7 +47,7 @@ my $gChildDebug         = 0;
 my $fseDebug            = 0;
 my $fseOjxDebug         = 1;
 my $fseSnapshotDebug    = 0;
-my $learnDebug          = 0;
+my $learnDebug          = 1;
 my $statStructDebug     = 0;
 my $provenanceDebug     = 1;
 
@@ -3954,11 +3954,18 @@ sub flushUniversalStore
 		debug( "             |->AFN: $afn") if $tkflushdebug;
 
 		my $absGhost = $gdb->findGhostByAFN( $afn );
+		die if $absGhost->dirty() > 0;
 
 		my $originalAbsFH = $absGhost->fullHash();
 		my $originalGhostFH = $g->fullHash(); 
 
 		$absGhost->learnFromGhost( $g );
+
+		next unless $absGhost->dirty() > 0; 
+
+		print "+++++ Dirty +++++ \n";
+
+		$absGhost->printDebug();
 
 		my $newAbsFH = $absGhost->fullHash();
 
@@ -4245,23 +4252,6 @@ sub incorporateGhostData
 
 		$g->isTKversion(0);
 
-
-		# my $base = $ghostForLFN->{$g->lfn()};
-
-		# if( $base->lastFullHash() < $g->lastFullHash() )
-		# {
-		# 	die if $base->isImmutable();
-
-		# 	$base->lastFullHash( $g->lastFullHash() );
-		# 	$base->fullHash( $g->fullHash() );
-		# 	$base->dirty(1);
-		# 	debug "  Incorporate - Merger case - existing TK ghost updated (base=$base)\n" if $icDebug;
-		# }
-		# else
-		# {
-		# 	debug "  Incorporate -  Merger case - existing TK ghost was fine\n" if $icDebug;
-		# }
-
 		return $base; 
 	}
 	else
@@ -4269,7 +4259,6 @@ sub incorporateGhostData
 		debug "  Incorporate -  Merger case - non-TK ghost we got is being declared the TK version\n" if $icDebug;
 
 		$self->registerTruthyGhost( $g );
-		#$ghostForLFN->{$g->lfn()} = $g;
 		$g->isTKversion(1);
 		return $g;
 	}
@@ -4331,9 +4320,10 @@ sub obtainGhostForLFN
 	# X X X X X X X X 
 
 	# Next look in local descriptor
-	# TODO, this is sort of wrong -- the ghost store is useless for certain types of LFNS
-	# really only things pretaining to file system should hit descriptor
-	# refactor to move to FSE
+	#
+	# TODO, this is sort of wrong -- the ghost
+	# store is useless for certain types of LFNS really only things pretaining
+	# to file system should hit descriptor refactor to move to FSE
 
 	if( $handler eq "fs" )
 	{
@@ -4382,7 +4372,9 @@ sub obtainGhostForLFN
 	$g->addDebugProvenance( "obtain/base($lfn)" );
 	# registers 
 	$self->incorporateGhostData( $g );
-	$g->markDirty();
+	#$g->markDirty();
+	# MAJOR change - ghosts are no longer automatically dirty
+
 	$g->isTKversion(1);
 
 	if( $handler eq "fs" )
@@ -6137,6 +6129,7 @@ sub learnFromGhost
 			die "assert" if $self->dirty();
 			$self->sequence( $g->sequence() );
 			# this next call will ensure that the sequence number is bumped.
+			print "Learn: Sequence Assigned" if $learnDebug;
 			$self->markDirty();
 		}
 		else
@@ -6160,17 +6153,21 @@ sub learnFromGhost
 		}
 	}
 
+	# learn UUID if we don't already have one
+
 	if( defined $g->uuid() and !defined $self->uuid() )
 	{
 		$self->uuid( $g->uuid() );
+		debug "Learned - UUID" if $learnDebug;
 		$self->markDirty();
 	}
 
-	if( defined $g->sequence() and !defined $self->uuid() )
-	{
-		$self->uuid( $g->uuid() );
-		$self->markDirty();
-	}
+	# if( defined $g->sequence() and !defined $self->sequence() )
+	# {
+	# 	$self->sequence( $g->sequence() );
+	# 	debug "Learned - Sequence" if $learnDebug;
+	# 	$self->markDirty();
+	# }
 
 
 	if( defined $g->lastStat() )
@@ -6212,6 +6209,11 @@ sub learnFromGhost
 		}
 		else
 		{
+			# this is a impossible situation - if we had no effectiveDate,  it
+			# means we know noththing. I can't think of any good reason why
+			# leearn on an effective date bearing ghost would not mark as
+			# dirty.
+
 			die "How did we learn nothing from the target? suspicious!";
 		}
 	}
@@ -6264,20 +6266,20 @@ sub markDirty
 
 	$self->{_onceWasDirty} = 1; 
 
-	if( 1 )
+	if( $learnDebug )
 	{
 		my $gid = $self->debugID();
-		debug "Ghost ($gid) marked dirty" if $learnDebug;
+		debug "Ghost ($gid) marked dirty";
 	}
 }
+
+# Used for a _gfslog facility that is experimental for testing and learning purposes
 
 sub everWasDirtyThisRun
 {
 	my $self = shift; 
 	return 1 if( exists $self->{_onceWasDirty} );
 	return 0;
-
-
 }
 
 
@@ -6347,14 +6349,13 @@ sub learnStat
 
 	my $q = $self->quickDebugString();
 
-
 	if( $learnDebug )
 	{
 		my $__size = defined $size ? $size : "<undef>";
 		my $__mtime = defined $mtime ? $mtime : "<undef>";
 		my $__mode = defined $mode ? $mode : "<undef>";
 		my $__statStruct = defined $statStruct ? $statStruct : "<undef>";
-		print "LEARN [$__size], [$__mtime], [$__mode] [$__statStruct] for $q\n";
+		print "LEARN STAT [$__size], [$__mtime], [$__mode] [$__statStruct] for $q\n";
 		$self->printDebug();
 	}
 
@@ -6476,6 +6477,8 @@ sub learnStat
 		CODEPATH( "new stat did not mark dirty" );
 	}
 
+	debug "Learn STAT: isAnythingChanged? $anythingHasChanged" if $learnDebug; 	
+
 	$self->markDirty() if $anythingHasChanged;
 }
 
@@ -6536,19 +6539,40 @@ sub learnFullHash
 		return; 
 	}	
 
+	# At this point, we're convinced the new data is valid, but the qeuestion
+	# is if its new enough to incorporate.
+
+	my $isAnythingChanged = 0; 
+
 	if( (defined $self->fullHash()) and ($hash ne $self->fullHash() ))
 	{
 		CODEPATH( "Newer hash information accepted"); 
+		$isAnythingChanged = 1; 
 	}
 
-	if( !(defined $self->fullHash()))
+	if( (defined $hash) and !(defined $self->fullHash()))
 	{
 		CODEPATH( "First hash information accepted"); 
+		$isAnythingChanged = 1; 
 	}		
+
+	if( !defined $self->lastFullHash() )
+	{
+		$isAnythingChanged = 1; 
+	}
+	elsif( $self->lastFullHash() < $time )
+	{
+		CODEPATH( "Updated date of full hash"); 
+		$isAnythingChanged = 1; 
+	}
 
 	$self->lastFullHash( $time );
 	$self->fullHash( $hash );
-	$self->markDirty();
+
+	debug "Learn HASH: isAnythingChanged? $isAnythingChanged" if $learnDebug; 	
+
+
+	$self->markDirty() if $isAnythingChanged;
 }
 
 # Deleted means that we did not see the ghost on a recent scan. Mark as
