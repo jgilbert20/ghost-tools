@@ -30,6 +30,8 @@ canObtainGhostsUnderLFN()
 	- checks if the cache is fully populated
 obtainGhostsForHash()
 
+
+
 # New semantics for directories
 
 In an ideal backup scenario, I obtain a hash representing a particular directory. Primary source verification occurs by getting the hashes of all directories underneath. Therefore “has hash duplicate” still works. As long as the directory is EXACTLY the way it was, we are all good.
@@ -198,6 +200,13 @@ As an optimization later, we can pack the structure so we don’t have a shit to
 
 
 Okay, so version one of this 
+
+We need to deal with deletes better - if we realize something is deleted, its parent should have its hash cleared.
+
+
+# Backup tool issues
+
+http://burp.grke.org/images/burp2-report.pdf
 
 
 

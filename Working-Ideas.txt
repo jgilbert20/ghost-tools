@@ -11,7 +11,8 @@ Working Ideas.txt
 	- [ ] ADD TEST CASE FOR MOVE (check no conflcits, etc, etc)
 	- [ ] ADD test case pointer get,set
 	- [ ] store and retreive from objectstores
-	
+- [ ] TODO We need to deal with deletes better - if we realize something is deleted, its parent should have its hash cleared.
+
 sdfsdf
 
 	sdfsdf

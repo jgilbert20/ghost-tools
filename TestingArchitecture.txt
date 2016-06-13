@@ -20,7 +20,11 @@ a --test-harness mode
 
 Verify that adding and removing AFNs properly propogates through to the AFN global cache, within and across invocations.
 
++++++
 
+Need test case to see what happens when a file is removed and directory is rescanned.
+
+theoretically, the ls should show the deleted advisory and the hash should be revoked.
 
 
 

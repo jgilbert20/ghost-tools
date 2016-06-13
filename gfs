@@ -35,19 +35,21 @@ my $ZERO_LEN_FILE = [];
 
 # Debug control
 
-my $icDebug             = 0;
-my $tkdebug             = 0;
-my $tkflushdebug        = 0;
-my $gsDebug             = 0;
-my $gdbDebug            = 0;
-my $duplicateDebug      = 0;
-my $granularSerialDebug = 0;    # Instruments the escape/unescape mechanism
-my $serializeDebug      = 0;			# Instruments the load/save at ghost level
+my $ioDebug             = 0;   # Print stats, reads, readdirs, etc. 
+my $staleInfoDebug      = 0;   # Decisionmaking on if data is current enough
+my $icDebug             = 0;   # TK incorporation
+my $tkdebug             = 0;   # TK general
+my $tkflushdebug        = 0;   # End of script TK flushes
+my $gsDebug             = 0;   # Ghost store debug
+my $gdbDebug            = 0;   # GhostDirectory
+my $duplicateDebug      = 0;   # Duplicate checking debugging
+my $granularSerialDebug = 0;   # Instruments the escape/unescape mechanism
+my $serializeDebug      = 0;   # Instruments the load/save at ghost level
 my $gChildDebug         = 0;
 my $fseDebug            = 0;
-my $fseOjxDebug         = 1;
+my $fseOjxDebug         = 0;
 my $fseSnapshotDebug    = 0;
-my $learnDebug          = 1;
+my $learnDebug          = 0;
 my $statStructDebug     = 0;
 my $provenanceDebug     = 1;
 
@@ -427,6 +429,13 @@ sub handleVerb
 
 	die "No verb defined" if not defined $verb;
 
+	if( $verb eq "debug")
+	{
+		doverb_debug();
+		return;
+	}
+
+
 	if( $verb eq "lsdup")
 	{
 		doverb_lsdup();
@@ -601,6 +610,64 @@ gfs lsdup [source1 .. source-n] target [--all]
 HERE
 
 }
+
+# these sub verbs could change at any time
+
+sub doverb_debug()
+{
+	my $command = shift @ARGV;
+
+	if( $command eq 'dump' )
+	{
+		my $name = shift @ARGV;
+		my $tk = TruthKeeper::get();
+		my ($targetGS, $targetStash) = $tk->makeGhostsFromCommandLine( $name );
+		my( $targetUserFN, $targetFqlfn, $targetGhost ) = @{$targetStash->[0]};
+		$targetGhost->printDebug();
+	}
+	elsif( $command eq 'lschildren' )
+	{
+		my $name = shift @ARGV;
+		my $tk = TruthKeeper::get();
+		my ($targetGS, $targetStash) = $tk->makeGhostsFromCommandLine( $name );
+		my( $targetUserFN, $targetFqlfn, $targetGhost ) = @{$targetStash->[0]};
+		my $lfns = $targetGhost->getChildrenLFNs();
+		print "I belive the contents of [$name] is:\n";
+		print join "\n", @$lfns;
+		print "\n";
+	}
+	elsif( $command eq 'sigtest' )
+	{
+		my $name = shift @ARGV;
+		my $tk = TruthKeeper::get();
+		my ($targetGS, $targetStash) = $tk->makeGhostsFromCommandLine( $name );
+		my( $targetUserFN, $targetFqlfn, $targetGhost ) = @{$targetStash->[0]};
+		my $lfns = $targetGhost->getChildrenLFNs();
+		print join "\n", @$lfns;
+		foreach my $l (@$lfns)
+		{
+			my $g = $tk->obtainGhostForLFN( $l );
+			my $sigGhost = $g->cloneForSignature();
+			print $sigGhost->serialize(pathMode=>'strict-basename');
+			print "\n";
+
+		}
+		print" -----\n";
+		$targetGhost->calculateSignatureHashOverChildren();
+
+	}
+	else
+	{
+		die "Unrecognized debug command: [$command].";
+	}
+
+
+
+
+
+}
+
+
 
 
 
@@ -1003,6 +1070,9 @@ sub doverb_checksum_single()
 
 
 	my $c = $targetGhost->getFullHash();
+
+	print "Full hash is $c\n";
+
 }
 
 
@@ -1514,6 +1584,8 @@ sub assembleLFN
 sub parseFQLFN
 {
 	my $lfn = shift;
+
+	die "parseFQLFN passed a undefined value" if not defined $lfn;
 
 #	my @parts = split( ':', $lfn );
 	my (@parts) = ( $lfn =~ m/^(\w+)\:([^:]*)\:(.*)/ );
@@ -3358,7 +3430,7 @@ sub getFullHashSourceVerify
 
 	my $path = $g->getPath();
 
-	print "*** FULLHASH: $path\n";
+	print "*** FULLHASH: $path\n" if $ioDebug;
 
 	# TODO: examine use of stat
 	$main::run_bytes_fullread += -s $path;
@@ -3387,7 +3459,7 @@ sub getStatSourceVerify
 
 	my $path = $g->getPath();
 
-	print "*** STAT: $path\n";
+	print "*** STAT: $path\n"  if $ioDebug;
 
 	$main::run_files_stat++;
 
@@ -3411,7 +3483,7 @@ sub getStatSourceVerify
 
 
 
-# Return LFNs of immediate children
+# Return LFNs of immediate children. This is for source verification purposes.
 # CORE - any FSE must implement
 
 sub getImmediateChildren
@@ -3421,7 +3493,7 @@ sub getImmediateChildren
 
 	my $dir = $parent->getPath();
 
-	print "*** Scandir [$dir]\n";
+	print "*** Scandir [$dir]\n" if $ioDebug; 
 
 	print "FSE:ScanDIR into dir:[$dir]\n" if $fseDebug;
 
@@ -3445,7 +3517,7 @@ sub getImmediateChildren
 
 	close DIR;
 
-	return @files;
+	return \@files;
 }
 
 
@@ -3973,7 +4045,7 @@ sub flushUniversalStore
 		debug( "             |->AFN: $afn") if $tkflushdebug;
 
 		my $absGhost = $gdb->findGhostByAFN( $afn );
-		die if $absGhost->dirty() > 0;
+		die if defined $absGhost->dirty() and $absGhost->dirty() > 0;
 
 		my $originalAbsFH = $absGhost->fullHash();
 		my $originalGhostFH = $g->fullHash(); 
@@ -3982,9 +4054,8 @@ sub flushUniversalStore
 
 		next unless $absGhost->dirty() > 0; 
 
-		print "+++++ Dirty +++++ \n";
-
-		$absGhost->printDebug();
+		# print "+++++ Dirty +++++ \n";
+		# $absGhost->printDebug();
 
 		my $newAbsFH = $absGhost->fullHash();
 
@@ -4001,7 +4072,7 @@ sub flushUniversalStore
 			if( (defined $originalAbsFH) && $newAbsFH ne $originalAbsFH )
 			{
 				CODEPATH( "Revoke AFN/Hash, new hash");
-				$self->revokeAFNforHash( $afn, $originalAbsFH );
+				$gdb->revokeAFNforHash( $afn, $originalAbsFH );
 			}
 
 			$gdb->storeAFNforHash( $afn, $newAbsFH );
@@ -4530,14 +4601,14 @@ sub scanDir
 	# if not call up to TK and try to get from GCIP
 	# if not FSM->getImmediateChildren;
 
-	my @lfns = $g->getFSE()->getImmediateChildren( $g );
+	my $lfns = $g->getFSE()->getImmediateChildren( $g );
 
-	$g->learnChildrenByLFN( time(), @lfns );
+	$g->learnChildrenByLFN( time(), $lfns );
 
-	my @children = $g->getChildren();
+#	my @children = $g->getChildren();
 
  	unshift @$q, \$g;  # add the thunk that will tell us the directory is over
- 	unshift @$q, @lfns; # add the files themselves
+ 	unshift @$q, @{$lfns}; # add the files themselves
 }
 
 sub nextRaw
@@ -5246,6 +5317,26 @@ sub addDebugProvenance
 } 
 
 
+sub cloneForSignature
+{
+	my $self = shift;
+
+	my $c = $self->new();
+
+	$c->pullValuesFromGhostForSignature( $self );
+	$c->setImmutable();
+		
+	if( $provenanceDebug )
+	{
+		my $sid = $self->debugID();
+		my $cid = $c->debugID();
+		$self->addDebugProvenance( "cloneto/SIG($cid)");
+		$c->addDebugProvenance( "clonefrom/SIG($sid)");
+	}
+
+	return $c;
+}
+
 sub clone
 {
 	my $self = shift;
@@ -5284,6 +5375,24 @@ sub setImmutable
 	my $self = shift;
 	$self->_immutable(1);
 }
+
+
+
+sub pullValuesFromGhostForSignature
+{
+	my $self = shift;
+	my $target = shift;
+
+	$self->lfn( 		     $target->lfn() );
+	$self->size( 		     $target->size() );
+	$self->mode( 		     $target->mode() );
+	$self->fullHash( 	     $target->fullHash() );
+	$self->mtime( 		     $target->mtime() );
+
+	$self->dirty( 0 );
+	$self->isTKversion( 0 );
+}
+
 
 
 sub pullValuesFromGhost
@@ -5440,6 +5549,7 @@ sub getChildren()
 {
 	my $self = shift;
 
+
 	if( not defined $self->children() )
 	{
 		die "Corner case - someone didn't teach me my children";
@@ -5455,6 +5565,87 @@ sub getChildren()
 	return @{$self->children()};
 }
 
+# Caller wants the complete set of LFNs of our immediate children. (May force a scan.)
+
+sub getChildrenLFNs
+{
+	my $self = shift;
+	my $time = shift;
+
+	# check our recency times. if we like them, return 
+	# TODO
+
+	if( $self->hasAcceptableEnumeration($time) )
+	{
+		debug( "gChild: getChildrenLFNS - hitting cache") if $gChildDebug;
+		return $self->{CHILDREN_LFNS};
+	}
+	else
+	{
+		debug( "gChild: getChildrenLFNS - forcing source verify") if $gChildDebug;
+		$self->getChildrenLFNsSourceVerify();
+	}
+
+
+	return $self->{CHILDREN_LFNS};
+}
+
+sub getChildrenLFNsSourceVerify
+{
+	my $self = shift;
+
+
+	my $lfns = $self->getFSE()->getImmediateChildren( $self );
+
+	# $self->{CHILDREN_LFNS} = $lfns;
+
+	$self->learnChildrenByLFN( time(), $lfns );
+
+
+}
+
+# Tells us if the object's children list is up to date
+
+sub hasAcceptableEnumeration
+{
+	my $self = shift;
+	my $timeguard = shift;
+
+	if( !defined $self->lastEnumerated() )
+	{
+		debug( "gChild: hasAcceptableEnumeration - no previous enum, forcing scan") if $gChildDebug;
+		return 0;
+	}
+
+	if( !defined $self->{CHILDREN_LFNS} )
+	{
+		debug( "gChild: hasAcceptableEnumeration - not loaded, forcing scan") if $gChildDebug;
+		return 0;
+	}
+
+	if( defined $timeguard && $self->lastEnumerated() < $timeguard )
+	{
+		CODEPATH( "invalidating lastEnumerated due to timeguard" );
+		return 0;
+	}
+	
+	if( defined $main::GUARD_TIME_SECONDS )
+	{
+		my $age = $main::SCRIPT_START - $self->lastEnumerated();
+
+		if( $age > $main::GUARD_TIME_SECONDS )
+		{
+			CODEPATH( "lastEnumerated too old, recheck forced" );
+			debug ( join '', "Forcing enumeration recalculation (", main::expressRelativeTime( $age ), ")\n");
+			return 0; 
+		}
+	}
+
+	return 1;
+}
+
+
+
 # Caller is giving us a complete list of our children from primary source
 # Mark the deleted ones and perform other flags
 
@@ -5462,8 +5653,10 @@ sub learnChildrenByLFN()
 {
 	my $self = shift;
 	my $time = shift;
+	my $lfns = shift; 
 
-	my @lfns = @_;
+
+	my @lfns = @$lfns;
 
 	my $tk = TruthKeeper::get();
 
@@ -5509,7 +5702,93 @@ sub learnChildrenByLFN()
 		}
 	}
 
+	$self->{CHILDREN_LFNS} = $lfns;
+
+	# TODO -eventually remove, we want this weak. 
 	$self->children( \@newKids );
+	$self->learnEnumerated($time);
+}
+
+# Tries to create a signature hash that is at least as old as the time
+# given
+
+sub calculateSignatureHashOverChildren
+{
+	my $self = shift;
+	my $time = shift;
+
+	my $earliestDate = time();
+	my $buffer; 
+
+	my $tk = TruthKeeper::get();
+
+	foreach my $lfn ( @{$self->getChildrenLFNs( $time )} )
+	{
+		my $g = $tk->obtainGhostForLFN($lfn);
+		$g->getFullHash($time);
+		$g->get($time);
+		$earliestDate = $g->lastFullHash() if ( $g->lastFullHash() < $earliestDate );
+		my $gSig = $g->cloneForSignature();
+		my $gBuf = $gSig->serialize(pathMode=>'strict-basename');
+		$buffer .= $gBuf . "\n";
+
+		print "CSHOC: $gBuf\n";
+
+	}
+
+
+	my $sha = Digest::SHA->new(1);
+	$sha->add( $buffer );
+	my $hexdigest = $sha->hexdigest();
+
+
+	if( 1 )
+	{
+		my $ed = $self->quickDebugString();
+
+		print "calculateSignatureHashOverChildren($ed)($time) => $hexdigest, $earliestDate\n";
+	}
+
+	return( $hexdigest, $earliestDate );
+}
+
+# Called when we've received definitive information (either from registerChild
+# or from a full scan) that we have a full enumeration of our contents.  If
+# hashes are available of our children, this will create the compound hash and
+# update the lastHashDate.
+
+sub learnEnumerated
+{
+	my $self = shift; 
+	my $time = shift; 
+
+
+
+}
+
+# indicates that a LFN is thought to be a child of this ghost.  We only
+# consider ourselves to be fully enumerated if either we are explicity told
+# that (learn()) or if  the hash signatures of our children sum up to the hash
+# we have on file.
+
+# Note: clears the fullyEnumerated flag, and also revokes our current fullHash
+# and fullHashdate.
+
+sub registerChildLFN
+{
+	my $self = shift; 
+
+}
+
+
+# Returns true only if getChildren() is a complete list. We know this because
+# we've summed up the signatures of our kids and they match.
+
+sub isFullyEnumerated
+{
+	my $self = shift; 
+
+
 }
 
 # canHaveChildren() - True if we can descend with a call to "getChildren"
@@ -5702,6 +5981,12 @@ sub serialize()
 		$lfn = main::rewriteLFNPathToBasename( $lfn )
 	}
 
+	if( exists $options{'pathMode'} and $options{'pathMode'} eq 'strict-basename' )
+	{
+		my( $handler, $root, $path ) = main::parseFQLFN( $lfn );
+		$lfn = basename( $path );
+	}
+
 	my $statStructSerialized = undef; 
 	if( defined $self->statStruct() )
 	{
@@ -5816,8 +6101,7 @@ sub hasAcceptableFullhash
 	if( $self->isImmutable() )
 	{
 		#debug "I'm immutable - i like my hash";
-		return 1 ;
-
+		return 1;
  	}
 
 	if( not defined $self->fullHash() or $self->fullHash() eq "" )
@@ -5826,7 +6110,7 @@ sub hasAcceptableFullhash
 		return 0;
 	}
 
-	if( defined $timeguard && $self->lastStat() < $timeguard )
+	if( defined $timeguard && $self->lastFullHash() < $timeguard )
 	{
 		CODEPATH( "invalidating fullHash due to timeguard" );
 		return 0;
@@ -5839,7 +6123,7 @@ sub hasAcceptableFullhash
 		if( $age > $main::GUARD_TIME_SECONDS )
 		{
 			CODEPATH( "Hash too old, recheck forced" );
-			debug ( join '', "Forcing hash recalculation (", main::expressRelativeTime( $age ), ")\n");
+			debug ( join '', "Forcing hash recalculation (", main::expressRelativeTime( $age ), ")\n") if $staleInfoDebug;
 			return 0; 
 		}
 	}
@@ -5900,7 +6184,7 @@ sub hasAcceptableStat
 		if( $age > $main::GUARD_TIME_SECONDS )
 		{
 			CODEPATH( "Hash too old, recheck forced" );
-			debug (join '', "Forcing recalculation (", main::expressRelativeTime( $age ), ")\n" );
+			debug (join '', "Forcing recalculation (", main::expressRelativeTime( $age ), ")\n" ) if $staleInfoDebug;
 			return 0; 
 		}
 	}
@@ -6666,12 +6950,21 @@ sub getFullHashSourceVerify
 	my $self = shift;
 	my $time = shift;
 
-	die "Full hash not implemented for directories" if( $self->canHaveChildren() );
+	if( $self->canHaveChildren() )
+	{
+		my( $fullhash, $actualTime ) = $self->calculateSignatureHashOverChildren($time);
+		$self->learnFullHash( $actualTime, $fullhash );
+		return $fullhash;
+	}
+	else
+	{
 
-	my $fullhash = $self->getFSE()->getFullHashSourceVerify( $self, $time );
- 	$self->learnFullHash( $time, $fullhash );
+		my $fullhash = $self->getFSE()->getFullHashSourceVerify( $self, $time );
+	 	$self->learnFullHash( $time, $fullhash );
+	 	return $fullhash;
+	}
 
-	return $fullhash;
+	
 }
 
 
