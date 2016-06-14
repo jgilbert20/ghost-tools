@@ -60,7 +60,6 @@ my $learnDebug          = 0;
 my $statStructDebug     = 0;
 my $provenanceDebug     = 1;
 
-
 # Constants
 
 my $ZERO_LEN_FILE = [];
@@ -68,8 +67,8 @@ my $ZERO_LEN_FILE = [];
 # Major globals
 
 my $PATH_DEFAULT_OBJECT_STORE = '__xx-GFS-ojx/test';
-my $PATH_DEFAULT_DB_DIR = "__db-test";
-my $DESCRIPTOR_FILENAME = ".gfs_ip";
+my $PATH_DEFAULT_DB_DIR       = "__db-test";
+my $DESCRIPTOR_FILENAME       = ".gfs_ip";
 my $SERIALIZATION_VERSION_NUMBER = 5;
 my $GENERAL_DEBUG = 1;
 my $USUAL_IGNORE = 1;
@@ -130,7 +129,7 @@ if( defined $OPT_GUARDTIME )
 	$main::GUARD_TIME_SECONDS_STAT        = $OPT_GUARDTIME;
 	$main::GUARD_TIME_SECONDS_ENUMERATION = $OPT_GUARDTIME;
 	$main::GUARD_TIME_SECONDS_FULLHASH    = $OPT_GUARDTIME;
-	debug "Guard time set to: $main::GUARD_TIME_SECONDS\n";
+#	debug "Guard time set to: $main::GUARD_TIME_SECONDS_\n";
 }
 
 # Utility function to present relative time in a human readable way
@@ -642,6 +641,11 @@ sub doverb_debug()
 		my( $targetUserFN, $targetFqlfn, $targetGhost ) = @{$targetStash->[0]};
 		$targetGhost->printDebug();
 	}
+	elsif( $command eq 'dbdump')
+	{
+		my $gdb = GhostDatabase->getCore();
+		$gdb->debugDumpDB( $gdb->{HASH_TO_AFN_DB});
+	}
 	elsif( $command eq 'lschildren' )
 	{
 		my $name = shift @ARGV;
@@ -672,6 +676,34 @@ sub doverb_debug()
 		print" -----\n";
 		$targetGhost->calculateSignatureHashOverChildren();
 
+	}
+	elsif( $command eq 'crh-slow')
+	{
+		my $sourceArg = shift @ARGV;
+		my $targetArg = shift @ARGV;
+		
+
+		my $tk = TruthKeeper::get();
+		my ($targetGS, $targetStash) = $tk->makeGhostsFromCommandLine( $targetArg );
+		my ($sourceGS, $sourceStash) = $tk->makeGhostsFromCommandLine( $sourceArg );
+		my( $targetUserFN, $targetFqlfn, $targetGhost ) = @{$targetStash->[0]};
+		my( $sourceUserFN, $sourceFqlfn, $sourceGhost ) = @{$sourceStash->[0]};
+		
+		$targetGhost->findDuplicateGhostsUnderTreeFullScan($sourceGhost);
+	}
+	elsif( $command eq 'crh-fast')
+	{
+		my $sourceArg = shift @ARGV;
+		my $targetArg = shift @ARGV;
+		
+
+		my $tk = TruthKeeper::get();
+		my ($targetGS, $targetStash) = $tk->makeGhostsFromCommandLine( $targetArg );
+		my ($sourceGS, $sourceStash) = $tk->makeGhostsFromCommandLine( $sourceArg );
+		my( $targetUserFN, $targetFqlfn, $targetGhost ) = @{$targetStash->[0]};
+		my( $sourceUserFN, $sourceFqlfn, $sourceGhost ) = @{$sourceStash->[0]};
+		
+		# $targetGhost->findAFNsForHash($sourceGhost);
 	}
 	else
 	{
@@ -791,10 +823,14 @@ sub doverb_backup_run()
 		my $targetLFN = main::assembleLFN( $targetHandler, $targetRoot, $newPath );
 
 		print "--- BACKUP -------------------\n";
-		print "[$sourcePath] -> [$newPath]\n";
+		print "[$sourcePath] -> [$newPath] ($targetLFN)\n";
 
 
-		$targetGhost->hasDuplicateUnderTree();
+		if( $targetGhost->hasDuplicateUnderTree($g,$targetLFN) )
+		{
+			print "ALREADY BACKED UP!\n";
+		}
+
 		# how to implement?
 		# one way is to hit BDB
 		#    we first look for size duplicates across that entire path
@@ -1780,7 +1816,7 @@ sub init
 	    -Verbose => 1,
 	    -Home => $DBDIR,
 	    -Flags => DB_CREATE|DB_INIT_MPOOL|DB_INIT_CDB,
-	    -ErrFile => "$DBDIR/Errors-$$",
+	    -ErrFile => "$DBDIR/Errors.txt",
 	    -ErrPrefix => "GFS"
 	    ;
 
@@ -1803,12 +1839,9 @@ sub init
 	die "Failed to create hashToAFN: $!, $BerkeleyDB::Error" unless $hashToAFN;
 	$self->{HASH_TO_AFN_DB} = $hashToAFN;	
 
-
-
 #	my $status = $afnToGhost->db_put("sdfsf","bar");
 #	ckStatus( $status );
 
-	
 }
 
 sub ckStatus
@@ -1818,17 +1851,49 @@ sub ckStatus
 	die "DB error: $!, $BerkeleyDB::Error" if $status; 
 }
 
+
+sub debugDumpDB
+{
+	my $self = shift;
+	my $db = shift;
+
+
+my ($k, $v) = ("", "") ;
+my $cursor = $db->db_cursor() ;
+while ($cursor->c_get($k, $v, DB_NEXT) == 0)
+ { 
+ 	print "$k -> $v\n" 
+}
+
+
+
+}
+
 sub findAFNsbyHashAndPrefix
 {
 	my $self = shift;
 	my $hash = shift;
 	my $prefix = shift;
 
-	print "Looking for hash:$hash under prefix:$prefix\n";
+	debug "Looking for hash:$hash under prefix:[$prefix]\n";
 
+	my $c = $self->findAFNsForHash($hash);
+	my $len = length $prefix;
+	my @r; 
 
+	foreach my $afn ( @$c )
+	{
+		debug "  --> AFN match: $afn";
+		return if length($afn) < $len;
+		my $a = substr $afn,0,$len;
+		if( $a eq $prefix)
+		{
+			debug "      -> MATCH subpath!";
+			push @r, $afn; 
+		}
+	}
 
-
+	return \@r;
 }
 
 sub findGhostByAFN
@@ -1868,6 +1933,8 @@ sub findGhostByAFN
 	return $gAFN; 
 
 }
+
+# Finds all AFNs for the given hash, returns an array reference. 
 
 sub findAFNsForHash
 {
@@ -3734,10 +3801,18 @@ sub hasDuplicateUnderTree
 	my $hash = $target->getFullHash();
 	my $gdb = GhostDatabase->getCore();
 
-	my $afns = $gdb->findAFNsbyHashAndPrefix($hash,$target->absoluteLFN());
+	my $afns = $gdb->findAFNsbyHashAndPrefix($hash,$topLevel->absoluteLFN());
 
+	my $tk = TruthKeeper::get();
+	my @g = map { $tk->obtainGhostForLFN( $_) } @$afns;
 
+	foreach my $g (@g)
+	{
+		my $r = $target->isDuplicateOf( $g );
 
+		my $dstr = $g->quickDebugString();
+		print "Possible result=$r for $dstr\n"; 
+	}
 
 
 	# We have to decide at this point if the universal cache is up to date. 
@@ -4081,7 +4156,7 @@ sub flushUniversalStore
 			if( defined $originalAbsFH )
 			{
 				CODEPATH( "Revoke AFN/Hash, no new hash");
-				$gdb->revokeAFNforHash( $afn, $originalAbsFH );
+				$gdb->revokeAFNforHash( $originalAbsFH, $afn );
 			}
 		}
 		else
@@ -4089,10 +4164,10 @@ sub flushUniversalStore
 			if( (defined $originalAbsFH) && $newAbsFH ne $originalAbsFH )
 			{
 				CODEPATH( "Revoke AFN/Hash, new hash");
-				$gdb->revokeAFNforHash( $afn, $originalAbsFH );
+				$gdb->revokeAFNforHash( $originalAbsFH, $afn );
 			}
 
-			$gdb->storeAFNforHash( $afn, $newAbsFH );
+			$gdb->storeAFNforHash( $newAbsFH, $afn);
 		}
 
  		$gdb->storeGhostToAFN( $g, $afn );
@@ -4572,16 +4647,12 @@ sub nextNoRecurse
 	}
 
 	return $self->parentGhostStore()->findGhostForLFN($c) ; 
-	
-
-
 }
 
 
 sub nextRecurse
 {
 	my $self = shift;
-
 
 	my $n = $self->nextRaw();
 
@@ -4745,7 +4816,7 @@ sub countDirty
 
 	my $i = 0;
 
-	map {$i++ if $_->dirty() > 0 } $self->getAllGhosts();
+	map {$i++ if defined $_->dirty() && $_->dirty() > 0 } $self->getAllGhosts();
 
 	return $i;
 }
@@ -5565,21 +5636,14 @@ sub getFSE
 sub getChildren()
 {
 	my $self = shift;
+	my $tk = TruthKeeper::get();
 
+	my $c = $self->getChildrenLFNs();
 
-	if( not defined $self->children() )
-	{
-		die "Corner case - someone didn't teach me my children";
-	}
+	my @r = map { $tk->obtainGhostForLFN( $_ ); } @$c;
 
-	if( not ref $self->children() )
-	{
-		die "Corner case - someone didn't teach me my children";
-	}
-
-	# TODO - should this be weak?
-	# if so, how to handle orphans?
-	return @{$self->children()};
+	# think about changing this to a reference
+	return @r;
 }
 
 # Caller wants the complete set of LFNs of our immediate children. (May force a scan.)
@@ -5620,6 +5684,42 @@ sub getChildrenLFNsSourceVerify
 
 
 }
+
+
+# Looks for ghosts the worst possible way - a full recursive decent
+
+sub findDuplicateGhostsUnderTreeFullScan
+{
+	my $self = shift;
+	my $target = shift;
+
+	my @c = $self->getChildren();
+
+	debug $self->quickDebugString();
+	my @results;
+
+	foreach my $c (@c)
+	{
+		if( $c->isDuplicateOf($target ) )
+		{
+			my $q = $c->quickDebugString();
+			debug "*** Duplicate found: $q\n";
+			push @results, $c;
+		}
+
+		if( $c->canHaveChildren() )
+		{
+			my $r = $c->findDuplicateGhostsUnderTreeFullScan($target);
+			push @results, @{$r};
+		}
+
+
+	}
+
+	return \@results; 
+}
+
+
 
 # Tells us if the object's children list is up to date
 
@@ -5722,7 +5822,7 @@ sub learnChildrenByLFN()
 	$self->{CHILDREN_LFNS} = $lfns;
 
 	# TODO -eventually remove, we want this weak. 
-	$self->children( \@newKids );
+	# $self->children( \@newKids );
 	$self->learnEnumerated($time);
 }
 
@@ -5780,8 +5880,9 @@ sub learnEnumerated
 	my $self = shift; 
 	my $time = shift; 
 
-
-
+	$self->lastEnumerated( $time );
+	$self->markDirty();
+	debug "Learned: Fully enumed" if $learnDebug;
 }
 
 # indicates that a LFN is thought to be a child of this ghost.  We only
@@ -5795,18 +5896,19 @@ sub learnEnumerated
 sub registerChildLFN
 {
 	my $self = shift; 
-
-}
+	die "ni";
+}	
 
 
 # Returns true only if getChildren() is a complete list. We know this because
-# we've summed up the signatures of our kids and they match.
+# we've summed up the signatures of our kids and they match. Once this step is
+# done once per ghost, a flag is set and it doesn't need to be done again
 
 sub isFullyEnumerated
 {
 	my $self = shift; 
 
-
+	die "ni";
 }
 
 # canHaveChildren() - True if we can descend with a call to "getChildren"
@@ -5920,7 +6022,7 @@ sub isSameFilename
 	# is the very best way to test for complete filename equivilence
 	# The testing read-out is below and turned off for now
 
-	if( 0 )
+	if( 1 )
 	{
 		debug "Checking if two files are the same filename:\n";
 		debug "   me: [$fn1]\n";
@@ -5962,8 +6064,8 @@ sub isDuplicateOf
 	my $self = shift;
 	my $other = shift;
 
-	die "Incomplete info self-size" if not defined $self->size();
-	die "Incomplete info other-size" if not defined $other->size();
+	# die "Incomplete info self-size" if not defined $self->size();
+	# die "Incomplete info other-size" if not defined $other->size();
 
 	return 0 if( $self->getSize() ne $other->getSize() );
 
@@ -6495,6 +6597,11 @@ sub learnFromGhost
 		$self->uuid( $g->uuid() );
 		debug "Learned - UUID" if $learnDebug;
 		$self->markDirty();
+	}
+
+	if( defined $g->lastEnumerated() )
+	{
+		$self->learnEnumerated( $g->lastEnumerated() )
 	}
 
 	# if( defined $g->sequence() and !defined $self->sequence() )

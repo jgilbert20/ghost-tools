@@ -6,11 +6,50 @@ This is a working set of design concepts. There is a retired, scratch version of
 
 # Ghosts
 
-The smallest unit of metadata is a ghost. A ghost is an imprint of a file. It says that name, size, location, checksums, permissions, etc of a file that either is on disk or once was on disk.
+The smallest unit of metadata is a ghost. A ghost is an imprint of a file or object. It says that name, size, location, checksums, permissions, etc of a file that either is on disk or once was on disk.
 
 Every GFS operation (move, backup, etc) works by making ghosts of your files, and then applying formal logic rules to those ghosts. Making a ghost is extremely low-cost; basically just allocation of a small amount of memory. Data such as size, mode, file checksums, etc is added to the ghost on-demand.
 
 Ghosts can represent files or objects on your local computer as well as remote one. They are entirely generalized to point to any kind of data asset that can have a checksum.
+
+## Ghosts for directories
+
+Directories are also represnted as ghosts. A fullHash() on a ghost means get the full hash of its children, just like git(1). 
+
+In an ideal backup scenario, I obtain a hash representing a particular directory. Primary source verification occurs by getting the hashes of all directories underneath. Therefore “has hash duplicate” still works. As long as the directory is EXACTLY the way it was, we are all good.
+
+so now, calling getFullHash() on a directory object has a meaning. As a container object, it means getGhostSig() on each child (which forces stat and hash).. You want multiple calls to serializeImmediate to always return the same thing.
+
+GIT would handle that differently. It would make a tree object, and the hash of the tree object would be the hash of the directory.
+
+Now it is semantically meaningful to ask if a whole directory is available, exactly as-is at a remote location. You simply make sure that the getHash() on it is up to date.
+
+So maybe you make a new ghost: cloneAsChildSignature. And you use newlines as the delimiters and escape what you’ve got.
+
+As an optimization later, we can pack the structure so we don’t have a shit ton of ::::: 
+
+This table shows which fields factor into the hash. 
+
+    my @s = ( $lfn,                  YES, but must be relative
+              $self->effectiveDate(),    NO
+              $self->sequence(),         NO
+              $self->uuid(),             NO
+              $self->lastStat(),         NO
+              $self->lastFullHash(),     NO
+              $self->size(),             YES
+              $self->mode(),             YES
+              $self->mtime(),            YES
+              $self->fullHash(),         YES
+              $self->lastDirScan(),
+              $self->lastEnumerated(),
+              $self->firstStat(),
+              $self->fileStatus(),
+              $self->attributes(),
+              $statStructSerialized
+              );
+
+
+
 
 
 
@@ -487,7 +526,7 @@ Basiclaly, the best known hash of a ghost who has received a size change is no h
 
 # The rules in summary now that we have them
 
-RULE #1: A stat can never be older than the hash in a given ghost. Cause for immediate program termination.
+RULE #1: A stat can never be older than the hash in a given ghost. Cause for immediate program termination. (However, It IS allowed in cases where the ghost represents a directory, as this is expected behaviors.)
 
     What is the benefit of this RULE?
     WHY?

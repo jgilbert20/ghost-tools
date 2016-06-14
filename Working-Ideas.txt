@@ -1,8 +1,26 @@
 Working Ideas.txt
 
+
+- [ ] implement backup with the best-possible logic for 'already has hash'
+	- [ ] implement a checkpoint verb
+	- [ ] hasHash should scan inside the hashDatabase and find leading AFNs, filtering them down.
+	- [ ] wire up the actual backup dir creation
+	- [ ] figure out some warning if checkpointing is not recent enough
+	- [ ] performance test "getAllXUnderPath" to learn how bad damage is
+	- [ ] figure out where to put manifest information
+- [ ] figure out how reconstruction is supposed to work
+	- [ ] if i have a checksum of a directory, what happens if i can't find it in the ghost cache? Is it a file in the repo? I think it is OK for that operation to be slow when you didn't set up a volume. And for you to have to rely on a snapshot object rather than the volume. (see the comand examples.) 
+	- [ ] somehow i have to exract the directory out of the manifest, and hunt down the LFNS, and then fire off some copy 
+
+
+- [ ] Check if versions and lineage are working properly 
+	- [ ] How on earth are multiple directory trees now represented in a remote location?
+
 - [ ] wire in copy and move to sync operation now that they are implemented
+- [ ] replicate RSYNC path handling
+
 - [ ] Properly implement volumes
-- [ ] Implement an AFN cache in a test (non-live capability) - lets not get too reliant on caching for the time being. But lets update the cache on saves/exits, and do a test “learn” that intentionally doesn’t hit operational code so we can surface cases where the absoluteLFN scenario breaks down
+- [X] Implement an AFN cache in a test (non-live capability) - lets not get too reliant on caching for the time being. But lets update the cache on saves/exits, and do a test “learn” that intentionally doesn’t hit operational code so we can surface cases where the absoluteLFN scenario breaks down
 - [ ] properly fix the idea of a "fundamental"
 
 - [ ] test cases

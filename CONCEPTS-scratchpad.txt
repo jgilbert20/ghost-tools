@@ -4,6 +4,43 @@
 It is a collection of retired ideas.. anything that is current has been moved to the full concept file. 
 
 
+# The ghost backup situation
+
+I want to backup object X, which is a file. How do I know if it is present on the backup directory?
+
+- Worse case: I traverse every node, looking for a hash duplicate. With caching, this actually may just require a relatively modest load
+- Better case: I find some truth engine that supporst canReconstructHash().
+
+CRH() dumb implementation is to select an entire swath of filenames using the B-Tree and insert them into the hash store every time. But how do we know all subchildren are loaded? I think it is safe to assume that in a consistent system, if they are in the AFN->Ghost store, they are also in the HASH->AFN store. We can create tools to do a consistent check for this (and probably should.) If we stored something on the parent that told us the size and number of files, we could do a fast iteration over the exploded tree, and verify that information. Presumably with cursors that could be made to be faster than hitting the database so many times.
+
+A deeper scan aims for a full enumeration, but has to use ONLY the ghost data inside that store, so that gaps can be identified.
+
+	GDB->verifyFullDIrectoryEnumeration( $g );
+
+This implies there is some sort of flag-- when a whole block of things come over into a cache, I can mark them as authoritative and that effectively the entire cache is up to date.
+
+This seal on the rows would be broken on insert. 
+
+I don't need to be too worried about false-positives since those can be verified. But false negatives would suck a bit.
+
+Maybe we push this back to the user.  We do some spot checks on a few directories at random. If they don't seem enumerated, we issue a warning and tell the user to run the checkpointing tools again.
+
+A really advanced idea is to have a CRH cache. I bet there is some hyper-fast file format that could be used. Or maybe an in memory hash is not that bad? Perl can deal with really gnarly hash sizes and these checksums can be packed into a file for uber-fast lookup.
+
+	# the problem of a cache of a cahce of this kind it hat the "full deal" is what matters.
+	# it seems to take about 1.4 user seconds to enumerate 1.36M rows in BDB
+	# that tells me we've got a lot of room to grow here
+
+Seems like the best thing to do in V1 is assume "user must checkpoint" behavior.
+
+Checkpointing requires a full stat, and a hash if the stat revoked our hash.
+it also should make sure any objects described (snapshots, directories, tarfiles, whatever) are pulled into the cache.
+
+
+
+
+
+
 
 # TruthKeeper evolved
 
@@ -170,38 +207,13 @@ The recon should support
 - Finding a file inside a nested directory object
 - finding a subdirectory inside of a directory
 
-so now, calling getFullHash() on a directory object has a meaning. As a container object, it means getGhostSig() on each child (which forces stat and hash)..
-
-GIT would handle that differently. It would make a tree object, and the hash of the tree object would be the hash of the directory.
-
-Is there some way to get both things? After all, I will want to be able to serilizeImmediate objects. But we need some way to avoid the spurious sorts of stuff. You’d ideally want multiple calls to serializeImmediate to always return the same thing.
-
-So maybe you make a new ghost: cloneAsChildSignature. And you use newlines as the delimiters and escape what you’ve got.
-
-As an optimization later, we can pack the structure so we don’t have a shit ton of ::::: 
-
-	my @s = ( $lfn,                  YES, but must be relative
-			  $self->effectiveDate(),    NO
-			  $self->sequence(),         NO
-			  $self->uuid(),             NO
-			  $self->lastStat(),         NO
-			  $self->lastFullHash(),     NO
-			  $self->size(),             YES
-			  $self->mode(),             YES
-			  $self->mtime(),            YES
-			  $self->fullHash(),         YES
-			  $self->lastDirScan(),
-			  $self->lastEnumerated(),
-			  $self->firstStat(),
-			  $self->fileStatus(),
-			  $self->attributes(),
-			  $statStructSerialized
-			  );
-
-
 Okay, so version one of this 
 
-We need to deal with deletes better - if we realize something is deleted, its parent should have its hash cleared.
+TODO We need to deal with deletes better - if we realize something is deleted, its parent should have its hash cleared.
+
+Source: a294d0c46d9768647f53e58fc69ebb0600c84236
+several times got it.
+
 
 
 # Backup tool issues
