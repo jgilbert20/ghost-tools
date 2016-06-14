@@ -1,7 +1,21 @@
 
 # What is this document
 
-It is a collection of retired ideas.. anything that is current has been moved to the full concept file. 
+It is a collection of work in pgoress (or sometimes retired) ideas.. anything that is current has been moved to the full concept file. 
+
+
+WACKY IDEA- What if cache poisoning was resolved by LEARN ALWAYS taking the MOST conservative date? No. that would cause needless source verifications. But what about the case of enumeration? Taking the oldest would force full enumeration that should trickle back to all caches. And enumeration is cheap. 
+
+is there a difference from a cache perspective of "latest playback".. e.g. a think that we learn that says - someone in the cache chain hasn't seen a playback of the full directory in XXX days?
+
+OTOH, we can always ask individual truth keepers what their enumeration date is.
+
+where i am right now is that hash checking is working well. But there needs to be some kind of checkpoint verb. and we need a basic restore mechanic.
+lets get this all working so we can start to understand performance issues and think through fixes. 
+
+we don't seem to have an acceptable forceEnumeration. The date is the OLDEST date that contribute to that tree. Need to construct a test schenario where this falls out of date, and then where a readdir scan reverifies it. That will actually fix 9/10 of the cache poisoning problem.
+
+need some simple db verification tools. Make sure all AFNs from the hash cache are in the other thing and visca versa. 
 
 
 # The ghost backup situation
@@ -35,6 +49,44 @@ Seems like the best thing to do in V1 is assume "user must checkpoint" behavior.
 
 Checkpointing requires a full stat, and a hash if the stat revoked our hash.
 it also should make sure any objects described (snapshots, directories, tarfiles, whatever) are pulled into the cache.
+
+reasonable to warn that the current target of the backup has not been checkpointed in XXX days. 
+
+
+
+
+
+
+# Original notes from duplicateUnderPath
+
+We have to decide at this point if the universal cache is up to date. 
+Each FSE might handle this differently.
+
+I think the check would recurively look at subdirectories? Or maybe just
+simple time based? I'd like to find some way to prevent the need for the
+user to be smart enough to know that a checkpoint is needed.
+
+One way to handle this is there is some kind of
+"hasAcceptableDirscan()". If dirscan is popualted for an AFN, we could avoid
+the full traversal. But an acceptable dirscan on the .gfs_ip doesn't mean the
+one inside the cache is up to date.
+
+you'd want two fields (most recent enumer, and oldest enum.) 
+
+maybe there is a recursive way. I can "test my own" understanding.
+first, i get the GFS_IP for the current directory
+its going to have some stats in it about sizes and file counts and whatnot.
+and i compare that to my own db enumeration.
+
+BDB may or may not be quick enough to allow this..?
+but doesn't its Btree have some sort of "# records between?"
+that would be optimal
+that is the check?
+
+the problem of a cache of a cahce of this kind it hat the "full deal" is what matters.
+it seems to take about 1.4 user seconds to enumerate 1.36M rows in BDB
+that tells me we've got a lot of room to grow here
+
 
 
 
@@ -229,6 +281,11 @@ http://burp.grke.org/images/burp2-report.pdf
 http://codegolf.stackexchange.com/questions/4771/text-compression-and-decompression-nevermore
 
 http://www.mit.edu/afs.new/athena/astaff/source/src-9.3/third/findutils/locate/frcode.cache
+
+
+# packfile perl
+
+https://github.com/jacquesg/p5-Git-Raw/tree/master/xs
 
 
 

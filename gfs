@@ -29,6 +29,8 @@ use MLDBM qw( BerkeleyDB::Hash Storable );
 
 sub debug($);
 
+local $main::SCRIPT_START = time();
+local $main::SCRIPT_START_GTOD = [gettimeofday];
 
 # These parameters control our acceptable "out of dateness". If undefined,
 # than any available cached data is used. These variables alone do not fully
@@ -42,7 +44,7 @@ local $main::GUARD_TIME_SECONDS_FULLHASH = undef;
 
 # Debug control
 
-my $ioDebug             = 0;   # Print stats, reads, readdirs, etc. 
+my $ioDebug             = 1;   # Print stats, reads, readdirs, etc. 
 my $staleInfoDebug      = 0;   # Decisionmaking on if data is current enough
 my $icDebug             = 0;   # TK incorporation
 my $tkdebug             = 0;   # TK general
@@ -72,8 +74,7 @@ my $DESCRIPTOR_FILENAME       = ".gfs_ip";
 my $SERIALIZATION_VERSION_NUMBER = 5;
 my $GENERAL_DEBUG = 1;
 my $USUAL_IGNORE = 1;
-local $main::SCRIPT_START = time();
-local $main::SCRIPT_START_GTOD = [gettimeofday];
+
 
 # Run statistics - globals
 
@@ -813,6 +814,8 @@ sub doverb_backup_run()
 
 	my ($targetHandler, $targetRoot, $targetPath)  = $targetGhost->getLFNcompontents();
 
+	my $verbose = 0;
+
 	my $sourceGSiterator = $sourceGS->getIterator();
 	while( my $g = $sourceGSiterator->next() )
 	{
@@ -822,13 +825,22 @@ sub doverb_backup_run()
 		my $newPath = File::Spec->catfile( $targetPath, "backup-$$", $sourcePath );
 		my $targetLFN = main::assembleLFN( $targetHandler, $targetRoot, $newPath );
 
-		print "--- BACKUP -------------------\n";
-		print "[$sourcePath] -> [$newPath] ($targetLFN)\n";
+
+		print "--- BACKUP -------------------\n" if $verbose;
+		print "[$sourcePath] -> [$newPath] ($targetLFN)\n" if $verbose;
 
 
-		if( $targetGhost->hasDuplicateUnderTree($g,$targetLFN) )
+
+
+		my $dup = $targetGhost->findDuplicateUnderTree($g,$targetLFN,1);
+
+		if( $dup )
 		{
-			print "ALREADY BACKED UP!\n";
+			print "OK   $sourcePath\n";
+		}
+		else
+		{
+			print "COPY $sourcePath -> $newPath\n";
 		}
 
 		# how to implement?
@@ -1759,7 +1771,7 @@ sub extractHashComponents
 sub globalMkPath
 {
 	my $p = shift; 
-	debug "Mkpath: $p";
+	# debug "Mkpath: $p";
 	File::Path::make_path( $p );
 
 	$@ and die "Couldn't create dir path: $@";
@@ -1858,16 +1870,18 @@ sub debugDumpDB
 	my $db = shift;
 
 
-my ($k, $v) = ("", "") ;
-my $cursor = $db->db_cursor() ;
-while ($cursor->c_get($k, $v, DB_NEXT) == 0)
- { 
- 	print "$k -> $v\n" 
-}
+	my ($k, $v) = ("", "") ;
+	my $cursor = $db->db_cursor() ;
+	while ($cursor->c_get($k, $v, DB_NEXT) == 0)
+	 { 
+	 	print "$k -> $v\n" 
+	}
 
 
 
 }
+
+my $gdbFindDebug = 1; 
 
 sub findAFNsbyHashAndPrefix
 {
@@ -1875,7 +1889,7 @@ sub findAFNsbyHashAndPrefix
 	my $hash = shift;
 	my $prefix = shift;
 
-	debug "Looking for hash:$hash under prefix:[$prefix]\n";
+	debug "Looking for hash:$hash under prefix:[$prefix]\n" if $gdbFindDebug;
 
 	my $c = $self->findAFNsForHash($hash);
 	my $len = length $prefix;
@@ -1883,12 +1897,12 @@ sub findAFNsbyHashAndPrefix
 
 	foreach my $afn ( @$c )
 	{
-		debug "  --> AFN match: $afn";
-		return if length($afn) < $len;
+		debug "  --> AFN match: $afn" if $gdbFindDebug;
+		next if length($afn) < $len;
 		my $a = substr $afn,0,$len;
 		if( $a eq $prefix)
 		{
-			debug "      -> MATCH subpath!";
+			debug "      -> MATCH subpath!" if $gdbFindDebug;
 			push @r, $afn; 
 		}
 	}
@@ -3791,12 +3805,15 @@ sub moveGhost
 
 
 
-sub hasDuplicateUnderTree
+sub findDuplicateUnderTree
 {
 	my $self = shift;
 	my $topLevel = shift;
 	my $target = shift;
+	my $just_one = shift || 0;
 
+
+	# print "enter\n";
 
 	my $hash = $target->getFullHash();
 	my $gdb = GhostDatabase->getCore();
@@ -3804,49 +3821,26 @@ sub hasDuplicateUnderTree
 	my $afns = $gdb->findAFNsbyHashAndPrefix($hash,$topLevel->absoluteLFN());
 
 	my $tk = TruthKeeper::get();
-	my @g = map { $tk->obtainGhostForLFN( $_) } @$afns;
+	my @g = map { $tk->obtainGhostForLFN( $_ ); } @$afns;
+
+	# print "g=@$afns\n";
+
+	my @result;
 
 	foreach my $g (@g)
 	{
 		my $r = $target->isDuplicateOf( $g );
 
 		my $dstr = $g->quickDebugString();
-		print "Possible result=$r for $dstr\n"; 
+		# debug "findDuplicateUnderTree=($r) for $dstr\n"; 
+
+		return $g if( $just_one );
+		push @result, $g; 
 	}
 
+	return undef if( $just_one && @result == 0 );
 
-	# We have to decide at this point if the universal cache is up to date. 
-	# Each FSE might handle this differently.
-
-	# I think the check would recurively look at subdirectories? Or maybe just
-	# simple time based? I'd like to find some way to prevent the need for the
-	# user to be smart enough to know that a checkpoint is needed.
-	#
-	# One way to handle this is there is some kind of
-	# "hasAcceptableDirscan()". If dirscan is popualted for an AFN, we could avoid
-	# the full traversal. But an acceptable dirscan on the .gfs_ip doesn't mean the
-	# one inside the cache is up to date.
-	#
-	# you'd want two fields (most recent enumer, and oldest enum.) 
-	# 
-	# maybe there is a recursive way. I can "test my own" understanding.
-	# first, i get the GFS_IP for the current directory
-	# its going to have some stats in it about sizes and file counts and whatnot.
-	# and i compare that to my own db enumeration.
-	#
-	# BDB may or may not be quick enough to allow this..?
-	# but doesn't its Btree have some sort of "# records between?"
-	# that would be optimal
-	# that is the check?
-	#
-	# the problem of a cache of a cahce of this kind it hat the "full deal" is what matters.
-	# it seems to take about 1.4 user seconds to enumerate 1.36M rows in BDB
-	# that tells me we've got a lot of room to grow here
-	#
-	# 
-
-
-
+	return \@result; 
 }
 
 
@@ -5750,6 +5744,8 @@ sub hasAcceptableEnumeration
 	{
 		my $age = $main::SCRIPT_START - $self->lastEnumerated();
 
+		# print "$age > $main::GUARD_TIME_SECONDS_ENUMERATION\n";
+
 		if( $age > $main::GUARD_TIME_SECONDS_ENUMERATION )
 		{
 			CODEPATH( "lastEnumerated too old, recheck forced" );
@@ -6414,12 +6410,21 @@ sub moveGhost
 ############
 
 
-sub hasDuplicateUnderTree()
+
+sub findDuplicateUnderTree()
 {
 	my $self = shift;
 	my $thing = shift;
+	my $just_one = shift; 
 
-	return $self->getFSE()->hasDuplicateUnderTree( $self, $thing );
+
+	# This is our lone check for enumeration, not really great
+
+	my $c = $self->getChildrenLFNs();
+
+	die "Warning - tree does not appear to have been enumerated recently." if not defined $self->fullHash();
+
+	return $self->getFSE()->findDuplicateUnderTree( $self, $thing, $just_one);
 }
 
 
