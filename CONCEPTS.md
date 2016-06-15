@@ -12,6 +12,19 @@ Every GFS operation (move, backup, etc) works by making ghosts of your files, an
 
 Ghosts can represent files or objects on your local computer as well as remote one. They are entirely generalized to point to any kind of data asset that can have a checksum.
 
+
+
+# effectiveDate
+
+The contract with a ghost is that the ghost is always a picture of the best known state of the world. If new infromation comes in, the ghost is updated and saved. 
+
+Information like stat() and hash() fields always come with the date of their most recent effective operation. This date is used to ensure that if conflicting information is available (say from different caches), we can always select the best data to use.
+
+But other things could potentially change about a ghost, for instance attributes. These are things that are potentially not source verifiable. Each ghost maintains an effectiveDate, which is basically the date at which the information in the ghost overall is thought to be correct. For non-source verifiable information, the data with the latest effectiveDate is generally taken. 
+
+Some very innocent updates will not force a ghost to be dirty. For instance, a stat alone where no new information will not force a flush. This can cause some strange behavior. For instance, if you checksum a ghost that has changed, the new stat information will flush out. New stats will not be required for the period of the guard time. But then future checksum operations on an unchanged will force a new stat to occur every time, beucase the fact of the last stat will not have been persisted.
+
+
 ## Ghosts for directories
 
 Directories are also represnted as ghosts. A fullHash() on a ghost means get the full hash of its children, just like git(1). 

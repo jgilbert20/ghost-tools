@@ -58,7 +58,7 @@ my $gChildDebug         = 0;
 my $fseDebug            = 0;
 my $fseOjxDebug         = 0;
 my $fseSnapshotDebug    = 0;
-my $learnDebug          = 0;
+my $learnDebug          = 1;
 my $revokeDebug         = 1;   # Special case of learn that just looks at hash revocation
 my $statStructDebug     = 0;
 my $provenanceDebug     = 1;
@@ -2148,7 +2148,7 @@ sub saveGhostToStore()
 
 	$absGhost->learnFromGhost( $g );
 
-	if( not $absGhost->dirty() > 0 )
+	if( $absGhost->dirty() == 0 )
 	{
 		debug "   No new data to return to GDB." . $absGhost->quickDebugString();
 		return; 
@@ -7033,7 +7033,7 @@ sub learnStat
 		my $__mtime = defined $mtime ? $mtime : "<undef>";
 		my $__mode = defined $mode ? $mode : "<undef>";
 		my $__statStruct = defined $statStruct ? $statStruct : "<undef>";
-		debug "LEARN STAT [$__size], [$__mtime], [$__mode] [$__statStruct] for $q\n";
+		debug "LEARN STAT [$__size], [$__mtime], [$__mode] [$__statStruct] for $q time:[$time]\n";
 		$self->printDebug();
 	}
 
@@ -7140,11 +7140,20 @@ sub learnStat
 		$anythingHasChanged = 1 if( defined $mtime and $self->mtime() != $mtime );
 		$anythingHasChanged = 1 if( defined $mode and $self->mode() ne $mode );
 		$anythingHasChanged = 1 if( defined $statStruct and $self->statStruct()->hasMeaningfullyChanged( $statStruct ) );
+
 	}
 
 	if( (defined $self->lastStat()) and ($time > $self->lastStat() ))
 	{
 		CODEPATH( "Newer stat information accepted");
+
+		# COntroversial - decision is not to force dirtiness in cases where
+		# nothing has changed even though technically we have a newer stat
+		# date - means we will do a write of a stat even if nothing has
+		# changed in a long time, bumping sequence number etc.
+		# If some other field changes, we'll flush the data out, but lastStat alone wont do it. 
+
+
 	}	
 
 	$self->size($size);
@@ -7161,7 +7170,7 @@ sub learnStat
 
 	debug "Learn STAT: isAnythingChanged? $anythingHasChanged" if $learnDebug; 	
 
-		$self->markDirty( $time, "stat") if $anythingHasChanged;
+	$self->markDirty( $time, "stat") if $anythingHasChanged;
 }
 
 sub learnFullHash
