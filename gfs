@@ -44,7 +44,7 @@ local $main::GUARD_TIME_SECONDS_FULLHASH = undef;
 
 # Debug control
 
-my $ioDebug             = 0;   # Print stats, reads, readdirs, etc. 
+my $ioDebug             = 1;   # Print stats, reads, readdirs, etc. 
 my $staleInfoDebug      = 0;   # Decisionmaking on if data is current enough
 my $icDebug             = 0;   # TK incorporation
 my $tkdebug             = 0;   # TK general
@@ -59,6 +59,7 @@ my $fseDebug            = 0;
 my $fseOjxDebug         = 0;
 my $fseSnapshotDebug    = 0;
 my $learnDebug          = 0;
+my $revokeDebug         = 1;   # Special case of learn that just looks at hash revocation
 my $statStructDebug     = 0;
 my $provenanceDebug     = 0;
 
@@ -565,8 +566,6 @@ sub doverb_debug()
 	elsif( $command eq 'cleargfs' )
 	{
 		system( "find . -name '.gfs_ip' -print0  | xargs -0 rm -v" );
-
-
 	}
 	elsif( $command eq 'dbdump')
 	{
@@ -2656,7 +2655,8 @@ sub findOneInProgressLFNforGhost
 	my $lfnState = $self->_lfnState();
 	foreach my $lfn (  keys %$lfnState )
 	{
-		CODEPATH( "Horrors");
+		CODEPATH( "Horrors - o(n^2) operation!");
+		warn "Probably doesn't work anymore..";
 		return $lfn if $self->_getCurrent( $lfn ) == $g;
 	}
 
@@ -3568,7 +3568,7 @@ sub getStatSourceVerify
 	if( @statfields == 0 )
 	{
 		my $errcode = $! + 0;
-		print "DEBUG: $! = $errcode\n";
+		print "   stat-error - $! = $errcode\n" if $ioDebug;
 		return (undef, undef, main::statModeGen_error($errcode));
 	}
 
@@ -3722,7 +3722,7 @@ sub store
 	 $main::run_files_copied++;
 	 $main::run_bytes_copied += $sourceSize;
 
-	 debug "***(IO)*** COPY [$srcPath]->[$finalPath]" if $ioDebug;
+	print "*** COPY [$srcPath]->[$finalPath]\n" if $ioDebug;
 
 	my $r = copy( $srcPath, $finalPath );
 
@@ -3765,8 +3765,8 @@ sub moveGhost
 
 	die "file to move does not exist" unless $source->exists();
 
-	die "store only works for single files" unless $source->isSingleFile();
-	die "store only works for single files" unless $target->isSingleFile();
+	die "move only works for single files" unless $source->isSingleFile();
+	die "move only works for single files" unless $target->isSingleFile() or !$target->exists();
 
 	my $srcPath = $source->getPath();
 	my $destPath = $target->getPath();
@@ -3791,7 +3791,7 @@ sub moveGhost
 	my $effectiveTime = time() ;
 	$target->learnIsACopyOfGhost( $source );
 
-	#$source->learnContentsChanged( $effectiveTime );
+	$source->learnContentsChanged( $effectiveTime );
 
 	# Perform a quick verification that the file sizes match. Not strictly
 	# needed. The caller can force more verification if it wants.
@@ -4415,6 +4415,8 @@ sub incorporateGhostStore
 
 sub incorporateGhostData
 {
+	die "no longer checked";
+
 	my $self = shift;
 	my $g = shift;
 
@@ -4473,19 +4475,10 @@ sub registerTruthyGhost
 	my $ghostForLFN = $self->ghostForLFN();
 	die "Collision [$lfn]" if exists $ghostForLFN->{$lfn};
 	$ghostForLFN->{$lfn} = $g;
-
-	# ghosts that are not real should never be attempted to convert to AFNs? is
-	# that true? they certainly shouldn't find their way into a persistent store.
-	# if that were true, the truthkeeper has to learns that it is actualized, and
-	# thats when it does and AFN test.
-
-	# my $afn = $g->absoluteLFN();
-	# my $ghostForAFN = $self->ghostForAFN();
-	# die "Collision [$afn]" if exists $ghostForAFN->{$afn};
-	# $ghostForAFN->{$afn} = $g;
 }
 
-# Normal logic to get a ghost -- first check if we have it already
+# Normal logic to get a ghost. Nearly all ghost construction should come
+# through this routine.
 
 sub obtainGhostForLFN
 {
@@ -4503,11 +4496,25 @@ sub obtainGhostForLFN
 
 	main::assert_cpath( $path );
 
-	if( exists $ghostForLFN->{$lfn} )
-	{
-		debug "TK:Obtain: obtain f:[$lfn] - found in cache\n" if $tkdebug;
-		return $ghostForLFN->{$lfn};		
-	}
+	# if( exists $ghostForLFN->{$lfn} )
+	# {
+	# 	debug "TK:Obtain: obtain f:[$lfn] - found in cache\n" if $tkdebug;
+	# 	return $ghostForLFN->{$lfn};		
+	# }
+
+	debug( "TK:Obtain: Making new blank ghost for f:[$lfn]\n") if $tkdebug;
+	my $g = Ghost->make_private( $lfn );
+	$g->addDebugProvenance( "obtain/base($lfn)" ) if $provenanceDebug;
+	# registers into our singleton cache
+	
+	# $self->registerTruthyGhost( $g );
+	
+	my $DID = $g->debugID();
+	debug "TK:Obtain: Made: $DID\n" if $tkdebug;
+
+	return $g;
+
+
 
 	# Next look for in global cache (if present)
 	# TODO when time comes, implement global cache
@@ -4520,20 +4527,20 @@ sub obtainGhostForLFN
 	# store is useless for certain types of LFNS really only things pretaining
 	# to file system should hit descriptor refactor to move to FSE
 
-	if( $handler eq "fs" )
-	{
-		my $gs = $self->getGhostStoreForDescriptorFileCoveringFN($path);
-		my $g = $gs->findGhostForLFN($lfn);
+	# if( $handler eq "fs" )
+	# {
+	# 	my $gs = $self->getGhostStoreForDescriptorFileCoveringFN($path);
+	# 	my $g = $gs->findGhostForLFN($lfn);
 
-		my $DID = ref $g ? $g->debugID() : 'Not found';
-		debug "TK:Obtain: obtain f:[$lfn] pulled g:[$DID] from ghost descriptor\n" if $tkdebug;
+	# 	my $DID = ref $g ? $g->debugID() : 'Not found';
+	# 	debug "TK:Obtain: obtain f:[$lfn] pulled g:[$DID] from ghost descriptor\n" if $tkdebug;
 		
-		if( defined $g )
-		{
-			# note: registration already occured by getGhostStore...FN()
-			return $g 
-		}
-	}
+	# 	if( defined $g )
+	# 	{
+	# 		# note: registration already occured by getGhostStore...FN()
+	# 		return $g 
+	# 	}
+	# }
 
 	# If this LFN is pointing to a container object, I think this is the
 	# right place in the logic to force a load. This logic needs to be more
@@ -4541,12 +4548,12 @@ sub obtainGhostForLFN
 
 	if( $handler eq "snap" )
 	{
+		die "Unclear on current status after refactor";
 		debug "Obtain: container object load case" if $tkdebug; 
 		
 		my $g = Ghost->make_private( $lfn );
 		# should this have been a virtual ghost?
 		$g->addDebugProvenance( "obtain/snap($lfn)" );
-
 
 		my $fse = FSEFactory->getFSEHandlerForGhost( $g );
 		my $r = $fse->findGhostForLFN( $lfn );
@@ -4562,26 +4569,26 @@ sub obtainGhostForLFN
 	# this point, how do we decide if this guy is going to be virtual or if
 	# its going to be real?
 
-	debug( "TK:Obtain: Making new ghost for f:[$lfn]\n") if $tkdebug;
-	my $g = Ghost->make_private( $lfn );
-	$g->addDebugProvenance( "obtain/base($lfn)" );
-	# registers 
-	$self->incorporateGhostData( $g );
-	#$g->markDirty();
-	# MAJOR change - ghosts are no longer automatically dirty
+	# debug( "TK:Obtain: Making new ghost for f:[$lfn]\n") if $tkdebug;
+	# my $g = Ghost->make_private( $lfn );
+	# $g->addDebugProvenance( "obtain/base($lfn)" );
+	# # registers 
+	# $self->incorporateGhostData( $g );
+	# #$g->markDirty();
+	# # MAJOR change - ghosts are no longer automatically dirty
 
-	$g->isTKversion(1);
+	# $g->isTKversion(1);
 
-	if( $handler eq "fs" )
-	{
-		my $gs = $self->getGhostStoreForDescriptorFileCoveringFN( $path );
-		$gs->addGhost( $g );
-	}
+	# if( $handler eq "fs" )
+	# {
+	# 	my $gs = $self->getGhostStoreForDescriptorFileCoveringFN( $path );
+	# 	$gs->addGhost( $g );
+	# }
 
-	my $DID = $g->debugID();
-	debug "TK:Obtain: Made: $DID\n" if $tkdebug;
+	# my $DID = $g->debugID();
+	# debug "TK:Obtain: Made: $DID\n" if $tkdebug;
 
-	return $g;
+	# return $g;
 }
 
 
@@ -6876,7 +6883,7 @@ sub learnContentsChanged
 	my $time = shift;
 
 
-	debug " XX Revoking hash due to learnContentsChanged()" if $learnDebug;
+	debug " XX Revoking hash due to learnContentsChanged()" if $revokeDebug || $learnDebug;
 
 	$self->size( undef );
 	$self->mtime( undef );
@@ -6986,7 +6993,7 @@ sub learnStat
 
 	if( main::statModeParse_isError( $mode ) )
 	{
-		debug( " XX Revoked hash due to error mode=($mode)");
+		debug( " XX Revoked hash due to error mode=($mode) for $q") if $revokeDebug || $learnDebug;
 
 		$self->lastFullHash(undef);
 		$self->fullHash(undef);
@@ -7004,7 +7011,7 @@ sub learnStat
 		$self->lastFullHash(undef);
 		$self->fullHash(undef);
 
-		debug( " XX Revoked hash due to new size");
+		debug( " XX Revoked hash due to new size for $q") if $revokeDebug || $learnDebug;
 
 		CODEPATH( "revokehash with new size" );
 	}
@@ -7266,6 +7273,8 @@ sub isSameNumberOrDef
 	my $a = shift;
 	my $b = shift;
 
+	#print "[$a] vs [$b]\n";
+
 	if( defined $a )
 	{
 		if( defined $b )
@@ -7302,9 +7311,10 @@ sub getStatSourceVerify
  
 	$self->learnStat( $time, $size, $mtime, $mode, $statStruct );
 
-	die if isNotSameNumberOrDef( $self->size(), $size);
-	die if isNotSameNumberOrDef( $self->mtime(), $mtime);
-	die if isNotSameNumberOrDef( $self->mode(), $mode);
+	die "assert - somehow a hard stat didn't absorb" if isNotSameNumberOrDef( $self->size(), $size);
+	die "assert - somehow a hard stat didn't absorb" if isNotSameNumberOrDef( $self->mtime(), $mtime);
+	# modes can be strings or numbers, so no easy assert.
+	# die if isNotSameNumberOrDef( $self->mode(), $mode);
 
 	return ( $size, $mtime, $mode );
 }

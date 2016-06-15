@@ -5,6 +5,16 @@ It is a collection of work in pgoress (or sometimes retired) ideas.. anything th
 
 
 
+Simple things
+- [ ] mv should revoke parents hash
+- [ ] mkdirs should revoke parent's hash
+- [ ] change in checksum should revoke parent's hash
+
+
+
+
+
+
 Ran into a big glitch today. Ghost were getting generated for files that were not there. They were mucking up several things. First, the real_path function doesn't work if it can't check the file system. So it was returning undef silently when the paths were converted to absolute during the end of script flush. 
 
 Secondly, even on fixing that, the code was trying to flush out .gfs_ip files to locations that didn't exist (to record the fact that files don't exist there.)
