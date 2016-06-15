@@ -38,13 +38,13 @@ local $main::SCRIPT_START_GTOD = [gettimeofday];
 # revokes the hash. But a changed modification date does not trigger a re-
 # hash.
 
-local $main::GUARD_TIME_SECONDS_STAT = undef; 
+local $main::GUARD_TIME_SECONDS_STAT = 10; 
 local $main::GUARD_TIME_SECONDS_ENUMERATION = undef; 
 local $main::GUARD_TIME_SECONDS_FULLHASH = undef; 
 
 # Debug control
 
-my $ioDebug             = 1;   # Print stats, reads, readdirs, etc. 
+my $ioDebug             = 0;   # Print stats, reads, readdirs, etc. 
 my $staleInfoDebug      = 0;   # Decisionmaking on if data is current enough
 my $icDebug             = 0;   # TK incorporation
 my $tkdebug             = 0;   # TK general
@@ -60,7 +60,7 @@ my $fseOjxDebug         = 0;
 my $fseSnapshotDebug    = 0;
 my $learnDebug          = 0;
 my $statStructDebug     = 0;
-my $provenanceDebug     = 1;
+my $provenanceDebug     = 0;
 
 # Constants
 
@@ -68,8 +68,9 @@ my $ZERO_LEN_FILE = [];
 
 # Major globals
 
-my $PATH_DEFAULT_OBJECT_STORE = '__xx-GFS-ojx/test';
-my $PATH_DEFAULT_DB_DIR       = "__db-test";
+my $PATH_DEFAULT_OBJECT_STORE = '__gfs_ojx/test';
+my $DIRTYLOGFN                = '__gfslog';
+my $PATH_DEFAULT_DB_DIR       = "__gsf_dbd";
 my $DESCRIPTOR_FILENAME       = ".gfs_ip";
 my $SERIALIZATION_VERSION_NUMBER = 5;
 my $GENERAL_DEBUG = 1;
@@ -313,78 +314,6 @@ sub gfs_unescape($)
 	return $v;
 }
 
-# test cases:
-# snapshot directories both a/* and a/ and a
-
-# insight: we could have an entry for a directory.. the last full time it was scanned
-# then if the read date of the file is earlier than the scan date of the directory
-# then we know the file may be stale and can delete it
-
-
-
-# how do we stick virtual things into the hash?
-# for instance, where or how do we store the idea that a .tar file has certain contents
-# or that an rsync directory (jgilbert@auspice.net:a/b/c) contains a file?
-# almost like a normal path a/b/c is basically an implicit "local:a/b/c"..
-# the local handler knows to write .gfs_info files
-# whereas the remote one knows not to
-# each FS type offeres a get, move, copy, retrieve full checksum, stat, etc function
-# so now we can handle S3, Rsync, etc
-
-# how does that tie in with tags?
-# how do I say anything under /Volume/Foo should be addressed as FOODRIVE:
-# clearly this only matters during AFN conversion
-# disktag:FOODRIVE|/one/two/three
-#
-# if that is the AFN recorded, then the system will think that is there
-# we just need to write a record like /Volume/Foo -> FOODRIVE
-# and also write a /Volume/Foo/GFS_ID.txt file
-# then a dereference just requires that we verify that the /Volume/Foo/GFS_ID can still be reached
-# maybe there is a tool like "bless" which does this for you
-# so the rel->AFN conversion would either need to rely on this mapping
-# or traverse back up to make sure that all ../GFS_ID.txt files were registered
-
-# is a snapshot treated as a file collection as a target? if it is, we have to emphasize 
-# that it is a ghost. e.g. you can enumerate, but the fact that snapshot:4444/sdf contains
-# this file version could never be used as a proxy.
-# so when you "get all AFNs for hash", you'd have to pass to a FShandler for the snapshot
-
-# GFS is an overlay snapshoting and directory reconstruction tool. Its not really meant 
-# for version control, but managing someone's life which may be scattered 
-# across many different asset types and locations.
-# GFS is entirely built around command line tools. It doesn't watch the filesystem
-# for changes.
-# key features
-# 1) highly accelerated content-aware rsync - a file is never retransmitted unless needed
-# 2) worried you still wantt o eb sure you have a backup of a wedding photos? 
-#     this has tools that let you flag and manage bit-rot and verify your stuff is where
-#     you think it is
-# 3) work with large file trees both on a desktop and laptop? GFS can tell you instantly
-#     which chnages you've made on your laptop that are not yet on your desktop and push them
-#     to the desktop efficiently
-# 4) in the field and want to be sure files you are working on are protected?
-#     GFS can make sure any file is either in your dropbox, on your machine at home
-# 5) trying to free up space on your laptop? do you have a copy of that big 10 GB ISO file
-#     at home? find out quickly if you can ditch it. 
-
-
-
-# Database layer use cases
-# 1) quickly give me ghost information for a path
-#      AFN -> GhostSerialized as absolute
-# 2) quickly give me the AFNs associated with a hash or size
-#      hash -> AFN 0..n   (needed for LSDup)
-#	   size -> AFN 0..n   (also possibly needed for LSDup)
-
-# so when something is stored in location X or found in location X, 
-# what permanent record is created?
-# maybe we create spontaneous snapshot records that can be loaded back in?
-#
-#    gfs rsync /source jgilbert@asdf:foobar/
-# 
-# All files written to foobar drops a file in .gfs/receipts/rsync-$$-date.snapshot
-# With the note: "This snapshot record was written by GFS on date XXXX"
-
 sub main()
 {
 	# print "Welcome to Ghost.\n";
@@ -452,7 +381,6 @@ sub handleVerb
 		return;
 	}
 
-
 	if( $verb eq "lsdup")
 	{
 		doverb_lsdup();
@@ -462,14 +390,6 @@ sub handleVerb
 	if( $verb eq "help")
 	{
 		doverb_help();
-		return;
-	}
-
-	# Simple harness that confirms we can read and write to the database
-
-	if( $verb eq "dbtest")
-	{
-		doverb_dbtest();
 		return;
 	}
 
@@ -642,10 +562,21 @@ sub doverb_debug()
 		my( $targetUserFN, $targetFqlfn, $targetGhost ) = @{$targetStash->[0]};
 		$targetGhost->printDebug();
 	}
+	elsif( $command eq 'cleargfs' )
+	{
+		system( "find . -name '.gfs_ip' -print0  | xargs -0 rm -v" );
+
+
+	}
 	elsif( $command eq 'dbdump')
 	{
 		my $gdb = GhostDatabase->getCore();
 		$gdb->debugDumpDB( $gdb->{HASH_TO_AFN_DB});
+	}
+	elsif( $command eq 'dbtest')
+	{
+		my $gdb = GhostDatabase->getCore();
+		$gdb->selftest();
 	}
 	elsif( $command eq 'lschildren' )
 	{
@@ -721,28 +652,6 @@ sub doverb_debug()
 
 
 
-# doverb_dbtest
-#
-# Simple actions for using the ghost database.
-
-sub doverb_dbtest()
-{
-	my $afn = 'fs:root:testfile1';
-	my $gdb = GhostDatabase->getCore();
-	my $tk = TruthKeeper::get();
-
-	# my $g = $tk->obtainGhostForLFN( $afn );
-	# $gdb->storeGhostToAFN( $g, $afn );
-	# my $ng = $gdb->findGhostByAFN( $afn );
-
-	# $ng->printDebug();
-	$gdb->storeAFNforHash( "f", "bar");
-	$gdb->storeAFNforHash( "f", "bar2");
-	$gdb->storeAFNforHash( "f", "bar3");
-	$gdb->storeAFNforHash( "f", "bar4");
-	$gdb->revokeAFNforHash( "f", "bar2");
-	print join '|||', @{$gdb->findAFNsForHash( "f")};
-}
 
 # doverb_store
 #
@@ -814,25 +723,35 @@ sub doverb_backup_run()
 
 	my ($targetHandler, $targetRoot, $targetPath)  = $targetGhost->getLFNcompontents();
 
-	my $verbose = 0;
+	my $verbose = 1;
 
 	my $sourceGSiterator = $sourceGS->getIterator();
 	while( my $g = $sourceGSiterator->next() )
 	{
+		print "--- BACKUP -------------------\n" if $verbose;
+
+		print "targetGhost::::" . $targetGhost->makeDebugString();
+
 		my $sourceLFN = $g->lfn();
 		my $sourcePath = $g->getPath(); 
 		my $basename = basename $g->getPath();
 		my $newPath = File::Spec->catfile( $targetPath, "backup-$$", $sourcePath );
-		my $targetLFN = main::assembleLFN( $targetHandler, $targetRoot, $newPath );
-
-
-		print "--- BACKUP -------------------\n" if $verbose;
-		print "[$sourcePath] -> [$newPath] ($targetLFN)\n" if $verbose;
+		my $destLFN = main::assembleLFN( $targetHandler, $targetRoot, $newPath );
 
 
 
+		#print "--- BACKUP -------------------\n" if $verbose;
+		print "[$sourcePath] -> [$newPath] ($destLFN)\n" if $verbose;
 
-		my $dup = $targetGhost->findDuplicateUnderTree($g,$targetLFN,1);
+
+		if( $g->canHaveChildren() )
+		{
+			print "Skipping directory\n";
+			next;
+			# TODO, fix
+		}
+
+		my $dup = $targetGhost->findDuplicateUnderTree($g,$targetFqlfn,1);
 
 		if( $dup )
 		{
@@ -841,6 +760,10 @@ sub doverb_backup_run()
 		else
 		{
 			print "COPY $sourcePath -> $newPath\n";
+			my $destGhost = $tk->obtainGhostForLFN( $destLFN );
+			die	if( $destGhost->exists() );
+			$destGhost->store( $g );
+
 		}
 
 		# how to implement?
@@ -1075,7 +998,7 @@ sub doverb_compare()
 # doverb_ls - handle the LS command
 #
 # for each item listed, shows what we know about it -- no recursion, no forced 
-# characterization
+# characterization. 
 
 sub doverb_ls()
 {
@@ -1095,7 +1018,7 @@ sub doverb_ls()
 		my $lfh_string = (defined $lastFullHash) ? strftime( "%c", localtime( $lastFullHash) ) : '<not calculated>';
 
 		my $d = (defined $lastFullHash) ? expressRelativeTime( $main::SCRIPT_START - $lastFullHash ) : "x";
-		my $type = $g->getType() || '?';
+		my $type = $g->type() || '?';
 
 		$lfh_string .= "($d)";
 
@@ -1573,7 +1496,32 @@ sub rewriteLFNPathAbsolute
 	die unless defined $lfn;
 	my( $handler, $root, $path ) = parseFQLFN( $lfn );
 	die "only fs roots can be made into absolute paths ($lfn)-($root)" unless $handler eq 'fs';
-	$path = abs_path( $path );
+
+
+
+	if( 0 )
+	{
+		debug "Test of rewrite:\n";
+		debug "   me: [$path]\n";
+
+	  	my $cwd1 = abs_path( $path );
+
+	 	debug "Using Cwd Abs_path:\n"; 
+	  	debug "   me: [$cwd1]\n";
+
+	  	my $abs1 = File::Spec->rel2abs( $path );
+
+	 	debug "Using rel2abs:\n"; 
+	  	debug "   me: [$abs1]\n";
+	}
+
+
+
+	#print "Before: $path\n";
+	$path = File::Spec->rel2abs( $path );
+	# $path = abs_path( $path );
+	#print "After: $path\n";
+
 	return assembleLFN( $handler, $root, $path );
 }
 
@@ -1658,7 +1606,7 @@ sub parseFQLFN
 	my ($handler, $root, $path ) = @parts;
 
 	die "assert: parseFQLFN [$lfn] - does not have 3 parts!" unless scalar(@parts) == 3;
-	# print "ParseLFN = [$lfn] -> handler:[$handler] root:[$root] lfn:[$path]\n";
+	#print "ParseLFN = [$lfn] -> handler:[$handler] root:[$root] lfn:[$path]\n";
 
 	return @parts; 
 }
@@ -1856,6 +1804,57 @@ sub init
 
 }
 
+sub selftest
+{
+	my $self = shift;
+	my $db;
+
+	$db = $self->{HASH_TO_AFN_DB};
+
+	my %hashesSeen;
+
+	{
+		my ($k, $v) = ("", "") ;
+		my $cursor = $db->db_cursor() ;
+		while ($cursor->c_get($k, $v, DB_NEXT) == 0)
+		 { 
+		 	$hashesSeen{$k}++;
+
+		 	print "$k -> $v\n" ;
+
+		 	my $afns = thaw $v;
+		 	foreach my $afn (@$afns )
+			{
+				my $g = $self->findGhostByAFN( $afn );
+				die "AFN in HashToAFN database not found in afn DB" if not defined $g;
+				debug $g->quickDebugString();
+				die "Hash inconsistency between HashToAfn and AfnToGhost" if $g->fullHash() ne $k;
+			}	
+		}
+	}
+
+	{
+		$db = $self->{AFN_TO_GHOST_DB};
+		my ($k, $v) = ("", "") ;
+		my $cursor = $db->db_cursor() ;
+		while ($cursor->c_get($k, $v, DB_NEXT) == 0)
+		 { 
+		 	print "$k -> $v\n" ;
+
+		 	my $g = Ghost->newFromSerialized( $v ); 
+		 	if( defined $g->fullHash() )
+		 	{
+		 		die unless $hashesSeen{$g->fullHash} > 0;
+		 	}
+
+		}
+	}	
+
+	print "Database consistency check passed!\n";
+
+
+}
+
 sub ckStatus
 {
 	my $status = shift;
@@ -1876,6 +1875,7 @@ sub debugDumpDB
 	 { 
 	 	print "$k -> $v\n" 
 	}
+
 
 
 
@@ -3515,6 +3515,8 @@ sub getAbsoluteLFNForGhost
 	my $self = shift;
 	my $g = shift;
 
+	# $g->printDebug();
+
 	return main::rewriteLFNPathAbsolute($g->lfn());
 }
 
@@ -3713,12 +3715,14 @@ sub store
 
 	my $finalPath = $finalTarget->getPath();
 
-	print "store(): Invoking full copy [$srcPath]->[$finalPath]\n";
+	#print "store(): Invoking full copy [$srcPath]->[$finalPath]\n";
 
 	my $sourceSize = $sourceGhost->getSize();
 
 	 $main::run_files_copied++;
 	 $main::run_bytes_copied += $sourceSize;
+
+	 debug "***(IO)*** COPY [$srcPath]->[$finalPath]" if $ioDebug;
 
 	my $r = copy( $srcPath, $finalPath );
 
@@ -3727,7 +3731,7 @@ sub store
 		die "Copy operation failed - [$srcPath]->[$finalPath]: err: $!";
 	}
 
-	$finalTarget->learnContentsChanged( time() );
+	$finalTarget->learnIsACopyOfGhost( $sourceGhost );
 
 	# Perform a quick verification that the file sizes match. Not strictly
 	# needed. The caller can force more verification if it wants.
@@ -3785,8 +3789,9 @@ sub moveGhost
 	}
 
 	my $effectiveTime = time() ;
-	$source->learnContentsChanged( $effectiveTime );
-	$target->learnContentsChanged( $effectiveTime );
+	$target->learnIsACopyOfGhost( $source );
+
+	#$source->learnContentsChanged( $effectiveTime );
 
 	# Perform a quick verification that the file sizes match. Not strictly
 	# needed. The caller can force more verification if it wants.
@@ -4168,7 +4173,7 @@ sub flushUniversalStore
 
  		if( $g->everWasDirtyThisRun() )
  		{
- 			open FILE, ">>__gfslog" or die;
+ 			open FILE, ">>$DIRTYLOGFN" or die;
  			print FILE $g->serialize();
  			print FILE "\n";
  			close FILE; 
@@ -5362,10 +5367,14 @@ use base qw(Class::Accessor);
 use Cwd qw(abs_path); # best way to get these
 
 
+use Carp qw(cluck longmess shortmess);
+use Data::Dumper;
+
+
 
 # GHOST_NEW_FIELD: Place 4/4 where you add new fields to ghosts
 
-Ghost->mk_accessors( qw(lfn lastFullHash size mode fullHash statStruct
+Ghost->mk_accessors( qw(lfn lastFullHash size mode _fullHash statStruct
 	uuid sequence effectiveDate attributes
 	dirty isTKversion lastDirScan lastStat mtime lastEnumerated firstStat fileStatus
 	children _immutable _debugID  ) );
@@ -5483,6 +5492,8 @@ sub pullValuesFromGhost
 	my $target = shift;
 
 	# GHOST_NEW_FIELD: Place 5/5 where you add new fields to ghosts
+
+	debug( "Pull values from ghost\n");
 
 	$self->lfn( 		     $target->lfn() );
 	$self->lastFullHash(     $target->lastFullHash() );
@@ -6063,7 +6074,31 @@ sub isDuplicateOf
 	# die "Incomplete info self-size" if not defined $self->size();
 	# die "Incomplete info other-size" if not defined $other->size();
 
-	return 0 if( $self->getSize() ne $other->getSize() );
+	if( $duplicateDebug )
+	{
+
+		my $q1 = $self->quickDebugString();
+		my $q2 = $other->quickDebugString();
+		debug "isDuplicateOf -  self: $q1\n";
+		debug "isDuplicateOf - other: $q2\n";
+	}
+
+	my $sSize = $self->getSize(); 
+	my $oSize = $other->getSize();
+
+	if( $duplicateDebug )
+	{
+		debug "isDuplicateOf -  self-getSize=$sSize\n";
+		debug "isDuplicateOf - other-getSize=$oSize\n";
+	}
+
+	if( $sSize != $oSize )
+	{
+		debug "isDuplicateOf - Answer=NO (size)\n";
+		return 0;
+	}
+
+
 
 #   die "Incomplete info self full hash" if not defined $self->fullHash();
 #	die "Incomplete info other full hash " if not defined $other->fullHash();
@@ -6078,6 +6113,9 @@ sub isDuplicateOf
 		my $oI = $other->debugID();
 		debug "isDuplicateOf - forcing hash $mH - $oH ($mI and $oI)\n";
 	}
+
+
+
 	return 1 if( $mH eq $oH );
 
 	return 0; 
@@ -6210,24 +6248,34 @@ sub hasAcceptableFullhash
 	my $timeguard = shift;
 
 
-
+	if($staleInfoDebug)
+	{
+	my $q= $self->quickDebugString();
+	debug "hasAcceptableFullhash:($timeguard) $q\n" 
+}
 
 	# debug "Checking if I like my hash\n";
 
 	if( $self->isImmutable() )
 	{
+			debug "hasAcceptableFullhash:($timeguard) - Immutable\n" if $staleInfoDebug;;
+
 		#debug "I'm immutable - i like my hash";
 		return 1;
  	}
 
 	if( not defined $self->fullHash() or $self->fullHash() eq "" )
 	{
+			debug "hasAcceptableFullhash:($timeguard) not defined\n" if $staleInfoDebug;;
+
 		#debug "has not defined, reject";
 		return 0;
 	}
 
 	if( defined $timeguard && $self->lastFullHash() < $timeguard )
 	{
+			debug "hasAcceptableFullhash:($timeguard) explicit timeguard\n" if $staleInfoDebug;
+
 		CODEPATH( "invalidating fullHash due to timeguard" );
 		return 0;
 	}
@@ -6239,10 +6287,14 @@ sub hasAcceptableFullhash
 		if( $age > $main::GUARD_TIME_SECONDS_FULLHASH )
 		{
 			CODEPATH( "Hash too old, recheck forced" );
+				debug "hasAcceptableFullhash:($timeguard) implicit timeguard\n" if $staleInfoDebug;
+
 			debug ( join '', "Forcing hash recalculation (", main::expressRelativeTime( $age ), ")\n") if $staleInfoDebug;
 			return 0; 
 		}
 	}
+
+	debug "hasAcceptableFullhash:($timeguard) HASH OK\n" if $staleInfoDebug;
 
 	# debug "Yes, hash is OK.";
 
@@ -6256,6 +6308,8 @@ sub hasAcceptableFullhash
 sub getFullHash
 {
 	my $self = shift;
+
+
 
 	if( $self->hasAcceptableFullhash() )
 	{
@@ -6283,6 +6337,13 @@ sub hasAcceptableStat
 	my $self = shift;
 	my $timeguard = shift;
 
+if( $staleInfoDebug )
+{
+	my $q = $self->quickDebugString();
+	my $x = defined $timeguard ? $timeguard : "undef";
+	debug "hasAcceptableStat:($x) $q\n" 
+}
+
 	return 1 if $self->isImmutable();
 
 	return 0 if( not defined $self->lastStat() );
@@ -6290,6 +6351,7 @@ sub hasAcceptableStat
 	if( defined $timeguard && $self->lastStat() < $timeguard )
 	{
 		CODEPATH( "invalidating stat due to timeguard" );
+		debug "hasAcceptableStat:($timeguard) - timeguard case\n" if $staleInfoDebug;;
 		return 0;
 	}
 
@@ -6299,6 +6361,7 @@ sub hasAcceptableStat
 
 		if( $age > $main::GUARD_TIME_SECONDS_STAT )
 		{
+
 			CODEPATH( "Hash too old, recheck forced" );
 			debug (join '', "Forcing recalculation (", main::expressRelativeTime( $age ), ")\n" ) if $staleInfoDebug;
 			return 0; 
@@ -6531,7 +6594,7 @@ sub getStatPresence
 # Policy: same information with a new date does not normally force dirtyness
 # unless it is a hash, because the hash is expensive
 #
-
+use Data::Dumper;
 
 sub learnFromGhost
 {
@@ -6558,6 +6621,9 @@ sub learnFromGhost
 		$g->printDebug();
 		debug "++++++++++++++++++++++++++++++++++ END\n";
 	}
+
+	#print Dumper( $self );
+
 
 	die if $g->effectiveDate() > time();
 
@@ -6616,6 +6682,8 @@ sub learnFromGhost
 	# 	$self->markDirty();
 	# }
 
+	#print Dumper( $self );
+
 
 	if( defined $g->lastStat() )
 	{
@@ -6664,6 +6732,17 @@ sub learnFromGhost
 			die "How did we learn nothing from the target? suspicious!";
 		}
 	}
+
+
+	if( $learnDebug )
+	{
+		debug "++++++++++++++++++++++++++++++++++ Final Ghost\n";
+		$self->printDebug();
+		debug "++++++++++++++++++++++++++++++++++ END\n";
+	}
+
+	#print Dumper( $self );
+
 
 
 }
@@ -6752,6 +6831,35 @@ sub learnDirscan
 	$self->learnPresent( $time );
 }
 
+
+
+# This tells the ghost that as far as GFS knows, this ghost is actually a copy
+# of another ghost. 
+
+sub learnIsACopyOfGhost
+{
+	my $self = shift;
+	my $g = shift;
+
+
+
+
+	# clear out anything that might confuse the stat
+	$self->lastFullHash(undef);
+	$self->lastStat(undef);
+
+	$self->learnFromGhost( $g );
+
+	# and furthemore, void out the dates
+
+	# experimental
+	$self->lastFullHash(undef);
+	$self->lastStat(undef);
+
+}
+
+
+
 # This tells the ghost that the file contents are presumed to have changed. In
 # fact, the file may not exist anymore. For consistency, we basically pretend
 # that the file doesn't exist anymore, thus forcing recalculations.
@@ -6760,10 +6868,15 @@ sub learnDirscan
 # TODO: is a cleaner way to do this to have some sort of "knownUpdate" field
 # that is triggered on it which automatically fails out the next hasAcceptable() 
 
+
+
 sub learnContentsChanged
 {
 	my $self = shift;
 	my $time = shift;
+
+
+	debug " XX Revoking hash due to learnContentsChanged()" if $learnDebug;
 
 	$self->size( undef );
 	$self->mtime( undef );
@@ -6771,6 +6884,23 @@ sub learnContentsChanged
 	$self->mode( undef );
 	$self->lastFullHash( undef );
 	$self->lastStat( undef );
+
+	$self->markDirty();
+}
+
+sub fullHash
+{
+	my $self = shift;
+	#my $r = $self->SUPER::fullHash(@_);
+	my $x = $self->_fullHash();
+	my $l  = @_;
+	my $lfn = $self->lfn();
+	#print "NEW HASH TAKEN LFN[[$lfn]] $self ($x) at:[@_] l:$l \n";
+	#cluck "corner case found!!!!" if $l > 0 and not defined $_[0] ; 
+
+	#print Dumper( $self );
+
+	return $self->_fullHash( @_ );
 }
 
 # This is the universal way of reporting new stat information, either from the
@@ -6856,6 +6986,8 @@ sub learnStat
 
 	if( main::statModeParse_isError( $mode ) )
 	{
+		debug( " XX Revoked hash due to error mode=($mode)");
+
 		$self->lastFullHash(undef);
 		$self->fullHash(undef);
 
@@ -6871,6 +7003,8 @@ sub learnStat
 	{
 		$self->lastFullHash(undef);
 		$self->fullHash(undef);
+
+		debug( " XX Revoked hash due to new size");
 
 		CODEPATH( "revokehash with new size" );
 	}
@@ -6937,6 +7071,15 @@ sub learnFullHash
 
 	die if $self->isImmutable();
 
+	my $q = $self->quickDebugString();
+
+	if( $learnDebug )
+	{
+		my $__time = defined $time ? $time : "<undef>";
+		my $__hash = defined $hash ? $hash : "<undef>";
+		print "LEARN HASH time:[$__time] hash:[$__hash] for $q\n";
+		$self->printDebug();
+	}
 
 	die unless defined $time;
 	die unless defined $hash;
@@ -7028,6 +7171,8 @@ sub learnFullHash
 	$self->lastFullHash( $time );
 	$self->fullHash( $hash );
 
+	debug "Accepted hash [$hash]\n" if $learnDebug;;
+
 	debug "Learn HASH: isAnythingChanged? $isAnythingChanged" if $learnDebug; 	
 
 	$self->markDirty() if $isAnythingChanged;
@@ -7087,6 +7232,13 @@ sub getType
 }
 
 
+sub type
+{
+	my $self = shift;
+	my $mode = $self->mode();
+	return $self->extractTypeFromMode( $mode );
+}
+
 sub getFullHashSourceVerify
 {
 	my $self = shift;
@@ -7109,6 +7261,37 @@ sub getFullHashSourceVerify
 	
 }
 
+sub isSameNumberOrDef
+{
+	my $a = shift;
+	my $b = shift;
+
+	if( defined $a )
+	{
+		if( defined $b )
+		{
+			return $a == $b;
+		}
+		else
+		{
+			return 0;
+		}
+	}
+	else
+	{
+		return 1 if not defined $b;
+	}
+
+	return 0;
+}
+
+sub isNotSameNumberOrDef
+{
+	my $a = shift;
+	my $b = shift;
+	return ! isSameNumberOrDef( $a, $b );
+}
+
 
 sub getStatSourceVerify
 {
@@ -7118,6 +7301,10 @@ sub getStatSourceVerify
 	my ($size, $mtime, $mode, $statStruct) = $self->getFSE()->getStatSourceVerify( $self, $time );
  
 	$self->learnStat( $time, $size, $mtime, $mode, $statStruct );
+
+	die if isNotSameNumberOrDef( $self->size(), $size);
+	die if isNotSameNumberOrDef( $self->mtime(), $mtime);
+	die if isNotSameNumberOrDef( $self->mode(), $mode);
 
 	return ( $size, $mtime, $mode );
 }

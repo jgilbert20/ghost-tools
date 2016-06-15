@@ -60,6 +60,28 @@ Sound too good to be true? The downsides:
 - GFS can be RAM intensive for really massive file operations. (300-2000 bytes per file)
 
 
+# Swiss Army Knife Description
+
+GFS is an overlay snapshoting and directory reconstruction tool. Its not really
+meant for version control, but managing someone's life which may be scattered
+across many different asset types and locations. GFS is entirely built around
+command line tools. It doesn't watch the filesystem for changes.
+
+key features
+1) highly accelerated content-aware rsync - a file is never retransmitted unless needed
+
+2) worried you still wantt o eb sure you have a backup of a wedding photos? 
+    this has tools that let you flag and manage bit-rot and verify your stuff is where
+    you think it is
+
+3) work with large file trees both on a desktop and laptop? GFS can tell you instantly
+    which chnages you've made on your laptop that are not yet on your desktop and push them
+    to the desktop efficiently
+4) in the field and want to be sure files you are working on are protected?
+    GFS can make sure any file is either in your dropbox, on your machine at home
+5) trying to free up space on your laptop? do you have a copy of that big 10 GB ISO file
+    at home? find out quickly if you can ditch it. 
+
 
 
 # Rationale

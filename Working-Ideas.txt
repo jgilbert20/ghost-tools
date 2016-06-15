@@ -8,7 +8,11 @@ Working Ideas.txt
 	- [ ] figure out some warning if checkpointing is not recent enough
 	- [ ] performance test "getAllXUnderPath" to learn how bad damage is
 	- [ ] figure out where to put manifest information
-- [ ] Something is funky. Not picking up changes to a directory the way i'd expect. move large things in and out of a directory, and not even the most basic test to see if the checksum is still valid. (Not even a warning) I think whats happening is "hasAcceptableEnumeration()" may need to descent into the subtrees.
+- [ ] Something is funky. Not picking up changes to a directory the way i'd expect. move large things in and out of a directory, and not even the most basic test to see if the checksum is still valid. (Not even a warning) I think whats happening is "hasAcceptableEnumeration()" may need to descent into the subtrees. 
+	- [ ] Also a problem for STORE - the store operation is not checkpointing and revoking the parent hashes. 
+	- [ ] Taint a directory taints parent, etc. But can we rely on that to avoid tainting all parents? some criteria that says "hey, this directory ands its parents have already been revoked?
+	
+
 - [ ] figure out how reconstruction is supposed to work
 	- [ ] if i have a checksum of a directory, what happens if i can't find it in the ghost cache? Is it a file in the repo? I think it is OK for that operation to be slow when you didn't set up a volume. And for you to have to rely on a snapshot object rather than the volume. (see the comand examples.) 
 	- [ ] somehow i have to exract the directory out of the manifest, and hunt down the LFNS, and then fire off some copy 
