@@ -14,6 +14,20 @@ Simple things
 
 
 
+# effectiveDate
+
+The contract with a ghost is that the ghost is always a picture of the best known state of the world. If new infromation comes in, the ghost is updated and saved. 
+
+Information like stat() and hash() fields always come with the date of their most recent effective operation. But other things could potentially change about a ghost, for instance attributes. These are things that are potentially not sourceVerifiable. Each ghost maintains an effectiveDate, which is basically the date at which the information in the ghost overall is thought to be correct. For non-source verifiable information, the data with the latest effectiveDate is generally taken. 
+
+
+
+
+
+
+
+# night in woodbrige
+
 
 Ran into a big glitch today. Ghost were getting generated for files that were not there. They were mucking up several things. First, the real_path function doesn't work if it can't check the file system. So it was returning undef silently when the paths were converted to absolute during the end of script flush. 
 

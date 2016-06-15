@@ -69,7 +69,7 @@ sub mkfile($$)
 
 }
 
-sub getSha
+sub getTrueSHA
 {
 	my $path = shift;
 	my $sha = `shasum $path`;

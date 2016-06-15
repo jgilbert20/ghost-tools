@@ -48,9 +48,9 @@ my $ioDebug             = 1;   # Print stats, reads, readdirs, etc.
 my $staleInfoDebug      = 0;   # Decisionmaking on if data is current enough
 my $icDebug             = 0;   # TK incorporation
 my $tkdebug             = 0;   # TK general
-my $tkflushdebug        = 0;   # End of script TK flushes
+my $tkflushdebug        = 1;   # End of script TK flushes
 my $gsDebug             = 0;   # Ghost store debug
-my $gdbDebug            = 0;   # GhostDirectory
+my $gdbDebug            = 1;   # GhostDirectory
 my $duplicateDebug      = 0;   # Duplicate checking debugging
 my $granularSerialDebug = 0;   # Instruments the escape/unescape mechanism
 my $serializeDebug      = 0;   # Instruments the load/save at ghost level
@@ -61,7 +61,7 @@ my $fseSnapshotDebug    = 0;
 my $learnDebug          = 0;
 my $revokeDebug         = 1;   # Special case of learn that just looks at hash revocation
 my $statStructDebug     = 0;
-my $provenanceDebug     = 0;
+my $provenanceDebug     = 1;
 
 # Constants
 
@@ -76,7 +76,7 @@ my $DESCRIPTOR_FILENAME       = ".gfs_ip";
 my $SERIALIZATION_VERSION_NUMBER = 5;
 my $GENERAL_DEBUG = 1;
 my $USUAL_IGNORE = 1;
-
+my $DEBUG_INDENT = 0;
 
 # Run statistics - globals
 
@@ -167,6 +167,15 @@ sub expressRelativeTime
 
 
 
+sub debugLevel
+{
+	my $v = shift;
+
+	$DEBUG_INDENT += $v;
+
+}
+
+
 # Helper function that creates a nested path with lots of error checking
 
 sub mkdirs
@@ -242,7 +251,7 @@ sub debug ($)
 	return if not $GENERAL_DEBUG;
 	my $a = shift @_;
 	chomp $a;
-	print STDERR "D:" . $a . "\n";
+	print STDERR (("     " x $DEBUG_INDENT ). "D:" . $a . "\n");
 }
 
 
@@ -1044,6 +1053,8 @@ sub doverb_checksum()
 		# $g->printDebug();
 
 		print +(join "\t", $fullHash, $g->lfn()), "\n";
+
+		$g->flush();
 	}
 }
 
@@ -1059,7 +1070,7 @@ sub doverb_checksum_single()
 	my $c = $targetGhost->getFullHash();
 
 	print "Full hash is $c\n";
-
+	$c->flush();
 }
 
 
@@ -1850,8 +1861,6 @@ sub selftest
 	}	
 
 	print "Database consistency check passed!\n";
-
-
 }
 
 sub ckStatus
@@ -1874,10 +1883,6 @@ sub debugDumpDB
 	 { 
 	 	print "$k -> $v\n" 
 	}
-
-
-
-
 }
 
 my $gdbFindDebug = 1; 
@@ -1916,7 +1921,7 @@ sub findGhostByAFN
 
 	if( exists $self->{AFN_TO_GHOST_CACHE}->{$afn} )
 	{
-		# return $self->{AFN_TO_GHOST_CACHE}->{$afn};
+		return $self->{AFN_TO_GHOST_CACHE}->{$afn};
 	}
 
 	my $value;
@@ -1927,9 +1932,10 @@ sub findGhostByAFN
 
 	if( defined $value )
 	{
-		print "Got from DB: $value\n" if $gdbDebug;
+		#print "Got from DB: $value\n" if $gdbDebug;
 		my $ghost = Ghost->newFromSerialized( $value );
 		$ghost->addDebugProvenance( "afn/lu($afn)" ) if $provenanceDebug;
+		debug "Got from DB:" . $ghost->quickDebugString()  if $gdbDebug;
 		$self->{AFN_TO_GHOST_CACHE}->{$afn} = $ghost; 
 		return $ghost;
 	}
@@ -2085,7 +2091,108 @@ sub shutdown
 	# $absGhost->learnFromGhost( $g );
 
 
+sub populateDataOnGhost()
+{
+	my $self = shift;
+	my $g = shift;
 
+	my $afn = $g->absoluteLFN();
+
+	my $teacher = $self->findGhostByAFN( $afn );
+
+	if( defined $teacher )
+	{
+		$g->learnFromGhost( $teacher );
+		debug "   Populated ghost data from GDB: " . $g->quickDebugString();
+	}
+	else
+	{
+		debug "   No GDB records found";
+	}
+
+	return $g; 
+}
+
+
+sub basicUniversalStoreTest
+{
+	my $self = shift;
+
+	my $env = $self->createTestEnvironment();
+	#env->
+}
+
+my $saveGhostDebug =1; 
+
+
+sub saveGhostToStore()
+{
+	my $self = shift;
+	my $g = shift;
+
+	my $afn = $g->absoluteLFN();
+
+	my $absGhost = $self->findGhostByAFN( $afn );
+
+	if( ! defined $absGhost )
+	{
+		$absGhost = Ghost->make_private( $afn );
+		debug "   Ghost not formerly registered, new one created" if $saveGhostDebug;
+	}
+
+	$absGhost->learnFromGhost( $g );
+	debug "   Added ghost data to GDB: " . $absGhost->quickDebugString();
+
+	my $originalAbsFH = $absGhost->fullHash();
+	my $originalGhostFH = $g->fullHash(); 
+
+	$absGhost->learnFromGhost( $g );
+
+	if( not $absGhost->dirty() > 0 )
+	{
+		debug "   No new data to return to GDB." . $absGhost->quickDebugString();
+		return; 
+	}
+
+	my $newAbsFH = $absGhost->fullHash();
+
+	if( !defined $newAbsFH )
+	{
+		if( defined $originalAbsFH )
+		{
+			CODEPATH( "Revoke AFN/Hash, no new hash");
+			debug "   HashChange: Revoked old hash, no new one" if $saveGhostDebug;
+
+			$self->revokeAFNforHash( $originalAbsFH, $afn );
+		}
+	}
+	else
+	{
+		if( (defined $originalAbsFH) && $newAbsFH ne $originalAbsFH )
+		{
+			CODEPATH( "Revoke AFN/Hash, new hash");
+			debug "   HashChange: Revoked old hash, new has registered" if $saveGhostDebug;
+			$self->revokeAFNforHash( $originalAbsFH, $afn );
+		}
+
+		$self->storeAFNforHash( $newAbsFH, $afn);
+	}
+
+	$self->storeGhostToAFN( $g, $afn );
+
+	debug "   Commited ghost to store" if $saveGhostDebug;
+
+	if( $g->everWasDirtyThisRun() )
+	{
+		open FILE, ">>$DIRTYLOGFN" or die;
+		print FILE $g->serialize();
+		print FILE "\n";
+		close FILE; 
+	}
+
+
+	return $g; 
+}
 
 
 # This holds everything that represents the core stat metadata of an object
@@ -4019,7 +4126,7 @@ use base qw(Class::Accessor);
 my $global_tk;
 
 my %ghostForLFN_private;
-my %ghostForAFN_private;
+
 my %ghostStoreForDescriptorLFN;
 
 sub debug($)
@@ -4070,11 +4177,6 @@ sub ghostForLFN
 	return \%ghostForLFN_private;
 }
 
-sub ghostForAFN
-{
-	my $self = shift;
-	return \%ghostForAFN_private;
-}
 
 sub new
 {
@@ -4094,90 +4196,25 @@ sub printInternallyTrackedLFN
 		debug ("     " 
 			 . ($g->dirty() ? "YES" : "NO")
 		     . "  "
-		 	 . $g->lfn()
+		 	 . $g->quickDebugString()
 		     . "  " );
 
-		 debug( "          -> ". $g->makeDebugString() );
-	}
-	return;
-}
-
-sub printInternallyTrackedAFN
-{
-	my $self = shift;
-	my $ghostForAFN = $self->ghostForAFN();
-	foreach my $g (values %$ghostForAFN )
-	{
-		debug ("     " 
-			 . ($g->dirty() ? "YES" : "NO")
-		     . "  "
-		 	 . $g->absoluteLFN()
-		     . "  " );
-
-		 debug( "          -> ". $g->quickDebugString() );
+		 #debug( "          -> ". $g->makeDebugString() );
 	}
 	return;
 }
 
 
-sub flushUniversalStore
+sub flushInternallyTracked
 {
 	my $self = shift;
 	my $ghostForLFN = $self->ghostForLFN();
-
 	my $gdb = GhostDatabase->getCore();
 	foreach my $g (values %$ghostForLFN )
 	{
 		next unless $g->dirty(); 
 
-		my $afn = $g->absoluteLFN();	
 
-		debug( "          -> ". $g->quickDebugString() ) if $tkflushdebug;
-		debug( "             |->AFN: $afn") if $tkflushdebug;
-
-		my $absGhost = $gdb->findGhostByAFN( $afn );
-		die if defined $absGhost->dirty() and $absGhost->dirty() > 0;
-
-		my $originalAbsFH = $absGhost->fullHash();
-		my $originalGhostFH = $g->fullHash(); 
-
-		$absGhost->learnFromGhost( $g );
-
-		next unless $absGhost->dirty() > 0; 
-
-		# print "+++++ Dirty +++++ \n";
-		# $absGhost->printDebug();
-
-		my $newAbsFH = $absGhost->fullHash();
-
-		if( !defined $newAbsFH )
-		{
-			if( defined $originalAbsFH )
-			{
-				CODEPATH( "Revoke AFN/Hash, no new hash");
-				$gdb->revokeAFNforHash( $originalAbsFH, $afn );
-			}
-		}
-		else
-		{
-			if( (defined $originalAbsFH) && $newAbsFH ne $originalAbsFH )
-			{
-				CODEPATH( "Revoke AFN/Hash, new hash");
-				$gdb->revokeAFNforHash( $originalAbsFH, $afn );
-			}
-
-			$gdb->storeAFNforHash( $newAbsFH, $afn);
-		}
-
- 		$gdb->storeGhostToAFN( $g, $afn );
-
- 		if( $g->everWasDirtyThisRun() )
- 		{
- 			open FILE, ">>$DIRTYLOGFN" or die;
- 			print FILE $g->serialize();
- 			print FILE "\n";
- 			close FILE; 
- 		}
 
 
  	}
@@ -4190,15 +4227,11 @@ sub flush
 
 #	debug Dumper( $self );
 
-	debug "---- Beginning flush ---\n" if $tkflushdebug;;
+	debug "---- Beginning flush ---\n" if $tkflushdebug;
 
-	debug "---- Inventory of all internally tracked ---\n" if $tkflushdebug;;
+	debug "---- Inventory of all internally tracked ---\n" if $tkflushdebug;
 
 	$self->printInternallyTrackedLFN() if $tkflushdebug;
-
-	debug "---- Inventory of all internally tracked AFNs ---\n" if $tkflushdebug;;
-
-	$self->printInternallyTrackedAFN() if $tkflushdebug;
 
 
 
@@ -4212,23 +4245,18 @@ sub flush
 	# Is there a simpler way? Would be nicer to have a "copy on write"
 	# facility of some sort.
 
-	debug "---- AFN ---\n" if $tkflushdebug;
+	# debug "---- AFN ---\n" if $tkflushdebug;
 
-	$self->flushUniversalStore();
-
-
+	# $self->flushUniversalStore();
 
 
+	# debug "---- Ghost Cache Writes ---\n" if $tkflushdebug;
 
-
-
-	debug "---- Ghost Cache Writes ---\n" if $tkflushdebug;
-
-	$self->flushGhostDescriptorCache();
+	# $self->flushGhostDescriptorCache();
 
 
 
-	debug "---- Verify ---\n" if $tkflushdebug;
+	debug "---- Verify ---\n" ;#if $tkflushdebug;
 
 	$self->verifyNoDirtyGhostsRemain();
 }
@@ -4253,13 +4281,9 @@ sub verifyNoDirtyGhostsRemain
 
 	foreach my $g (values %$ghostForLFN )
 	{
-		if( 0 )
+		if( $tkflushdebug )
 		{
-			debug "   Verifying TK Ghost: ";
-			debug $g->printDebug();
-			debug "  ";
-			debug ($g->dirty() ? "YES" : "NO");
-			debug "\n";
+			debug "   Verifying TK Ghost: " . ($g->dirty() ? "YES" : "NO") . "   " .  $g->quickDebugString();
 		}	
 
 		# TODO - unresolved design decision, what do we do with dirty snapshot
@@ -4496,21 +4520,23 @@ sub obtainGhostForLFN
 
 	main::assert_cpath( $path );
 
-	# if( exists $ghostForLFN->{$lfn} )
-	# {
-	# 	debug "TK:Obtain: obtain f:[$lfn] - found in cache\n" if $tkdebug;
-	# 	return $ghostForLFN->{$lfn};		
-	# }
+	if( exists $ghostForLFN->{$lfn} )
+	{
+		debug "TK:Obtain: obtain f:[$lfn] - found in cache\n" if $tkdebug;
+		return $ghostForLFN->{$lfn};		
+	}
 
 	debug( "TK:Obtain: Making new blank ghost for f:[$lfn]\n") if $tkdebug;
 	my $g = Ghost->make_private( $lfn );
 	$g->addDebugProvenance( "obtain/base($lfn)" ) if $provenanceDebug;
 	# registers into our singleton cache
 	
-	# $self->registerTruthyGhost( $g );
+	$self->registerTruthyGhost( $g );
 	
 	my $DID = $g->debugID();
 	debug "TK:Obtain: Made: $DID\n" if $tkdebug;
+
+	$self->populateDataOnGhost($g);
 
 	return $g;
 
@@ -4590,6 +4616,40 @@ sub obtainGhostForLFN
 
 	# return $g;
 }
+
+
+
+sub populateDataOnGhost
+{
+	my $self = shift;
+	my $g = shift;
+
+	my $lfn = $g->lfn();
+	debug "Populating from global store: $lfn\n";
+
+	my $gdb = GhostDatabase->getCore();
+	$gdb->populateDataOnGhost($g);
+}
+
+sub saveGhostToStore
+{
+	my $self = shift;
+	my $g = shift;
+
+	my $lfn = $g->lfn();
+	my $dirty = $g->dirty();
+	debug "Saving Ghost to disk: $lfn - dirty=$dirty\n";
+
+	if( $dirty )
+	{
+		my $gdb = GhostDatabase->getCore();
+		$gdb->saveGhostToStore($g);
+		$g->dirty(0);
+	}
+
+}
+
+
 
 
 ##########
@@ -5895,7 +5955,7 @@ sub learnEnumerated
 	my $time = shift; 
 
 	$self->lastEnumerated( $time );
-	$self->markDirty();
+	$self->markDirty($time, "enum");
 	debug "Learned: Fully enumed" if $learnDebug;
 }
 
@@ -6603,10 +6663,14 @@ sub getStatPresence
 #
 use Data::Dumper;
 
+
+
 sub learnFromGhost
 {
 	my $self = shift; 
 	my $g = shift;
+
+	main::debugLevel(1);
 
 	die unless ref $g; 
 
@@ -6614,9 +6678,11 @@ sub learnFromGhost
 	{
 		my $gid = $g->debugID();
 		$self->addDebugProvenance( "learn($gid)" );
-		$g->addDebugProvenance( "teach($gid)" );
-
+		my $gid2 = $self->debugID();
+		$g->addDebugProvenance( "teach($gid2)" );
 	}
+
+
 
 	CODEPATH( "ghost merging" );
 
@@ -6632,7 +6698,7 @@ sub learnFromGhost
 	#print Dumper( $self );
 
 
-	die if $g->effectiveDate() > time();
+	die if defined $g->effectiveDate() and $g->effectiveDate() > time();
 
 	my $sequence = $self->sequence();
 
@@ -6644,8 +6710,8 @@ sub learnFromGhost
 			die "assert" if $self->dirty();
 			$self->sequence( $g->sequence() );
 			# this next call will ensure that the sequence number is bumped.
-			print "Learn: Sequence Assigned" if $learnDebug;
-			$self->markDirty();
+			debug "Learn: Sequence Assigned" if $learnDebug;
+			$self->markDirty( $g->effectiveDate(), "seq");
 		}
 		else
 		{
@@ -6674,7 +6740,7 @@ sub learnFromGhost
 	{
 		$self->uuid( $g->uuid() );
 		debug "Learned - UUID" if $learnDebug;
-		$self->markDirty();
+		$self->markDirty( $g->effectiveDate(), "uuid");
 	}
 
 	if( defined $g->lastEnumerated() )
@@ -6750,10 +6816,17 @@ sub learnFromGhost
 
 	#print Dumper( $self );
 
-
+	main::debugLevel(-1);
 
 }
 
+
+sub flush
+{
+	my $self = shift;
+
+	TruthKeeper::get()->saveGhostToStore( $self );
+}
 
 
 
@@ -6769,14 +6842,33 @@ sub learnPresent
 	# TODO: implement field
 }
 
+sub max
+{
+	my $a = shift;
+	my $b = shift;
+
+	return $a if not defined $b; 
+	return $b if not defined $a; 
+
+	return $a if $a > $b;
+	return $b; 
+}
 
 sub markDirty
 {
 	my $self = shift;
+	my $date = shift;
+	my $provenance = shift;
+
+	die unless defined $date; 
+
+	$self->addDebugProvenance( "d[$provenance]") if $provenanceDebug;
 
 	if( not defined $self->dirty() or ($self->dirty() == 0 ))
 	{
 		# print "***** First time dirty record\n";
+
+		# not sure this all will still work. 
 
 		if( defined $self->sequence() )
 		{
@@ -6795,14 +6887,16 @@ sub markDirty
 	}
 	$self->dirty(1);
 
-	$self->effectiveDate( time() );
+	my $newEff = max( $date, $self->effectiveDate() );
+
+	$self->effectiveDate( $newEff );
 
 	$self->{_onceWasDirty} = 1; 
 
 	if( $learnDebug )
 	{
 		my $gid = $self->debugID();
-		debug "Ghost ($gid) marked dirty";
+		debug "Ghost ($gid) marked dirty ($provenance) date:($date)";
 	}
 }
 
@@ -6892,7 +6986,7 @@ sub learnContentsChanged
 	$self->lastFullHash( undef );
 	$self->lastStat( undef );
 
-	$self->markDirty();
+	$self->markDirty( $time, "cchange");
 }
 
 sub fullHash
@@ -6939,7 +7033,7 @@ sub learnStat
 		my $__mtime = defined $mtime ? $mtime : "<undef>";
 		my $__mode = defined $mode ? $mode : "<undef>";
 		my $__statStruct = defined $statStruct ? $statStruct : "<undef>";
-		print "LEARN STAT [$__size], [$__mtime], [$__mode] [$__statStruct] for $q\n";
+		debug "LEARN STAT [$__size], [$__mtime], [$__mode] [$__statStruct] for $q\n";
 		$self->printDebug();
 	}
 
@@ -7067,7 +7161,7 @@ sub learnStat
 
 	debug "Learn STAT: isAnythingChanged? $anythingHasChanged" if $learnDebug; 	
 
-	$self->markDirty() if $anythingHasChanged;
+		$self->markDirty( $time, "stat") if $anythingHasChanged;
 }
 
 sub learnFullHash
@@ -7084,7 +7178,7 @@ sub learnFullHash
 	{
 		my $__time = defined $time ? $time : "<undef>";
 		my $__hash = defined $hash ? $hash : "<undef>";
-		print "LEARN HASH time:[$__time] hash:[$__hash] for $q\n";
+		debug "LEARN HASH time:[$__time] hash:[$__hash] for $q\n";
 		$self->printDebug();
 	}
 
@@ -7182,7 +7276,7 @@ sub learnFullHash
 
 	debug "Learn HASH: isAnythingChanged? $isAnythingChanged" if $learnDebug; 	
 
-	$self->markDirty() if $isAnythingChanged;
+	$self->markDirty( $time, "hash") if $isAnythingChanged;
 }
 
 # Deleted means that we did not see the ghost on a recent scan. Mark as
@@ -7200,7 +7294,7 @@ sub learnDeleted
 	$self->lastDirScan( $time );
 
 	# TODO: Do we want a dirscan to always force an update to the ghost?
-	$self->markDirty();
+	$self->markDirty($time, "del");
 }
 
 use Fcntl ':mode';
@@ -7320,6 +7414,95 @@ sub getStatSourceVerify
 }
 
 ###
+
+package TestEnvironment;
+
+sub new
+{
+	my $class = shift;
+	my $self = {};
+	bless $self, $class;
+	return $self; 
+}
+
+sub mkdirs($)
+{
+	my $dir = shift;
+
+	# my $dirx = dirname $dir;
+
+	# print "MKDIRS:[$dir]\n";
+	eval { mkpath( $dir, 1 ) };
+	$@ and die "Couldn't create dir path: $! $@";
+	die "Did not find new path" if not -d $dir;
+
+	return 1;
+}
+
+
+
+sub mkfile($$)
+{
+	my $self = shift; 
+	my $path = shift;
+	my $seed = shift;
+
+	my $TESTSTATE_TEST_NAME= $self->{TESTSTATE_TEST_NAME};
+
+	mkdirs(dirname($path) );
+
+	open FILE, ">$path" or die "Cannot open $path: $!";
+	print FILE "X-$seed" x 100;
+	close FILE;
+
+	$self->{shaForSeed}->{$seed} = getTrueSHA( $path );
+
+	print "$TESTSTATE_TEST_NAME - mkfile - $seed - $path\n";
+
+}
+
+sub getTrueSHA
+{
+	my $self = shift;
+	my $path = shift;
+	my $sha = `shasum $path`;
+	chomp $sha; 
+	($sha =~ /^([^\s]+)\s/ ) or die;
+	my $r = $1; 
+	chomp $r;
+	return $r;
+}
+
+use File::Copy;
+
+sub mv
+{
+	my $self = shift;
+
+	my $a = shift;
+	my $b = shift;
+	my $TESTSTATE_TEST_NAME= $self->{TESTSTATE_TEST_NAME};
+	File::Copy->move( $a, $b );
+
+	print "$TESTSTATE_TEST_NAME - mv - $a -> $b\n";
+}
+
+sub rm
+{
+	my $self = shift;
+	my $a = shift;
+	my $TESTSTATE_TEST_NAME= $self->{TESTSTATE_TEST_NAME};
+	unlink( $a );
+
+	print "$TESTSTATE_TEST_NAME - rm - $a\n";
+}
+
+
+
+
+###
+
+
 
 main::main();
 exit();
