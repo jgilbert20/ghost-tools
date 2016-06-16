@@ -22,7 +22,9 @@ Information like stat() and hash() fields always come with the date of their mos
 
 But other things could potentially change about a ghost, for instance attributes. These are things that are potentially not source verifiable. Each ghost maintains an effectiveDate, which is basically the date at which the information in the ghost overall is thought to be correct. For non-source verifiable information, the data with the latest effectiveDate is generally taken. 
 
-Some very innocent updates will not force a ghost to be dirty. For instance, a stat alone where no new information will not force a flush. This can cause some strange behavior. For instance, if you checksum a ghost that has changed, the new stat information will flush out. New stats will not be required for the period of the guard time. But then future checksum operations on an unchanged will force a new stat to occur every time, beucase the fact of the last stat will not have been persisted.
+
+### An ernest warning about strange but correct behavior
+Some very innocent updates will not force a ghost to be dirty. For instance, a stat alone where no new information will not force a flush. This can cause some strange behavior. For instance, if you checksum a ghost that has changed, the new stat information will flush out. New stats will not be required for the period of the guard time. But then future checksum operations on an unchanged will force a new stat to occur every time, beucase the fact of the last stat will not have been persisted. It will suddenly look like the system lost its ability to cache stats.
 
 
 ## Ghosts for directories

@@ -48,9 +48,9 @@ my $ioDebug             = 1;   # Print stats, reads, readdirs, etc.
 my $staleInfoDebug      = 0;   # Decisionmaking on if data is current enough
 my $icDebug             = 0;   # TK incorporation
 my $tkdebug             = 0;   # TK general
-my $tkflushdebug        = 1;   # End of script TK flushes
+my $tkflushdebug        = 0;   # End of script TK flushes
 my $gsDebug             = 0;   # Ghost store debug
-my $gdbDebug            = 1;   # GhostDirectory
+my $gdbDebug            = 0;   # GhostDirectory
 my $duplicateDebug      = 0;   # Duplicate checking debugging
 my $granularSerialDebug = 0;   # Instruments the escape/unescape mechanism
 my $serializeDebug      = 0;   # Instruments the load/save at ghost level
@@ -58,8 +58,8 @@ my $gChildDebug         = 0;
 my $fseDebug            = 0;
 my $fseOjxDebug         = 0;
 my $fseSnapshotDebug    = 0;
-my $learnDebug          = 1;
-my $revokeDebug         = 1;   # Special case of learn that just looks at hash revocation
+my $learnDebug          = 0;
+my $revokeDebug         = 0;   # Special case of learn that just looks at hash revocation
 my $statStructDebug     = 0;
 my $provenanceDebug     = 1;
 
@@ -71,7 +71,7 @@ my $ZERO_LEN_FILE = [];
 
 my $PATH_DEFAULT_OBJECT_STORE = '__gfs_ojx/test';
 my $DIRTYLOGFN                = '__gfslog';
-my $PATH_DEFAULT_DB_DIR       = "__gsf_dbd";
+my $PATH_DEFAULT_DB_DIR       = "__gfs_dbd";
 my $DESCRIPTOR_FILENAME       = ".gfs_ip";
 my $SERIALIZATION_VERSION_NUMBER = 5;
 my $GENERAL_DEBUG = 1;
@@ -1055,7 +1055,16 @@ sub doverb_checksum()
 		my $lfn = shift; 
 		next if $g->canHaveChildren();
 
-		my $fullHash = $g->getFullHash();
+		my $fullHash;
+
+		if( $g->exists() )
+		{
+			$fullHash = $g->getFullHash();
+		}
+		else
+		{
+			$fullHash = "<file not found>";
+		}
 		# $g->printDebug();
 
 		print +(join "\t", $fullHash, $g->lfn()), "\n";
@@ -2143,7 +2152,7 @@ sub populateDataOnGhost()
 	if( defined $teacher )
 	{
 		$g->learnFromGhost( $teacher );
-		debug "   Populated ghost data from GDB: " . $g->quickDebugString();
+		debug "   Populated ghost data from GDB: " . $g->quickDebugString() if $gdbDebug;
 	}
 	else
 	{
@@ -2162,7 +2171,7 @@ sub basicUniversalStoreTest
 	#env->
 }
 
-my $saveGhostDebug =1; 
+my $saveGhostDebug =0; 
 
 
 sub saveGhostToStore()
@@ -2181,7 +2190,7 @@ sub saveGhostToStore()
 	}
 
 	$absGhost->learnFromGhost( $g );
-	debug "   Added ghost data to GDB: " . $absGhost->quickDebugString();
+	debug "   Added ghost data to GDB: " . $absGhost->quickDebugString() if $saveGhostDebug;
 
 	my $originalAbsFH = $absGhost->fullHash();
 	my $originalGhostFH = $g->fullHash(); 
@@ -2190,7 +2199,7 @@ sub saveGhostToStore()
 
 	if( $absGhost->dirty() == 0 )
 	{
-		debug "   No new data to return to GDB." . $absGhost->quickDebugString();
+		debug "   No new data to return to GDB." . $absGhost->quickDebugString() if $saveGhostDebug;
 		return; 
 	}
 
@@ -4284,6 +4293,12 @@ sub printInternallyTrackedLFN
 	return;
 }
 
+# Theorietically there should not be too many ghosts that the calling code did
+# not flush along the way. However, some of the revocations of directories may
+# be stragglers of a sort. Also, if a handler is largely just working with
+# files in recursion, it may be hard to track down new information
+# accidentally discovered during recursion. But technically, if we're doing
+# our job, this cache should be completely clean.
 
 sub flushInternallyTracked
 {
@@ -4294,6 +4309,9 @@ sub flushInternallyTracked
 	{
 		next unless $g->dirty(); 
 
+		my $gd = $g->quickDebugString();
+		debug "WARNING: flushed $gd\n";
+		$g->flush();
 
 
 
@@ -4313,8 +4331,6 @@ sub flush
 
 	$self->printInternallyTrackedLFN() if $tkflushdebug;
 
-
-
 	# At this point, dirty ghosts in the truthkeeper could be dirty from what
 	# they learned from other knowledge sources, or from what they learned on
 	# disk. There doesn't seem to be any way to know which things have to be
@@ -4322,12 +4338,9 @@ sub flush
 	# the universal store is to aquire the object, and learn it back,
 	# and then do a write if anythign changes.
 
-	# Is there a simpler way? Would be nicer to have a "copy on write"
-	# facility of some sort.
+	debug "---- Internal Tracking Flush ---\n" if $tkflushdebug;
 
-	# debug "---- AFN ---\n" if $tkflushdebug;
-
-	# $self->flushUniversalStore();
+	$self->flushInternallyTracked();
 
 
 	# debug "---- Ghost Cache Writes ---\n" if $tkflushdebug;
@@ -4705,7 +4718,7 @@ sub populateDataOnGhost
 	my $g = shift;
 
 	my $lfn = $g->lfn();
-	debug "Populating from global store: $lfn\n";
+	debug "Populating from global store: $lfn\n" if $tkdebug;
 
 	my $gdb = GhostDatabase->getCore();
 	$gdb->populateDataOnGhost($g);
@@ -4718,7 +4731,8 @@ sub saveGhostToStore
 
 	my $lfn = $g->lfn();
 	my $dirty = $g->dirty();
-	debug "Saving Ghost to disk: $lfn - dirty=$dirty\n";
+	my $id = $g->debugID();
+	debug "Saving Ghost to disk: $lfn - $id - dirty=$dirty\n" if $tkdebug;
 
 	if( $dirty )
 	{
@@ -5952,6 +5966,9 @@ sub learnChildrenByLFN()
 	my %seenLFN;
 	my @newKids;
 
+	my $hadExistingGhosts = @existingGhosts > 0 ? 1 :0;  
+	my $hasContentsChanged = 0; 
+
 	foreach my $e (@existingGhosts)
 	{
 		 $seenLFN{ $e->lfn() } = 0;
@@ -5963,6 +5980,11 @@ sub learnChildrenByLFN()
 		if( exists $seenLFN{$lfn} )
 		{
 			debug "G:   Child already registered\n" if $gChildDebug;
+		}
+		else
+		{
+			debug "G:   Child already registered\n" if $gChildDebug;
+			$hasContentsChanged = 1;
 		}
 
 		$seenLFN{$lfn}++;
@@ -5982,14 +6004,19 @@ sub learnChildrenByLFN()
 			debug "G:   Child has disapeared\n" if $gChildDebug;
 			my $g = $self->tk()->obtainGhostForLFN( $lfn );
 			$g->learnDeleted($time);
+			$hasContentsChanged = 1; 
 		}
 	}
 
 	$self->{CHILDREN_LFNS} = $lfns;
 
-	# TODO -eventually remove, we want this weak. 
-	# $self->children( \@newKids );
 	$self->learnEnumerated($time);
+
+	if( $hasContentsChanged and $hadExistingGhosts )
+	{
+		$self->hasContentsChanged( $time );
+	}
+
 }
 
 # Tries to create a signature hash that is at least as old as the time
@@ -6892,11 +6919,11 @@ sub learnFromGhost
 			if( $self->effectiveDate() < $g->effectiveDate() )
 			{
 				CODEPATH( "Learner older than teacher - warning");
-				warn "Strange case where student ghost is older effective";
-				print "WARN: Self:\n";
-				$self->printDebug();
-				print "WARN: Teacher:\n";
-				$g->printDebug();
+				# warn "Strange case where student ghost is older effective";
+				# print "WARN: Self:\n";
+				# $self->printDebug();
+				# print "WARN: Teacher:\n";
+				# $g->printDebug();
 				# die "Internal assert - doesn't seem right to not be one step ahead of target";
 			}
 		}
@@ -7319,7 +7346,7 @@ sub learnStat
 		(not defined $self->statStruct() )
 		)
 	{
-		debug "Change = formerFieldsUndefined";
+		debug "Change = formerFieldsUndefined" if $learnDebug;
 		$anythingHasChanged = 1; 
 	}
 	else
@@ -7381,6 +7408,8 @@ sub learnFullHash
 	die if $self->isImmutable();
 
 	my $q = $self->quickDebugString();
+
+	my $hasSigChanged = 0;
 
 	if( $learnDebug )
 	{
@@ -7449,6 +7478,8 @@ sub learnFullHash
 	{
 		CODEPATH( "Newer hash information accepted"); 
 
+		$hasSigChanged = 1;
+
 		my $lfn = $self->lfn();
 		my $ch = $self->fullHash();
 		print "************************************************ CHANGE!!!\n";
@@ -7485,6 +7516,11 @@ sub learnFullHash
 	debug "Learn HASH: isAnythingChanged? $isAnythingChanged" if $learnDebug; 	
 
 	$self->markDirty( $time, "hash") if $isAnythingChanged;
+
+	if( $hasSigChanged )
+	{
+		$self->learnContentsChanged($time);
+	}
 }
 
 # Deleted means that we did not see the ghost on a recent scan. Mark as
@@ -7561,13 +7597,10 @@ sub getFullHashSourceVerify
 	}
 	else
 	{
-
 		my $fullhash = $self->getFSE()->getFullHashSourceVerify( $self, $time );
 	 	$self->learnFullHash( $time, $fullhash );
 	 	return $fullhash;
 	}
-
-	
 }
 
 sub isSameNumberOrDef
