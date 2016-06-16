@@ -41,6 +41,7 @@ local $main::SCRIPT_START_GTOD = [gettimeofday];
 local $main::GUARD_TIME_SECONDS_STAT = 10; 
 local $main::GUARD_TIME_SECONDS_ENUMERATION = undef; 
 local $main::GUARD_TIME_SECONDS_FULLHASH = undef; 
+local $main::GUARD_TIME_SECONDS_DEEPSCAN = undef; 
 
 # Debug control
 
@@ -470,6 +471,11 @@ sub handleVerb
 	if( $verb eq "checksum-single" )
 	{
 		doverb_checksum_single();
+		return;
+	}
+	if( $verb eq "checkpoint" )
+	{
+		doverb_checkpoint();
 		return;
 	}
 
@@ -1074,6 +1080,45 @@ sub doverb_checksum()
 }
 
 
+# doverb_checkpoint  - ensures the paths we are given
+# are fully checkpointed, and that all metadata is up to date.
+#
+#
+
+sub doverb_checkpoint()
+{
+	my $tk = TruthKeeper::get();
+	my ($targetGS, $targetStash) = $tk->makeGhostsFromCommandLine( @ARGV );
+	my $i = $targetGS->getIterator();
+	foreach my $tuple (@$targetStash)
+	{
+		my( $userFN, $fqlfn, $g ) = @$tuple;
+	
+		if( $g->exists() )
+		{
+			# $g->calculateDeepFields();
+			my $deepSize = $g->getDeepSize();
+			my $deepCount = $g->getDeepCount();
+			my $fullHash = $g->getFullHash();
+
+			print "$fqlfn: $deepSize   $deepCount   $fullHash\n";
+
+		}
+		else
+		{
+			print "$fqlfn: file not found\n";
+		}
+	
+	
+
+
+		$g->flush();
+	}
+}
+
+
+
+
 sub doverb_checksum_single()
 {
 	my $tk = TruthKeeper::get();
@@ -1085,7 +1130,8 @@ sub doverb_checksum_single()
 	my $c = $targetGhost->getFullHash();
 
 	print "Full hash is $c\n";
-	$c->flush();
+
+	$targetGhost->flush();
 }
 
 
@@ -5538,7 +5584,7 @@ use Data::Dumper;
 Ghost->mk_accessors( qw(lfn lastFullHash size mode _fullHash statStruct
 	uuid sequence effectiveDate attributes dirty isTKversion lastDirScan lastStat
 	mtime lastEnumerated firstStat fileStatus
-	lastChanged deepSize deepCount
+	lastChanged deepSize deepCount lastDeepScan
 	children _immutable _debugID  ) );
 
 
@@ -5677,6 +5723,7 @@ sub pullValuesFromGhost
 	$self->lastChanged( 	 $target->lastChanged() );
 	$self->deepSize( 	     $target->deepSize() );
 	$self->deepCount( 	     $target->deepCount() );
+	$self->deepCount( 	     $target->lastDeepScan() );
 
 	$self->statStruct( 	     $target->statStruct()->copy() );
 
@@ -5761,6 +5808,7 @@ sub newFromSerialized($)
 	$self->lastChanged( shift @a );
 	$self->deepSize( shift @a );
 	$self->deepCount( shift @a );
+	$self->lastDeepScan( shift @a );
 
 
 
@@ -6019,6 +6067,259 @@ sub learnChildrenByLFN()
 
 }
 
+# Popualtes the hash of a directory object as well as the deep fields. time is
+# the timepoint we should assume this operation was performed. Used mainly so
+# that  all writen data appears in lock step. Good policy is to call it with
+# the current time if in doubt.
+
+sub calculateDeepFields
+{
+	my $self = shift;
+	my $time = shift;
+
+	if( not $self->canHaveChildren() )
+	{
+		$self->lastDeepScan($time);
+		return;
+	}
+
+	my $earliestDateHash = time();
+	my $earliestDeepScan = time();
+	my $buffer = ""; 
+
+	my $tk = TruthKeeper::get();
+
+	my $totSize = 0;
+	my $totCount = 0;
+
+	# Interesting case where we aren't actually calling isValidEnum?
+	# TODO
+
+	foreach my $lfn ( @{$self->getChildrenLFNs( $time )} )
+	{
+		next if main::fileIsUsuallyIgnored( $lfn );
+		my $g = $tk->obtainGhostForLFN($lfn);
+		$g->calculateDeepFields( $time );
+		$g->getFullHash($time);
+		$earliestDateHash = $g->lastFullHash() if ( $g->lastFullHash() < $earliestDateHash );
+		$earliestDeepScan = $g->lastDeepScan() if ( $g->lastDeepScan() < $earliestDeepScan );
+		$totSize += $g->getDeepSize(); 
+		$totCount += $g->getDeepCount(); 
+
+		my $gSig = $g->cloneForSignature();
+		my $gBuf = $gSig->serialize(pathMode=>'strict-basename');
+		$buffer .= $gBuf . "\n";
+
+		print "CSHOC: $gBuf\n";
+
+		$g->flush();
+
+	}
+
+
+	my $sha = Digest::SHA->new(1);
+	$sha->add( $buffer );
+	my $hexdigest = $sha->hexdigest();
+
+
+	if( 1 )
+	{
+		my $ed = $self->quickDebugString();
+		print "calculateSignatureHashOverChildren($ed)($time) => $hexdigest, $earliestDateHash\n";
+	}
+
+	# as an optimization, we could have a guard time on deep scans, 
+	# and then only recalculate where needed. Code should work either way.
+
+	$self->learnFullHash( $earliestDateHash, $hexdigest );
+	$self->learnDeepScan( $earliestDeepScan, $totSize, $totCount );
+}
+
+# Returns the current deep size of the object. The time parameter is passed to
+# "hasAcceptableDeepScan". If defined, it acts as the time guard for the information
+# returned;
+
+sub getDeepSize
+{
+	my $self = shift;
+	my $time = shift;
+
+	if( $self->canHaveChildren() )
+	{
+		if( ! $self->hasAcceptableDeepScan( $time ) )
+		{
+			my $t = time();
+			$self->calculateDeepFields( $t );
+		}
+		return $self->deepSize();
+	}
+
+	return $self->getSize();
+}
+
+sub getDeepCount
+{
+	my $self = shift;
+	my $time = shift;
+
+	if( $self->canHaveChildren() )
+	{
+		if( ! $self->hasAcceptableDeepScan( $time ) )
+		{
+			my $t = time();
+			$self->calculateDeepFields( $t );
+		}
+		return $self->deepCount();
+	}
+
+	return 1;
+}
+
+sub learnDeepScan
+{
+	my $self = shift;
+	my $time = shift;
+	my $deepSize = shift;
+	my $deepCount = shift;
+
+	die if $self->isImmutable();
+
+
+
+	my $q = $self->quickDebugString();
+
+	my $hasSigChanged = 0;
+
+	if( $learnDebug )
+	{
+		my $__time = defined $time ? $time : "<undef>";
+		my $__deepSize = defined $deepSize ? $deepSize : "<undef>";
+		my $__deepCount = defined $deepCount ? $deepCount : "<undef>";
+		debug "LEARN DEEP time:[$__time] size:[$__deepSize] cound:[$__deepCount] for $q\n";
+		$self->printDebug();
+	}
+
+	die unless defined $time;
+
+	die "incoming information newer than current time ($time)" if $time > time();
+
+	$self->verifyGhostIsMutable();
+
+	if( defined $self->lastDeepScan() and $time < $self->lastDeepScan() )
+	{
+		# reject older data
+		return;
+	}
+
+	# At this point, we're convinced the new data is valid, but the qeuestion
+	# is if its new enough to incorporate.
+
+	my $isAnythingChanged = 0; 
+
+	if( (defined $self->deepSize()) and ($deepSize ne $self->deepSize() ))
+	{
+		CODEPATH( "Newer deepSize information accepted"); 
+
+		$hasSigChanged = 1;
+		$isAnythingChanged = 1; 
+	}
+
+		if( (defined $self->deepCount()) and ($deepCount ne $self->deepCount() ))
+	{
+		CODEPATH( "Newer deepCount information accepted"); 
+
+		$hasSigChanged = 1;
+		$isAnythingChanged = 1; 
+	}
+
+	if( (defined $deepSize) and !(defined $self->deepSize()))
+	{
+		CODEPATH( "First deepSize information accepted"); 
+		$isAnythingChanged = 1; 
+	}		
+
+		if( (defined $deepCount) and !(defined $self->deepCount()))
+	{
+		CODEPATH( "First deepCount information accepted"); 
+		$isAnythingChanged = 1; 
+	}	
+
+	if( !defined $self->lastDeepScan() )
+	{
+		$isAnythingChanged = 1; 
+	}
+	elsif( $self->lastDeepScan() < $time )
+	{
+		CODEPATH( "Updated date of lastDeepScan"); 
+		$isAnythingChanged = 1; 
+	}
+
+	$self->lastDeepScan( $time );
+	$self->deepSize( $deepSize );
+	$self->deepCount( $deepCount );
+
+	debug "Accepted deep size / deep count\n" if $learnDebug;;
+
+	debug "Learn DEEP: isAnythingChanged? $isAnythingChanged" if $learnDebug; 	
+
+	$self->markDirty( $time, "deep") if $isAnythingChanged;
+
+	if( $hasSigChanged )
+	{
+		$self->learnContentsChanged($time);
+	}
+
+
+
+}
+
+# Returns true if the deep scan data on the object appears valid. If the user
+# provides a timeguard, this is used to set a bound on the age of the data.
+
+sub hasAcceptableDeepScan
+{
+	my $self = shift;
+	my $timeguard = shift;
+
+	if( $staleInfoDebug )
+	{
+		my $q = $self->quickDebugString();
+		my $x = defined $timeguard ? $timeguard : "undef";
+		debug "hasAcceptableDeepScan:($x) $q\n" 
+	}
+
+	return 1 if $self->isImmutable();
+
+	return 0 if( not defined $self->lastDeepScan() );
+
+	if( defined $timeguard && $self->lastDeepScan() < $timeguard )
+	{
+		CODEPATH( "invalidating lastDeepScan due to timeguard" );
+		debug "lastDeepScan:($timeguard) - timeguard case\n" if $staleInfoDebug;;
+		return 0;
+	}
+
+	if( defined $main::GUARD_TIME_SECONDS_DEEPSCAN )
+	{
+		my $age = $main::SCRIPT_START - $self->lastStat();
+
+		if( $age > $main::GUARD_TIME_SECONDS_DEEPSCAN )
+		{
+
+			CODEPATH( "deep scan too old, recheck forced" );
+			debug (join '', "Forcing recalculation (", main::expressRelativeTime( $age ), ")\n" ) if $staleInfoDebug;
+			return 0; 
+		}
+	}
+
+	return 1;
+
+}
+
+
+
+
+
 # Tries to create a signature hash that is at least as old as the time
 # given
 
@@ -6189,6 +6490,7 @@ sub makeDebugString
 	my $lastChanged 		= defined( $self->lastChanged() ) 		? $self->lastChanged() : "undef";
 	my $deepSize 		= defined( $self->deepSize() ) 		? $self->deepSize() : "undef";
 	my $deepCount 		= defined( $self->deepCount() ) 		? $self->deepCount() : "undef";
+	my $lastDeepScan 		= defined( $self->lastDeepScan() ) 		? $self->lastDeepScan() : "undef";
 
 
 
@@ -6204,7 +6506,7 @@ sub makeDebugString
 	return "ghostDump($debugID): lfn:[$lfn] uuid:[$uuid] seq:[$sequence] eDT:[$effectiveDate] type:[$type] mode:[$mode] l_FH:[$lastFullHash] ".
 	"full:[$fullHash] ldirscan:[$lastDirScan] l_stat:[$lastStat] size:[$size]".
 	" mtime:[$mtime] immutable[$immutable] statStruct:[$statStruct] attr:[$attributes] provenance:[$p]".
-	"lastCx:[$lastChanged] deepSz:[$deepSize] deepCt[$deepCount]";
+	"lastCx:[$lastChanged] deepSz:[$deepSize] deepCt[$deepCount] lastDeepScan:[$lastDeepScan]";
 }
 
 sub isSameFilename
@@ -6357,6 +6659,7 @@ sub serialize()
 			  $self->lastChanged(),
 			  $self->deepSize(),
 			  $self->deepCount(),
+			  $self->lastDeepScan(),
 			  $statStructSerialized
 			  );
 
@@ -6501,8 +6804,6 @@ sub hasAcceptableFullhash
 sub getFullHash
 {
 	my $self = shift;
-
-
 
 	if( $self->hasAcceptableFullhash() )
 	{
@@ -7135,6 +7436,14 @@ sub learnContentsChanged
 			$self->markDirty( $time, "cc/hash");
 		}
 
+		if( defined $self->lastDeepScan() && $self->lastDeepScan() < $time )
+		{
+			$self->deepSize( undef );
+			$self->deepCount( undef );
+			debug " XX Revoking deep fields due to learnContentsChanged()" if $revokeDebug || $learnDebug;
+			$self->markDirty( $time, "cc/deep");
+		}
+
 		# Optimization possible - don't do this if existing lastChanged is less than X seconds ago
 		# to prevent repeated walks up the tree;
 
@@ -7372,6 +7681,10 @@ sub learnStat
 		# changed in a long time, bumping sequence number etc.
 		# If some other field changes, we'll flush the data out, but lastStat alone wont do it. 
 
+		if( $time - $self->lastStat() > $main::GUARD_TIME_SECONDS_STAT )
+		{
+			$anythingHasChanged = 1; 
+		}
 
 	}	
 
@@ -7591,8 +7904,8 @@ sub getFullHashSourceVerify
 
 	if( $self->canHaveChildren() )
 	{
-		my( $fullhash, $actualTime ) = $self->calculateSignatureHashOverChildren($time);
-		$self->learnFullHash( $actualTime, $fullhash );
+		$self->calculateDeepFields( $time );
+		my $fullhash = $self->fullHash();
 		return $fullhash;
 	}
 	else
