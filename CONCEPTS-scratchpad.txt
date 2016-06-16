@@ -8,17 +8,74 @@ It is a collection of work in pgoress (or sometimes retired) ideas.. anything th
 Simple things
 - [ ] mv should revoke parents hash
 - [ ] mkdirs should revoke parent's hash
-- [ ] change in checksum should revoke parent's hash
+- [ ] change in checksum should revoke parent dirs hash
+- [ ] any creation of a new file should revoke parent hash 
+- [ ] directory size changes should NOT revoke the directory
+
+
+parent->notifyTreeChange()
+
+does that save the date of the treechange?
+this should be a learnable thing
+learnTreeChange()
+   if we learn about a treeChange that is newer than the enumeration date, than we should clear the fullHash. 
+   why bother storing this date at all? I can't think of the reason
+   lets be conservative and make sure we need it before we store it. 
 
 
 
 
 
-# effectiveDate
 
-The contract with a ghost is that the ghost is always a picture of the best known state of the world. If new infromation comes in, the ghost is updated and saved. 
 
-Information like stat() and hash() fields always come with the date of their most recent effective operation. But other things could potentially change about a ghost, for instance attributes. These are things that are potentially not sourceVerifiable. Each ghost maintains an effectiveDate, which is basically the date at which the information in the ghost overall is thought to be correct. For non-source verifiable information, the data with the latest effectiveDate is generally taken. 
+Each directory contains a lastEnumerated date. This date is the last time that the system performed a source verification on the LFNs directly underneath it. This field is consulted to decided if cached data about the contents of a directory is valid. If you call getChildrenLFNs() and the system finds a lastEnumerated inside the time window, no directory read is performed. 
+
+Right now there is no direct provision for recalling the contents of the directory, short of a directory scan, but there is a clean design for how it should work. Basically, when getChildrenLFNs is called, we could either do a prefix search in the global LFN database, or read from a container list object (such as a gfs_ip files). The container list would register the children using addChild(). Then a call to verify the checksum would occur, and if the fullHashes matched, the lastEnumerated field would be accepted (if not, the hash and the lastEnumerated date would be dropped.)
+
+In the current implementation, lastEnumerated is not passed along during learnFromGhost() operationes. It is only populated when learnChildrenByLFN is called with the contents from the upstream source. It also questionable if the fulHash should be learned for container objects during learnGhost either.
+
+Consider two information sources A and B, with their picture of what is in a directory DIR.
+
+	A:   DIR = {1, 2, 3 }
+	B:   DIR = {   2, 3, 4 }
+
+If A learns its children from B, there should be a check. Only one of these two versions of truth should be accepted. Whoever's picture of the kids has a more recent lastEnumerated date should be taken.
+
+Directories also have hashes, but they operate in a funny way during learn operations. The full hash of a tree's age is the oldest of all of the contributing hashes, since it is effecitvely a compound hash. 
+
+Directories also have a lastChanged field. This is used to mark events where we come to learn that the contents of a file have been modified. Of course, for regilar files, this is probably no different than the mtime(), but the mtime comes from the system and says in lockstep with the stat(2) operation, whereas lastChanged is based on changes we've either observed or caused. 
+
+The lastChanged() field is updated whenever the hash or size of a fundamental object is observed. It is also updated when a directory is created, or when a file is written or moved. In short, anything that might feed into the signature of an object (hash, mtime, size) if it changes, will force a lastChange().
+
+The semantics of lastChange() are recursive. Effort is made to propogate lastChanged to parent containers, namely directories. The parent of the ghost is located. If its lastChanged is more recent, than no action is taken. But if it is less recent, the ghost updates its field, and revokes the hash and deepSize field. This in turn forces a check on the parent, etc.
+
+The net result is that a change deep inside the tree will propogate out to the ghost of its parent nodes, and prevent reliance on an outdated hash.
+
+The lastChange() of directory is always the max() of its children.
+
+This extra legwork is necessary because GFS does not want to overly rely on the user snapshoting or indexing the state of a filesystem to get correct information. Its data structures need to remain up to date as the file system changes, and some of those changes will happen inside the GFS tool during its operation.
+
+Another field of note is getDeepSize() and getDeepCount(). This is basically the number of files and their total size under the tree. These fields too are invalidated when a change is mentioned, meaning that the next call to getDeepSize() will force recursion. 
+
+To ensure that the expense of deep directory enumeration is not overly burdensome, there is a general purpose function called calculateDeepFields. This takes three arguments: forceFunctionHash, forceFunctionStat and forceFunctionEnum. If the forcing function is a time, those fields are brought to date to that granularity of time. If they are not defined, nothing is forced, but mergable information is located. Note that the user's guard times always override these values since the forcing is actually done by getChildrenLFNs(), getFullHash(), etc which will always tilt in favor of the guard values.
+
+- [ ] impelement calculateDeepFields
+- [ ] implement lastChanged
+	- [ ] put on stat changes (learnContentsChanged)
+	- [ ] put on enum changes
+	- [ ] put on hash changes
+	- [ ] revoke enum (and therefore LC) when directories are added, or files are added/ deleted / moved /  deleted
+	- [ ] revoke hash and stat when learnContentsChanged
+	- [ ]
+
+learnContentsChanged() - is that the general call? I think this becomes the universal way to detect hash, stat, etc changes. But who should do the clearace? don't want to double clear this information. say you do a getStat and a getFullHash right after each other. getStat revokes the hash, and then getFullHash won't again, will it? Maybe LCC will only clear the stat if the stat is older than its information. This makes sense. and we can use  LT syntax - it should be fine.
+
+I also want some kind of content scan flag. 
+
+
+
+	getStat see size change
+	calls learnContentsChanged, propogates up tree
 
 
 

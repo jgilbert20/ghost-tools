@@ -5439,11 +5439,12 @@ use Data::Dumper;
 
 
 
-# GHOST_NEW_FIELD: Place 4/4 where you add new fields to ghosts
+# GHOST_NEW_FIELD: Place 4/5 where you add new fields to ghosts
 
 Ghost->mk_accessors( qw(lfn lastFullHash size mode _fullHash statStruct
-	uuid sequence effectiveDate attributes
-	dirty isTKversion lastDirScan lastStat mtime lastEnumerated firstStat fileStatus
+	uuid sequence effectiveDate attributes dirty isTKversion lastDirScan lastStat
+	mtime lastEnumerated firstStat fileStatus
+	lastChanged deepSize deepCount
 	children _immutable _debugID  ) );
 
 
@@ -5579,6 +5580,10 @@ sub pullValuesFromGhost
 	$self->effectiveDate(    $target->effectiveDate() );
 	$self->attributes( 	     $target->attributes() );
 
+	$self->lastChanged( 	 $target->lastChanged() );
+	$self->deepSize( 	     $target->deepSize() );
+	$self->deepCount( 	     $target->deepCount() );
+
 	$self->statStruct( 	     $target->statStruct()->copy() );
 
 	$self->dirty( 0 );
@@ -5642,7 +5647,7 @@ sub newFromSerialized($)
 		$self->_immutable(1);
 	}
 
-	# GHOST_NEW_FIELD: Place 1/4 where you add new fields to ghosts
+	# GHOST_NEW_FIELD: Place 1/5 where you add new fields to ghosts
 
 	$self->lfn( $serialLFN );
 	$self->effectiveDate( shift @a );
@@ -5659,6 +5664,11 @@ sub newFromSerialized($)
 	$self->firstStat( shift @a );
 	$self->fileStatus( shift @a );
 	$self->attributes( shift @a );
+	$self->lastChanged( shift @a );
+	$self->deepSize( shift @a );
+	$self->deepCount( shift @a );
+
+
 
 	my $statStructSerialized = shift @a; 
 	if( defined $statStructSerialized )
@@ -6067,6 +6077,9 @@ sub makeDebugString
 	my $sequence 		= defined( $self->sequence() ) 		? $self->sequence() : "undef";
 	my $effectiveDate 		= defined( $self->effectiveDate() ) 		? $self->effectiveDate() : "undef";
 	my $attributes 		= defined( $self->attributes() ) 		? $self->attributes() : "undef";
+	my $lastChanged 		= defined( $self->lastChanged() ) 		? $self->lastChanged() : "undef";
+	my $deepSize 		= defined( $self->deepSize() ) 		? $self->deepSize() : "undef";
+	my $deepCount 		= defined( $self->deepCount() ) 		? $self->deepCount() : "undef";
 
 
 
@@ -6081,7 +6094,8 @@ sub makeDebugString
 
 	return "ghostDump($debugID): lfn:[$lfn] uuid:[$uuid] seq:[$sequence] eDT:[$effectiveDate] type:[$type] mode:[$mode] l_FH:[$lastFullHash] ".
 	"full:[$fullHash] ldirscan:[$lastDirScan] l_stat:[$lastStat] size:[$size]".
-	" mtime:[$mtime] immutable[$immutable] statStruct:[$statStruct] attr:[$attributes] provenance:[$p]";
+	" mtime:[$mtime] immutable[$immutable] statStruct:[$statStruct] attr:[$attributes] provenance:[$p]".
+	"lastCx:[$lastChanged] deepSz:[$deepSize] deepCt[$deepCount]";
 }
 
 sub isSameFilename
@@ -6231,6 +6245,9 @@ sub serialize()
 			  $self->firstStat(),
 			  $self->fileStatus(),
 			  $self->attributes(),
+			  $self->lastChanged(),
+			  $self->deepSize(),
+			  $self->deepCount(),
 			  $statStructSerialized
 			  );
 
@@ -6743,10 +6760,16 @@ sub learnFromGhost
 		$self->markDirty( $g->effectiveDate(), "uuid");
 	}
 
-	if( defined $g->lastEnumerated() )
-	{
-		$self->learnEnumerated( $g->lastEnumerated() )
-	}
+
+	# not clear if this semanitic is right. How do we know the new ghost
+	# actually has the same underlying contents? You could argue that a
+	# learnFromGhost shouldn't populate this unless it also is learning its
+	# children.
+
+	# if( defined $g->lastEnumerated() )
+	# {
+	# 	$self->learnEnumerated( $g->lastEnumerated() )
+	# }
 
 	# if( defined $g->sequence() and !defined $self->sequence() )
 	# {
