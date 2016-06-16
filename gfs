@@ -192,7 +192,7 @@ sub mkdirs
 }
 
 # Helper function - if user requests it, ignores shit things like .git and
-# .DS_Store Returns true if the file is good to go, or false if it is usually
+# .DS_Store. Returns true if the file is good to go, or false if it is usually
 # ignored This is not to be used for avoiding actual logic or recursion errors
 # (such as scanning our own descriptors). User should be free to turn this
 # feature off and the program must work as intended.
@@ -576,10 +576,16 @@ sub doverb_debug()
 	{
 		system( "find . -name '.gfs_ip' -print0  | xargs -0 rm -v" );
 	}
-	elsif( $command eq 'dbdump')
+	elsif( $command eq 'dbdump-hash')
 	{
 		my $gdb = GhostDatabase->getCore();
 		$gdb->debugDumpDB( $gdb->{HASH_TO_AFN_DB});
+
+	}
+		elsif( $command eq 'dbdump-afn')
+	{
+		my $gdb = GhostDatabase->getCore();
+		$gdb->debugDumpDB( $gdb->{AFN_TO_GHOST_DB});
 	}
 	elsif( $command eq 'dbtest')
 	{
@@ -1468,6 +1474,8 @@ sub isHardIgnore
 }
 
 
+
+
 # Sanity check that a path is indeed canonicalized 
 #
 # GFS relies on all paths being canonicalized so that text matching occurs
@@ -1493,6 +1501,38 @@ sub assert_regularpath($)
 	#print "Testing [$path] - got $c\n";
 	die "ASSERT regularpath [$path] - failed -- smells like a FQLFN" if( $c == 2 );
 	return 1; 
+}
+
+# Navigates up to the parent (usually by adding a ..)
+
+sub rewriteLFNPathParent
+{
+	my $lfn = shift;
+
+	my( $handler, $root, $path ) = parseFQLFN( $lfn );
+
+	my $dir = $path;
+	my $updir = File::Spec->updir();
+
+	my $newPath = File::Spec->catfile( $dir, $updir );
+	my $p = File::Spec->canonpath($newPath);
+	return assembleLFN( $handler, $root, $p );
+
+}
+
+# Strips down to the directory name (takes off the basename, basically)
+
+sub rewriteLFNPathDirname
+{
+	my $lfn = shift;
+
+	my( $handler, $root, $path ) = parseFQLFN( $lfn );
+
+	my $dir = dirname $path;
+
+	my $p = File::Spec->canonpath($dir);
+	return assembleLFN( $handler, $root, $p );
+
 }
 
 # Returns a fully cleaned up absolute path name for this file
@@ -3626,6 +3666,46 @@ sub getAbsoluteLFNForGhost
 
 	return main::rewriteLFNPathAbsolute($g->lfn());
 }
+
+
+# for directories, returns the parent directory, or undef if there is none.
+
+sub getParentLFN
+{
+	my $self = shift;
+	my $g = shift;
+
+	my $lfn = $g->lfn();
+	my ($handler, $root, $path ) = main::parseFQLFN($lfn);
+
+	my $absPath = Cwd::realpath( $path  );
+
+	print "Getting parent of AFN: $absPath\n";
+
+	if( $absPath eq File::Spec->rootdir() )
+	{
+		return undef; 
+	}
+
+	return main::rewriteLFNPathParent( $g->lfn() );
+	
+
+}
+
+
+# for single files, returns the directory
+sub getContainingDirLFN
+{
+	my $self = shift;
+	my $g = shift;
+
+	my $c = main::rewriteLFNPathDirname( $g->lfn() );
+
+	return $c;
+}
+
+
+
 
 # CORE
 
@@ -5847,6 +5927,8 @@ sub hasAcceptableEnumeration
 
 
 
+
+
 # Caller is giving us a complete list of our children from primary source
 # Mark the deleted ones and perform other flags
 
@@ -6421,12 +6503,12 @@ sub hasAcceptableStat
 	my $self = shift;
 	my $timeguard = shift;
 
-if( $staleInfoDebug )
-{
-	my $q = $self->quickDebugString();
-	my $x = defined $timeguard ? $timeguard : "undef";
-	debug "hasAcceptableStat:($x) $q\n" 
-}
+	if( $staleInfoDebug )
+	{
+		my $q = $self->quickDebugString();
+		my $x = defined $timeguard ? $timeguard : "undef";
+		debug "hasAcceptableStat:($x) $q\n" 
+	}
 
 	return 1 if $self->isImmutable();
 
@@ -6992,6 +7074,8 @@ sub learnIsACopyOfGhost
 # TODO: is a cleaner way to do this to have some sort of "knownUpdate" field
 # that is triggered on it which automatically fails out the next hasAcceptable() 
 
+# This function should ALWAYS be called if the signature of the file has
+# changed, so that it can propgate that information up the tree.
 
 
 sub learnContentsChanged
@@ -6999,17 +7083,89 @@ sub learnContentsChanged
 	my $self = shift;
 	my $time = shift;
 
+	die unless defined $time; 
 
-	debug " XX Revoking hash due to learnContentsChanged()" if $revokeDebug || $learnDebug;
+	if( (not defined $self->lastChanged() ) or ($self->lastChanged() < $time ))
+	{
+		debug " XX learnContentsChanged() called - checking revokes " if $revokeDebug || $learnDebug;
 
-	$self->size( undef );
-	$self->mtime( undef );
-	$self->fullHash( undef );
-	$self->mode( undef );
-	$self->lastFullHash( undef );
-	$self->lastStat( undef );
+		if( defined $self->lastStat() && $self->lastStat() < $time )
+		{
+			$self->size( undef );
+			$self->mtime( undef );
+			$self->lastStat( undef );
+			$self->statStruct( undef );
+			$self->mode( undef );
+			debug " XX Revoking statfields due to learnContentsChanged()" if $revokeDebug || $learnDebug;
+			$self->markDirty( $time, "cc/stat");
+		}
 
-	$self->markDirty( $time, "cchange");
+		if( defined $self->lastFullHash() && $self->lastFullHash() < $time )
+		{
+			$self->fullHash( undef );
+			$self->lastFullHash( undef );
+			debug " XX Revoking hash due to learnContentsChanged()" if $revokeDebug || $learnDebug;
+			$self->markDirty( $time, "cc/hash");
+		}
+
+		# Optimization possible - don't do this if existing lastChanged is less than X seconds ago
+		# to prevent repeated walks up the tree;
+
+		$self->lastChanged( $time );
+		$self->markDirty( $time, "cc+");
+		
+		debug " XX learnContentsChanged() - scanning parents" if $revokeDebug || $learnDebug;
+
+		if( $self->exists() )
+		{
+			debug " Node exists, lets look for parent..";
+			my $plfn = $self->getParentLFN();
+
+			if( ! defined $plfn )
+			{
+				debug "I am the root, LCC over.";
+				return;
+			}
+
+			my $tk = TruthKeeper::get();
+			my $parent = $tk->obtainGhostForLFN($plfn);
+
+			if( $parent->exists() )
+			{	
+				$parent->learnContentsChanged( $time );
+				$parent->flush();
+			}
+		}
+	}
+	else
+	{
+		debug "notifyContentsChanged - Skipping since node appears up to date" 
+			if $revokeDebug || $learnDebug;
+	}
+}
+
+
+sub getParentLFN
+{
+	my $self = shift;
+
+	my $lfn = $self->lfn();
+
+	debug "Searching for parent of [$lfn]";
+
+	if( $self->canHaveChildren() )
+	{
+		my $plfn =  $self->getFSE()->getParentLFN( $self );
+		debug "   Parent is:[$plfn] (case1)";
+		return $plfn; 
+	}
+	else
+	{
+		 my $plfn = $self->getFSE()->getContainingDirLFN( $self );
+		 debug "   Parent is:[$plfn] (case2)";
+		return $plfn; 
+	}
+	
 }
 
 sub fullHash
@@ -7045,6 +7201,8 @@ sub learnStat
 	my $mtime = shift;
 	my $mode = shift;
 	my $statStruct = shift;
+
+	my $sigHasBeenChanged = 0; 
 
 	die "invalid call to learnStat" if defined $statStruct and not ref $statStruct;
 
@@ -7106,16 +7264,31 @@ sub learnStat
 		die "Rule2: same date mismatch H" if defined $statStruct  and not defined $self->statStruct();
 	}
 
+	# older data is silently ignored.
+
+	if( (defined $self->lastStat()) and ($time < $self->lastStat() ))
+	{
+		CODEPATH( "ignored older incoming stat" );
+		return;
+	}
+
+
 	# RULE #6: Error stats revoke all other fields
 
 	if( main::statModeParse_isError( $mode ) )
 	{
-		debug( " XX Revoked hash due to error mode=($mode) for $q") if $revokeDebug || $learnDebug;
+		if( defined $self->mode() and main::statModeParse_isError( $self->mode() ))
+		{
+			debug( " XX Revoked hash due to error mode=($mode) for $q") 
+				if $revokeDebug || $learnDebug;
 
-		$self->lastFullHash(undef);
-		$self->fullHash(undef);
+			$self->lastFullHash(undef);
+			$self->fullHash(undef);
+			$sigHasBeenChanged  = 1;
 
-		CODEPATH( "revoke hash due to stat error" );		
+			CODEPATH( "revoke hash due to stat error" );		
+
+		}
 	}
 
 	# RULE #5: A new stat that represents a change in size should invalidate the
@@ -7125,6 +7298,8 @@ sub learnStat
 
 	if( (defined $self->size()) && ((not defined $size) or ($self->size() != $size)))
 	{
+		$sigHasBeenChanged = 1;
+
 		$self->lastFullHash(undef);
 		$self->fullHash(undef);
 
@@ -7133,11 +7308,6 @@ sub learnStat
 		CODEPATH( "revokehash with new size" );
 	}
 
-	if( (defined $self->lastStat()) and ($time < $self->lastStat() ))
-	{
-		CODEPATH( "ignored older incoming stat" );
-		return;
-	}
 
 	my $anythingHasChanged = 0;
 
@@ -7149,6 +7319,7 @@ sub learnStat
 		(not defined $self->statStruct() )
 		)
 	{
+		debug "Change = formerFieldsUndefined";
 		$anythingHasChanged = 1; 
 	}
 	else
@@ -7158,12 +7329,10 @@ sub learnStat
 		$anythingHasChanged = 1 if( ( not defined $mode  ) and ( defined $self->mode()  ) );
 		$anythingHasChanged = 1 if( ( not defined $statStruct  ) and ( defined $self->statStruct()  ) );
 
-
-		$anythingHasChanged = 1 if( defined $size and $self->size() != $size );
-		$anythingHasChanged = 1 if( defined $mtime and $self->mtime() != $mtime );
-		$anythingHasChanged = 1 if( defined $mode and $self->mode() ne $mode );
-		$anythingHasChanged = 1 if( defined $statStruct and $self->statStruct()->hasMeaningfullyChanged( $statStruct ) );
-
+		$anythingHasChanged = $sigHasBeenChanged = 1 if( defined $size and $self->size() != $size );
+		$anythingHasChanged = $sigHasBeenChanged = 1 if( defined $mtime and $self->mtime() != $mtime );
+		$anythingHasChanged = $sigHasBeenChanged = 1 if( defined $mode and $self->mode() ne $mode );
+		$anythingHasChanged = $sigHasBeenChanged = 1 if( defined $statStruct and $self->statStruct()->hasMeaningfullyChanged( $statStruct ) );
 	}
 
 	if( (defined $self->lastStat()) and ($time > $self->lastStat() ))
@@ -7188,12 +7357,19 @@ sub learnStat
 
 	if(( $anythingHasChanged == 0 ) and ($time > $self->lastStat() ))
 	{
-		CODEPATH( "new stat did not mark dirty" );
+		CODEPATH( "newer stat did not mark dirty, corner case" );
 	}
 
-	debug "Learn STAT: isAnythingChanged? $anythingHasChanged" if $learnDebug; 	
+	debug "Learn STAT: isAnythingChanged? $anythingHasChanged   hasSigChanged? $sigHasBeenChanged"
+	 if $learnDebug; 	
 
 	$self->markDirty( $time, "stat") if $anythingHasChanged;
+
+	if( $sigHasBeenChanged )
+	{
+		$self->learnContentsChanged( $time );
+	}
+
 }
 
 sub learnFullHash
