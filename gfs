@@ -59,7 +59,7 @@ my $gChildDebug         = 0;
 my $fseDebug            = 0;
 my $fseOjxDebug         = 0;
 my $fseSnapshotDebug    = 0;
-my $learnDebug          = 0;
+my $learnDebug          = 1;
 my $revokeDebug         = 0;   # Special case of learn that just looks at hash revocation
 my $statStructDebug     = 0;
 my $provenanceDebug     = 1;
@@ -1139,6 +1139,7 @@ sub reconstructAction
 			my $lfn = $g->lfn();
 			print "LFN: $lfn\n";
 
+			$g->flush();
 		} 
 
 
@@ -2241,18 +2242,20 @@ sub saveGhostToStore()
 		$self->storeAFNforHash( $newAbsFH, $afn);
 	}
 
-	$self->storeGhostToAFN( $g, $afn );
+	$self->storeGhostToAFN( $absGhost, $afn );
 
 	debug "   Commited ghost to store" if $saveGhostDebug;
 
-	my $id = $g->debugID();
-	my $q = $g->quickDebugString();
+	my $id = $absGhost->debugID();
+	my $q = $absGhost->quickDebugString();
 	debug "<<Commited ghost $id to store $q";
+
+	$g->printDebug();
 
 	if( $g->everWasDirtyThisRun() )
 	{
 		open FILE, ">>$DIRTYLOGFN" or die;
-		print FILE $g->serialize();
+		print FILE $absGhost->serialize();
 		print FILE "\n";
 		close FILE; 
 	}
@@ -6230,7 +6233,9 @@ sub learnDeepScan
 	if( 1 )
 	{	
 		my $id = $self->debugID();
-		debug "Learn Decision: $id lastDeepScan:[$time] deepSize:[$deepSize] deepCount:[$deepCount]";
+		my $deepSizeX = defined $deepSize ? $deepSize : "_UNDEF__";
+		my $deepCountX = defined $deepCount ? $deepCount : "_UNDEF__";
+		debug "Learn Decision: $id lastDeepScan:[$time] deepSize:[$deepSizeX] deepCount:[$deepCountX]";  
 	}
 
 
@@ -7215,6 +7220,11 @@ sub learnFromGhost
 			if( $self->effectiveDate() < $g->effectiveDate() )
 			{
 				CODEPATH( "Learner older than teacher - warning");
+				# seems to be more common now that we are using learn
+				# semantics to push and pull data out of all external sources
+				# maybe this warning isn't as important
+
+
 				# warn "Strange case where student ghost is older effective";
 				# print "WARN: Self:\n";
 				# $self->printDebug();
@@ -7234,19 +7244,10 @@ sub learnFromGhost
 		}
 	}
 
-	# if( defined $g->lastDeepScan() )
-	# {
-	# 	if( !defined $self->lastDeepScan() || $self->lastDeepScan() < $g->lastDeepScan() )
-	# 	{
-
-	# 	}
-	# }
-
 	if( defined $g->lastDeepScan() )
 	{
-
-			$self->learnDeepScan( $g->lastDeepScan(), $g->deepSize(), $g->deepCount );
-		}
+		$self->learnDeepScan( $g->lastDeepScan(), $g->deepSize(), $g->deepCount );
+	}
 
 
 	if( $learnDebug )
@@ -7690,6 +7691,10 @@ sub learnStat
 		# changed in a long time, bumping sequence number etc.
 		# If some other field changes, we'll flush the data out, but lastStat alone wont do it. 
 
+		my $ls = $self->lastStat();
+		my $diff = $time - $ls; 
+		print "$time - $ls = $diff > $main::GUARD_TIME_SECONDS_STAT\n";
+
 		if( $time - $self->lastStat() > $main::GUARD_TIME_SECONDS_STAT )
 		{
 			$anythingHasChanged = 1; 
@@ -7710,7 +7715,7 @@ sub learnStat
 	}
 
 	debug "Learn STAT: isAnythingChanged? $anythingHasChanged   hasSigChanged? $sigHasBeenChanged"
-	 if $learnDebug; 	
+	 ;#if $learnDebug; 	
 
 	$self->markDirty( $time, "stat") if $anythingHasChanged;
 
