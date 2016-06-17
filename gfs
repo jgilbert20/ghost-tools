@@ -101,10 +101,10 @@ my %codepathCount;
 
 # Get path to our WD
 
-my $HOME = $ENV{HOME};
-my $WDIR = "$HOME/.gfs";
+my $HOME  = $ENV{HOME};
+my $WDIR  = "$HOME/.gfs";
 my $DBDIR = "$WDIR/db";
-my $EDIR = "$ENV{HOME}/.gfsrun/EXEC-$$";
+my $EDIR  = "$ENV{HOME}/.gfsrun/EXEC-$$";
 
 # These are the two "global" FSE objects used to resolve fs: and obj: LFNs
 
@@ -2247,6 +2247,11 @@ sub saveGhostToStore()
 
 	if( $g->hasAcceptableEnumeration() )
 	{
+		my $buffer = $g->generateTreeSignatureBuffer();
+		my $ojx = $main::coreOjxFSE;
+
+		# $ojx->storeScalar($buffer);
+
 		print "GOOD TO GO!\n";
 	}
 
@@ -3320,16 +3325,13 @@ sub store
 	# my $hardFilename = $source->getHardFile();
 
 	my $hash = $source->getFullHash();
-	my $justHash = main::extractHashComponents( $hash )->[2];
 
-	my $targetPath = catfile( $self->{OBJ_DIR}, $justHash );
+	my $targetPath = $self->makeContainingDirForHash( $hash );
+	my $targetLFN = $self->makeFullPathForHash( $hash );
 
 	# Super schitzophrenic - shou;dn't this ALL be done via the ghost API?
 	$self->internalMkDir( $targetPath );
 
-	my $finalPath = catfile( $targetPath, $justHash );
-
-	my $targetLFN = main::assembleLFN( "fs", "root", $finalPath);
 	my $tk = TruthKeeper::get();
 	my $targetGhost = $tk->obtainGhostForLFN($targetLFN);
 	$targetGhost->store( $source );
@@ -3343,6 +3345,46 @@ sub store
 	}
 }
 
+sub makeContainingDirForHash
+{
+	my $self = shift;
+	my $hash = shift;
+
+	my $justHash = main::extractHashComponents( $hash )->[2];
+	my $targetPath = catfile( $self->{OBJ_DIR}, $justHash );
+
+	return $targetPath;
+}
+
+sub makeFullPathForHash
+{
+	my $self = shift;
+	my $hash = shift;
+
+	my $justHash = main::extractHashComponents( $hash )->[2];
+	my $targetPath = $self->makeContainingDirForHash( $hash ); 
+
+	my $finalPath = catfile( $targetPath, $justHash );
+	my $targetLFN = main::assembleLFN( "fs", "root", $finalPath);
+
+	return $targetLFN;
+}
+
+sub absorbScalar
+{
+	my $self = shift;
+	my $buffer = shift;
+
+	my $hash = "";
+
+	die;
+
+
+	my $targetPath = $self->makeContainingDirForHash($hash);
+	my $targetLFN = $self->makeFullPathForHash($hash);
+
+
+}
 
 # A universal method that says "take the things I pointed to, and make sure
 # you've stored it somewhere". In this form, you're not allowed to say where
@@ -5973,8 +6015,7 @@ sub hasAcceptableEnumeration
 	}
 
 
-	# and expensive double check!!!
-
+	# and expensive double check!!! TODO revisit this. 
 
 	my $Vhash = $self->calculateUnforcedSignatureHashOverChildren();
 
@@ -6150,7 +6191,7 @@ sub calculateUnforcedSignatureHashOverChildren
 {
 	my $self = shift;
 
-	my $buffer = $self->createTreeSignatureBuffer();
+	my $buffer = $self->generateTreeSignatureBuffer();
 	return undef if not defined $buffer;
 
 	my $sha = Digest::SHA->new(1);
@@ -6165,7 +6206,7 @@ sub calculateUnforcedSignatureHashOverChildren
 	return $hexdigest;
 }
 
-sub createTreeSignatureBuffer
+sub generateTreeSignatureBuffer
 {
 	my $self = shift;
 	my $buffer = ""; 
