@@ -46,7 +46,7 @@ local $main::GUARD_TIME_SECONDS_DEEPSCAN = undef;
 # Debug control
 
 my $ioDebug             = 1;   # Print stats, reads, readdirs, etc. 
-my $staleInfoDebug      = 1;   # Decisionmaking on if data is current enough
+my $staleInfoDebug      = 0;   # Decisionmaking on if data is current enough
 my $icDebug             = 0;   # TK incorporation
 my $tkdebug             = 0;   # TK general
 my $tkflushdebug        = 0;   # End of script TK flushes
@@ -59,7 +59,7 @@ my $gChildDebug         = 0;
 my $fseDebug            = 0;
 my $fseOjxDebug         = 0;
 my $fseSnapshotDebug    = 0;
-my $learnDebug          = 1;
+my $learnDebug          = 0;
 my $revokeDebug         = 0;   # Special case of learn that just looks at hash revocation
 my $statStructDebug     = 0;
 my $provenanceDebug     = 1;
@@ -6235,7 +6235,7 @@ sub learnDeepScan
 		my $id = $self->debugID();
 		my $deepSizeX = defined $deepSize ? $deepSize : "_UNDEF__";
 		my $deepCountX = defined $deepCount ? $deepCount : "_UNDEF__";
-		debug "Learn Decision: $id lastDeepScan:[$time] deepSize:[$deepSizeX] deepCount:[$deepCountX]";  
+		debug "Learn DEEP Decision: $id lastDeepScan:[$time] deepSize:[$deepSizeX] deepCount:[$deepCountX]" if $learnDebug;
 	}
 
 
@@ -7123,7 +7123,7 @@ sub learnFromGhost
 	}
 
 	#print Dumper( $self );
-
+	main::debugLevel(1);
 
 	die if defined $g->effectiveDate() and $g->effectiveDate() > time();
 
@@ -7249,6 +7249,8 @@ sub learnFromGhost
 		$self->learnDeepScan( $g->lastDeepScan(), $g->deepSize(), $g->deepCount );
 	}
 
+
+	main::debugLevel(-1);
 
 	if( $learnDebug )
 	{
@@ -7560,7 +7562,7 @@ sub learnStat
 		my $__mtime = defined $mtime ? $mtime : "<undef>";
 		my $__mode = defined $mode ? $mode : "<undef>";
 		my $__statStruct = defined $statStruct ? $statStruct : "<undef>";
-		debug "LEARN STAT [$__size], [$__mtime], [$__mode] [$__statStruct] for $q time:[$time]\n";
+		debug "LEARN STAT [$__size], [$__mtime], [$__mode] [$__statStruct] for $q time:[$time]\n" if $learnDebug;
 		$self->printDebug();
 	}
 
@@ -7715,7 +7717,7 @@ sub learnStat
 	}
 
 	debug "Learn STAT: isAnythingChanged? $anythingHasChanged   hasSigChanged? $sigHasBeenChanged"
-	 ;#if $learnDebug; 	
+	if $learnDebug; 	
 
 	$self->markDirty( $time, "stat") if $anythingHasChanged;
 
@@ -7723,6 +7725,29 @@ sub learnStat
 	{
 		$self->learnContentsChanged( $time );
 	}
+
+}
+
+# learning routines should not themselves trigger active checks. 
+
+
+sub canHaveChildren__learnSafe
+{
+	my $self = shift;
+	my $type = $self->type();
+
+	die if( not defined $type );
+
+	# debug "Type is: $type\n";
+
+	# base case: no knowledge or hash
+
+	if( $type eq 'd' )
+	{
+		return 1;
+	}
+
+	return 0;
 
 }
 
@@ -7757,7 +7782,7 @@ sub learnFullHash
 
 	if( (defined $self->lastFullHash()) and 
 		(defined $self->lastStat()) and
-		(! $self->canHaveChildren() ) and 
+		(! $self->canHaveChildren__learnSafe() ) and 
 		($time > $self->lastStat() ))
 	{	
 		warn "ERROR case where last full hash  > time (time=$time)";
