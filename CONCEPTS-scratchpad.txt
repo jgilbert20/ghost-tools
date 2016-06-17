@@ -1,241 +1,84 @@
 
 # What is this document
 
-It is a collection of work in pgoress (or sometimes retired) ideas.. anything that is current has been moved to the full concept file. 
+It is a collection of work in progress (or sometimes retired) ideas.. anything that is current has been moved to the full concept file. 
 
-
-
-parent->notifyTreeChange()
-
-does that save the date of the treechange?
-this should be a learnable thing
-learnTreeChange()
-   if we learn about a treeChange that is newer than the enumeration date, than we should clear the fullHash. 
-   why bother storing this date at all? I can't think of the reason
-   lets be conservative and make sure we need it before we store it. 
-
-
-
-
-
-
-
-Each directory contains a lastEnumerated date. This date is the last time that the system performed a source verification on the LFNs directly underneath it. This field is consulted to decided if cached data about the contents of a directory is valid. If you call getChildrenLFNs() and the system finds a lastEnumerated inside the time window, no directory read is performed. 
-
-Right now there is no direct provision for recalling the contents of the directory, short of a directory scan, but there is a clean design for how it should work. Basically, when getChildrenLFNs is called, we could either do a prefix search in the global LFN database, or read from a container list object (such as a gfs_ip files). The container list would register the children using addChild(). Then a call to verify the checksum would occur, and if the fullHashes matched, the lastEnumerated field would be accepted (if not, the hash and the lastEnumerated date would be dropped.)
-
-In the current implementation, lastEnumerated is not passed along during learnFromGhost() operationes. It is only populated when learnChildrenByLFN is called with the contents from the upstream source. It also questionable if the fulHash should be learned for container objects during learnGhost either.
-
-Consider two information sources A and B, with their picture of what is in a directory DIR.
-
-	A:   DIR = {1, 2, 3 }
-	B:   DIR = {   2, 3, 4 }
-
-If A learns its children from B, there should be a check. Only one of these two versions of truth should be accepted. Whoever's picture of the kids has a more recent lastEnumerated date should be taken.
-
-Directories also have hashes, but they operate in a funny way during learn operations. The full hash of a tree's age is the oldest of all of the contributing hashes, since it is effecitvely a compound hash. 
-
-Directories also have a lastChanged field. This is used to mark events where we come to learn that the contents of a file have been modified. Of course, for regilar files, this is probably no different than the mtime(), but the mtime comes from the system and says in lockstep with the stat(2) operation, whereas lastChanged is based on changes we've either observed or caused. 
-
-The lastChanged() field is updated whenever the hash or size of a fundamental object is observed. It is also updated when a directory is created, or when a file is written or moved. In short, anything that might feed into the signature of an object (hash, mtime, size) if it changes, will force a lastChange().
-
-The semantics of lastChange() are recursive. Effort is made to propogate lastChanged to parent containers, namely directories. The parent of the ghost is located. If its lastChanged is more recent, than no action is taken. But if it is less recent, the ghost updates its field, and revokes the hash and deepSize field. This in turn forces a check on the parent, etc. This is primarily the reason the field is needed - it helps us know if we've already marked an object inconsistent so we can avoid doing it multiple times.
-
-The net result is that a change deep inside the tree will propogate out to the ghost of its parent nodes, and prevent reliance on an outdated hash.
-
-The lastChange() of directory is always the max() of its children.
-
-This extra legwork is necessary because GFS does not want to overly rely on the user snapshoting or indexing the state of a filesystem to get correct information. Its data structures need to remain up to date as the file system changes, and some of those changes will happen inside the GFS tool during its operation.
-
-Another field of note is getDeepSize() and getDeepCount(). This is basically the number of files and their total size under the tree. These fields too are invalidated when a change is mentioned, meaning that the next call to getDeepSize() will force recursion. 
-
-To ensure that the expense of deep directory enumeration is not overly burdensome, there is a general purpose function called calculateDeepFields. This takes three arguments: forceFunctionHash, forceFunctionStat and forceFunctionEnum. If the forcing function is a time, those fields are brought to date to that granularity of time. If they are not defined, nothing is forced, but mergable information is located. Note that the user's guard times always override these values since the forcing is actually done by getChildrenLFNs(), getFullHash(), etc which will always tilt in favor of the guard values.
-
-lastDeepScan() is the last time that the "deep fields" (deepSize, deepCount and hash) has been brought up to date. It is explicitly revokeed by learnContentsChanged(). lastDeepScan differs from lastFullHash because it can be updated without the hash being calculated. However, like its breatheren, calling it on a directory tree will always return the "minimum" time inside that tree. 
-
-The verb to update the deepScan is "checkpoint"
-
-
-
-- [ ] impelement calculateDeepFields
-- [ ] implement lastChanged
-	- [X] put on stat changes (learnContentsChanged)
-	- [X] put on enum changes
-	- [X] put on hash changes
-	- [ ] revoke enum (and therefore LC) when directories are added, or files are added/ deleted / moved /  deleted
-	- [X] revoke hash and stat when learnContentsChanged
-	- [ ] Mkdir's must revoke directory state
-	- [ ] Mkae sure that lastFullHash now respects lastDeepScan()
-- [ ] mv should revoke parents hash
-- [ ] mkdirs should revoke parent's hash
-- [X] change in checksum should revoke parent dirs hash
-- [ ] any creation of a new file should revoke parent hash 
 - [ ] directory size changes should NOT revoke the directory
+- [ ] any creation of a new file should revoke parent hash, (call learnContentsChanged)
+- [ ] revoke enum (and therefore LC) when file is added
+- [ ] revoke enum during mkdirs
+- [ ] Lower priority: wire in reads of directory caches to properly populate children, find some easy way to get LFNs for children fast
 
 
 
 
+# Hashes and interior objects
 
+Lets say I have two directories A and B
 
-learnContentsChanged() - is that the general call? I think this becomes the universal way to detect hash, stat, etc changes. But who should do the clearace? don't want to double clear this information. say you do a getStat and a getFullHash right after each other. getStat revokes the hash, and then getFullHash won't again, will it? Maybe LCC will only clear the stat if the stat is older than its information. This makes sense. and we can use  LT syntax - it should be fine.
+	a/file1.txt
+	b/file1.txt.gz
 
-I also want some kind of content scan flag. 
+I want to do a test to see if all of A is contained in B?
 
+Lets pretend we have a function called “canReconstructHash()” CRH. How would CRH know to avoid a backup? Theoretically, CRH should return true when file1.txt is examined against B.
 
+So where would this data come from? Lets assume these checksums:
 
-	getStat see size change
-	calls learnContentsChanged, propogates up tree
+	a/file1.txt      [fc123]
+	b/file1.txt.gz   [def00]
 
+Lets take a very simple case.
 
+	gfs contentscan b/file.txt.gz
 
+The content scan pops open the gzip file, and checksums the thing it points to. Now our global AFN cache is aware that the checksum is present. The folling AFN is generated
 
+	split:gz|^def00:    [fc123]
 
+This enters our cache, and now CRH will work.
 
+So where do we persist this information? 
 
-# night in woodbrige
+A parallel situation exists for directories. If I have a directory of hash 299932, how do I efficiently know if it can be reconstructed on B? Assuming my backup is checkpointed, the directory is now part of the AFN cache.
 
+But lets say all of the files are there, but the directory itself is not on the remote side? It could be reconstructed. Is there an efficient way to test for this? The rule for CRH on a directory is that I either have to have the hash of the whole thing, or the hash of its blob like things (the rest I can construct if needed from the metadata.)
 
-Ran into a big glitch today. Ghost were getting generated for files that were not there. They were mucking up several things. First, the real_path function doesn't work if it can't check the file system. So it was returning undef silently when the paths were converted to absolute during the end of script flush. 
+The second problem is manifest files. Right now, a backup operation presumably is going to write a file for every file and directory present in the backup set. I also think that the LFNs should be the file versions that were known back then. But this means that even very small changes to a large directory tree will always generate very large manifest files.
 
-Secondly, even on fixing that, the code was trying to flush out .gfs_ip files to locations that didn't exist (to record the fact that files don't exist there.)
+You’d ideally want some compact file format that can be quickly scanned to locate if a hash is in or out. And you’d want the manifest files to only generate entries for the objects not in the previous manifest file. Or maybe all of them not in a baselined file.
 
-This illustrates a broad set of design decisions I need to address, that git and bup seem to have a nice way of dodging.
+On restore, you simply reference all of the manifest files so that the missing hashes, etc can be recovered from the thin object manifests (the deltas.)
 
-1) All new state has to hit the disk as soon as possible. Given that my tool is trying to not have seprate indexing and staging phases, its all the more important. Cache consistency while the program is running has to be inviolate. Every find or obtain opperation should immediately flush all ghosts (and even raise an error).. We should not have routine cycles where dirty ghosts are kept in memory for more than a few operations. I'd even consider making "mark dirty" do an immediate flush but that is probably overkill.
+So in a naieve implementation, the backup system first checks that the baseline manifest on the server matches its own, and then does the diff, and sends over the smaller manifest file.
 
-DONE: the way this is handled is now that flush is called in different places. And the ghosts stored in the system are now "pure", and never pulled from serialization (we use our now robust learning tools to handle it.)
+But pruning is going to suck a lot in this case. 
 
-2) Mkdir's must revoke directory state
+There is a certain logic to git making a “file” for each protected hash. Then the approach to pruning is simple. You write out a file of all of hashes of things you care about. And any hash inside that directory that doesn’t match, you get rid of. That purges both blobs and tree objects. A bloom filter might make this even easier.
 
-On TODO list
+I could do that with GFS. Every directory could have a small object file. It could even have the same checksum as the directory does. And then we know that any FILE or DIRECTORY with a given hash can reconstruct a directory of a given hash.
 
-3) Any learn operation that discovers a new hash or anything that changes the signature of a ghost must also revoke all known hashes.
+Another way is that we constantly rewrite the manifest file. There is some compaction.
 
-DONE: New logic takes care of this
-	
-4) Knowledge that something isn't there (failed stat) needs to do way more that it does currently. It should revoke directories along the path. There is no sense in writing state for objects that don't exist either. The second we find something in a place we didn't expect it, or not see something in a place we did expect it, some mechanism needs to revoke things properly.
+In the case of tar metadata, we could have a directory object that is the contents of the tar file itself. Basically this file ties together the hash of the tarfile with the hashes of its components. It can be regenerated at will. Loading this file places the tarfile contents into the global cache.
 
-DONE: If a stat has any meaningful signature change, it will invaldiate upstairs directories.
+But this needs some kind of way of finding the file, prefereably on demand.
 
-5) GetFullHash on a directory has to respect both the hash guard time and the enumeration guard time. If I ask for a hash on a directory, and its enumeration time guard is expired, i must do a full descent. On a containerized thing like a tarfile, I'm willing to accept a different guard time on the expansion.
+What if we had a structure where the **filename** of the object was the hash of the thing it accounted for? Now at least, its really easy to search and doesn’t need to be necessarily penetrated (open+slurped) unless a question comes in to resolve it.
 
-Still pending
+So if 100 files are needed to construct 1 file, you tkae the hash of that one file and make that the filename
 
-6) The GFS_IP functionality needs to gracefully degrade. If I can't write the .gfsip file, just issue a warning. Furthermore, its possibly dangerous having things in there. I can't just flush it out all the time. Say we learn about a deleted file. findAFN for that file, and a getStat fail. Lets say the stat was accidental, not forced by guardtime. the program is going to continue to get successful findAFNs over and over again while it is running, and not pick up on this change, so the accidental stat won't spread knowledge to invalidate our cache. How to solve that? OTOH, inside the system aren't we just caching what is supposed to be in those gfs_ip files anyhow? I think we'd be covered by that.
+But if 1 file expands to 100 files, you DO need to do some kind of deep content scan to pull those 100 files into your cache for the reverse lookup. (You wouldn’t want to have 100 files.)
 
-DONE - its now fully disabled and new implementations can be cleaner becuase they will operate as "peers" to the AFN cache
+Also not clear how this might tie into packfiles which seem so uber cool. 
 
+And what if you want a file that has multiple entries (e.g. 100 files -> 1 file, 1000 files -> 1 file) so you don’t have so many opens and cloeses?
 
+How do you find this object and manage it?
 
-
-
-anothre glitch - get a ghost, stat it to make sure it isn't there. and then learnFromGhost from the source file. Both will have identical dates even though they were sequential, and confuse the learn algorithim. 
-
-
-Proved that new directory sizes invalidate hash, but they are not supposed to on their own (they should trigger new enumeration, i think. )
-
-
-
-
-
-###
-
+Another open question: What exactly is a backup? Is it a snapshot? Or a collection of file versions? Theoretically, it could just be a pointer to the has of the top level nodes. 
  
 
-Something is funky. Not picking up changes to a directory the way i'd expect. move large things in and out of a directory, and not even the most basic test to see if the checksum is still valid. (Not even a warning) I think whats happening is "hasAcceptableEnumeration()" may need to descent into the subtrees. 
-
-Also a problem for STORE - the store operation is not checkpointing and revoking the parent hashes. 
-
-Taint a directory taints parent, etc. But can we rely on that to avoid tainting all parents? No. What if the parent directory has never been incorporated? some criteria that says "hey, this directory ands its parents have already been revoked? 
-
-So if I write into /a/b/c/d/filex, i should walk up to my parents to the root, making sure each gets a dirChange event. But as an optimization, i can also just see if a parent has a revoked flag and not have to revoke everything up the chain over again. 
-
-
-
-# cache
-
-WACKY IDEA- What if cache poisoning was resolved by LEARN ALWAYS taking the MOST conservative date? No. that would cause needless source verifications. But what about the case of enumeration? Taking the oldest would force full enumeration that should trickle back to all caches. And enumeration is cheap. 
-
-is there a difference from a cache perspective of "latest playback".. e.g. a think that we learn that says - someone in the cache chain hasn't seen a playback of the full directory in XXX days?
-
-OTOH, we can always ask individual truth keepers what their enumeration date is.
-
-where i am right now is that hash checking is working well. But there needs to be some kind of checkpoint verb. and we need a basic restore mechanic.
-lets get this all working so we can start to understand performance issues and think through fixes. 
-
-we don't seem to have an acceptable forceEnumeration. The date is the OLDEST date that contribute to that tree. Need to construct a test schenario where this falls out of date, and then where a readdir scan reverifies it. That will actually fix 9/10 of the cache poisoning problem.
-
-need some simple db verification tools. Make sure all AFNs from the hash cache are in the other thing and visca versa. 
-
-
-# The ghost backup situation
-
-I want to backup object X, which is a file. How do I know if it is present on the backup directory?
-
-- Worse case: I traverse every node, looking for a hash duplicate. With caching, this actually may just require a relatively modest load
-- Better case: I find some truth engine that supporst canReconstructHash().
-
-CRH() dumb implementation is to select an entire swath of filenames using the B-Tree and insert them into the hash store every time. But how do we know all subchildren are loaded? I think it is safe to assume that in a consistent system, if they are in the AFN->Ghost store, they are also in the HASH->AFN store. We can create tools to do a consistent check for this (and probably should.) If we stored something on the parent that told us the size and number of files, we could do a fast iteration over the exploded tree, and verify that information. Presumably with cursors that could be made to be faster than hitting the database so many times.
-
-A deeper scan aims for a full enumeration, but has to use ONLY the ghost data inside that store, so that gaps can be identified.
-
-	GDB->verifyFullDIrectoryEnumeration( $g );
-
-This implies there is some sort of flag-- when a whole block of things come over into a cache, I can mark them as authoritative and that effectively the entire cache is up to date.
-
-This seal on the rows would be broken on insert. 
-
-I don't need to be too worried about false-positives since those can be verified. But false negatives would suck a bit.
-
-Maybe we push this back to the user.  We do some spot checks on a few directories at random. If they don't seem enumerated, we issue a warning and tell the user to run the checkpointing tools again.
-
-A really advanced idea is to have a CRH cache. I bet there is some hyper-fast file format that could be used. Or maybe an in memory hash is not that bad? Perl can deal with really gnarly hash sizes and these checksums can be packed into a file for uber-fast lookup.
-
-	# the problem of a cache of a cahce of this kind it hat the "full deal" is what matters.
-	# it seems to take about 1.4 user seconds to enumerate 1.36M rows in BDB
-	# that tells me we've got a lot of room to grow here
-
-Seems like the best thing to do in V1 is assume "user must checkpoint" behavior.
-
-Checkpointing requires a full stat, and a hash if the stat revoked our hash.
-it also should make sure any objects described (snapshots, directories, tarfiles, whatever) are pulled into the cache.
-
-reasonable to warn that the current target of the backup has not been checkpointed in XXX days. 
-
-
-
-
-
-
-# Original notes from duplicateUnderPath
-
-We have to decide at this point if the universal cache is up to date. 
-Each FSE might handle this differently.
-
-I think the check would recurively look at subdirectories? Or maybe just
-simple time based? I'd like to find some way to prevent the need for the
-user to be smart enough to know that a checkpoint is needed.
-
-One way to handle this is there is some kind of
-"hasAcceptableDirscan()". If dirscan is popualted for an AFN, we could avoid
-the full traversal. But an acceptable dirscan on the .gfs_ip doesn't mean the
-one inside the cache is up to date.
-
-you'd want two fields (most recent enumer, and oldest enum.) 
-
-maybe there is a recursive way. I can "test my own" understanding.
-first, i get the GFS_IP for the current directory
-its going to have some stats in it about sizes and file counts and whatnot.
-and i compare that to my own db enumeration.
-
-BDB may or may not be quick enough to allow this..?
-but doesn't its Btree have some sort of "# records between?"
-that would be optimal
-that is the check?
-
-the problem of a cache of a cahce of this kind it hat the "full deal" is what matters.
-it seems to take about 1.4 user seconds to enumerate 1.36M rows in BDB
-that tells me we've got a lot of room to grow here
 
 
 
@@ -244,34 +87,7 @@ that tells me we've got a lot of room to grow here
 
 
 
-# TruthKeeper evolved
-
-You wnat multiple directories of ghost information -
-	e.g. a backing store using BDB, .gfs_ip
-
-THe truthkeeper ALWAYS makes the ghost first during obtain. Then state is gathered from the others each in turn. 
-
-When a ->save() is issued, the ghost is dropped out of the caches,
-and the ->saveGhost() message is given to each GDB
-
-We need some mechanism to be sure the ghosts are actually finalized on save, otherwise operations that create millions of ghost are going to drive crazy amounts of memory use.
-
-Ghost act like a transaction, and you can play them forward.
-
-obtainGhostForLFN
-obtainFomerGhostForLFN( priorToDate );
-obtainFomerGhostForLFN( versionSpec );
-
-We can also ask
-
-obtainGhostsUnderLFN( LFN )
-canObtainGhostsUnderLFN()
-	- checks if the cache is fully populated
-obtainGhostsForHash()
-
-
-
-# New semantics for directories
+# New semantics for directories (slightly different design)
 
 In an ideal backup scenario, I obtain a hash representing a particular directory. Primary source verification occurs by getting the hashes of all directories underneath. Therefore “has hash duplicate” still works. As long as the directory is EXACTLY the way it was, we are all good.
 
@@ -415,6 +231,131 @@ TODO We need to deal with deletes better - if we realize something is deleted, i
 
 Source: a294d0c46d9768647f53e58fc69ebb0600c84236
 several times got it.
+
+
+
+
+
+
+
+# cache
+
+WACKY IDEA- What if cache poisoning was resolved by LEARN ALWAYS taking the MOST conservative date? No. that would cause needless source verifications. But what about the case of enumeration? Taking the oldest would force full enumeration that should trickle back to all caches. And enumeration is cheap. 
+
+is there a difference from a cache perspective of "latest playback".. e.g. a think that we learn that says - someone in the cache chain hasn't seen a playback of the full directory in XXX days?
+
+OTOH, we can always ask individual truth keepers what their enumeration date is.
+
+where i am right now is that hash checking is working well. But there needs to be some kind of checkpoint verb. and we need a basic restore mechanic.
+lets get this all working so we can start to understand performance issues and think through fixes. 
+
+we don't seem to have an acceptable forceEnumeration. The date is the OLDEST date that contribute to that tree. Need to construct a test schenario where this falls out of date, and then where a readdir scan reverifies it. That will actually fix 9/10 of the cache poisoning problem.
+
+need some simple db verification tools. Make sure all AFNs from the hash cache are in the other thing and visca versa. 
+
+
+# The ghost backup situation
+
+I want to backup object X, which is a file. How do I know if it is present on the backup directory?
+
+- Worse case: I traverse every node, looking for a hash duplicate. With caching, this actually may just require a relatively modest load
+- Better case: I find some truth engine that supporst canReconstructHash().
+
+CRH() dumb implementation is to select an entire swath of filenames using the B-Tree and insert them into the hash store every time. But how do we know all subchildren are loaded? I think it is safe to assume that in a consistent system, if they are in the AFN->Ghost store, they are also in the HASH->AFN store. We can create tools to do a consistent check for this (and probably should.) If we stored something on the parent that told us the size and number of files, we could do a fast iteration over the exploded tree, and verify that information. Presumably with cursors that could be made to be faster than hitting the database so many times.
+
+A deeper scan aims for a full enumeration, but has to use ONLY the ghost data inside that store, so that gaps can be identified.
+
+	GDB->verifyFullDIrectoryEnumeration( $g );
+
+This implies there is some sort of flag-- when a whole block of things come over into a cache, I can mark them as authoritative and that effectively the entire cache is up to date.
+
+This seal on the rows would be broken on insert. 
+
+I don't need to be too worried about false-positives since those can be verified. But false negatives would suck a bit.
+
+Maybe we push this back to the user.  We do some spot checks on a few directories at random. If they don't seem enumerated, we issue a warning and tell the user to run the checkpointing tools again.
+
+A really advanced idea is to have a CRH cache. I bet there is some hyper-fast file format that could be used. Or maybe an in memory hash is not that bad? Perl can deal with really gnarly hash sizes and these checksums can be packed into a file for uber-fast lookup.
+
+	# the problem of a cache of a cahce of this kind it hat the "full deal" is what matters.
+	# it seems to take about 1.4 user seconds to enumerate 1.36M rows in BDB
+	# that tells me we've got a lot of room to grow here
+
+Seems like the best thing to do in V1 is assume "user must checkpoint" behavior.
+
+Checkpointing requires a full stat, and a hash if the stat revoked our hash.
+it also should make sure any objects described (snapshots, directories, tarfiles, whatever) are pulled into the cache.
+
+reasonable to warn that the current target of the backup has not been checkpointed in XXX days. 
+
+
+
+
+
+
+# Original notes from duplicateUnderPath
+
+We have to decide at this point if the universal cache is up to date. 
+Each FSE might handle this differently.
+
+I think the check would recurively look at subdirectories? Or maybe just
+simple time based? I'd like to find some way to prevent the need for the
+user to be smart enough to know that a checkpoint is needed.
+
+One way to handle this is there is some kind of
+"hasAcceptableDirscan()". If dirscan is popualted for an AFN, we could avoid
+the full traversal. But an acceptable dirscan on the .gfs_ip doesn't mean the
+one inside the cache is up to date.
+
+you'd want two fields (most recent enumer, and oldest enum.) 
+
+maybe there is a recursive way. I can "test my own" understanding.
+first, i get the GFS_IP for the current directory
+its going to have some stats in it about sizes and file counts and whatnot.
+and i compare that to my own db enumeration.
+
+BDB may or may not be quick enough to allow this..?
+but doesn't its Btree have some sort of "# records between?"
+that would be optimal
+that is the check?
+
+the problem of a cache of a cahce of this kind it hat the "full deal" is what matters.
+it seems to take about 1.4 user seconds to enumerate 1.36M rows in BDB
+that tells me we've got a lot of room to grow here
+
+
+
+
+
+
+
+
+# TruthKeeper evolved
+
+You wnat multiple directories of ghost information -
+	e.g. a backing store using BDB, .gfs_ip
+
+THe truthkeeper ALWAYS makes the ghost first during obtain. Then state is gathered from the others each in turn. 
+
+When a ->save() is issued, the ghost is dropped out of the caches,
+and the ->saveGhost() message is given to each GDB
+
+We need some mechanism to be sure the ghosts are actually finalized on save, otherwise operations that create millions of ghost are going to drive crazy amounts of memory use.
+
+Ghost act like a transaction, and you can play them forward.
+
+obtainGhostForLFN
+obtainFomerGhostForLFN( priorToDate );
+obtainFomerGhostForLFN( versionSpec );
+
+We can also ask
+
+obtainGhostsUnderLFN( LFN )
+canObtainGhostsUnderLFN()
+	- checks if the cache is fully populated
+obtainGhostsForHash()
+
+
 
 
 # bup - had many of the same ideas as JG! but more nicely done, espciecially around indexing and splits

@@ -65,8 +65,92 @@ This table shows which fields factor into the hash.
 
 
 
+# Dates and scanning
+
+Each directory contains a lastEnumerated date. This date is the last time that the system performed a source verification on the LFNs directly underneath it. This field is consulted to decided if cached data about the contents of a directory is valid. If you call getChildrenLFNs() and the system finds a lastEnumerated inside the time window, no directory read is performed. 
+
+Right now there is no direct provision for recalling the contents of the directory, short of a directory scan, but there is a clean design for how it should work. Basically, when getChildrenLFNs is called, we could either do a prefix search in the global LFN database, or read from a container list object (such as a gfs_ip files). The container list would register the children using addChild(). Then a call to verify the checksum would occur, and if the fullHashes matched, the lastEnumerated field would be accepted (if not, the hash and the lastEnumerated date would be dropped.)
+
+In the current implementation, lastEnumerated is not passed along during learnFromGhost() operationes. It is only populated when learnChildrenByLFN is called with the contents from the upstream source. It also questionable if the fulHash should be learned for container objects during learnGhost either.
+
+Consider two information sources A and B, with their picture of what is in a directory DIR.
+
+    A:   DIR = {1, 2, 3 }
+    B:   DIR = {   2, 3, 4 }
+
+If A learns its children from B, there should be a check. Only one of these two versions of truth should be accepted. Whoever's picture of the kids has a more recent lastEnumerated date should be taken.
+
+Directories also have hashes, but they operate in a funny way during learn operations. The full hash of a tree's age is the oldest of all of the contributing hashes, since it is effecitvely a compound hash. 
+
+Directories also have a lastChanged field. This is used to mark events where we come to learn that the contents of a file have been modified. Of course, for regilar files, this is probably no different than the mtime(), but the mtime comes from the system and says in lockstep with the stat(2) operation, whereas lastChanged is based on changes we've either observed or caused. 
+
+The lastChanged() field is updated whenever the hash or size of a fundamental object is observed. It is also updated when a directory is created, or when a file is written or moved. In short, anything that might feed into the signature of an object (hash, mtime, size) if it changes, will force a lastChange().
+
+The semantics of lastChange() are recursive. Effort is made to propogate lastChanged to parent containers, namely directories. The parent of the ghost is located. If its lastChanged is more recent, than no action is taken. But if it is less recent, the ghost updates its field, and revokes the hash and deepSize field. This in turn forces a check on the parent, etc. This is primarily the reason the field is needed - it helps us know if we've already marked an object inconsistent so we can avoid doing it multiple times.
+
+The net result is that a change deep inside the tree will propogate out to the ghost of its parent nodes, and prevent reliance on an outdated hash.
+
+The lastChange() of directory is always the max() of its children.
+
+This extra legwork is necessary because GFS does not want to overly rely on the user snapshoting or indexing the state of a filesystem to get correct information. Its data structures need to remain up to date as the file system changes, and some of those changes will happen inside the GFS tool during its operation.
+
+Another field of note is getDeepSize() and getDeepCount(). This is basically the number of files and their total size under the tree. These fields too are invalidated when a change is mentioned, meaning that the next call to getDeepSize() will force recursion. 
+
+To ensure that the expense of deep directory enumeration is not overly burdensome, there is a general purpose function called calculateDeepFields. This takes three arguments: forceFunctionHash, forceFunctionStat and forceFunctionEnum. If the forcing function is a time, those fields are brought to date to that granularity of time. If they are not defined, nothing is forced, but mergable information is located. Note that the user's guard times always override these values since the forcing is actually done by getChildrenLFNs(), getFullHash(), etc which will always tilt in favor of the guard values.
+
+lastDeepScan() is the last time that the "deep fields" (deepSize, deepCount and hash) has been brought up to date. It is explicitly revokeed by learnContentsChanged(). lastDeepScan differs from lastFullHash because it can be updated without the hash being calculated. However, like its breatheren, calling it on a directory tree will always return the "minimum" time inside that tree. 
+
+The verb to update the deepScan is "checkpoint", and has been implemented. 
 
 
+
+
+# Painful lessons on state 
+
+## Night in Woodbrige - disaster and response
+
+Ran into a big glitch today. Ghost were getting generated for files that were not there. Those spurious ghosts were mucking up several things. First, the real_path function doesn't work if it can't check the file system. So it was returning undef silently when the paths were converted to absolute during the end of script flush. That foiled the AFN cache completely.
+
+Secondly, even on fixing that, the code was trying to flush out .gfs_ip files to locations that didn't exist (to record the fact that files don't exist there.)
+
+This illustrates the massive reliance on caching and cache consistency.  This illustrates a broad set of design decisions I need to address, that git and bup seem to have a nice way of dodging (becuase the index operation is always top down.)
+
+1) All new state has to hit the disk as soon as possible. Given that my tool is trying to not have seprate indexing and staging phases, its all the more important. Cache consistency while the program is running has to be inviolate. Every find or obtain opperation should immediately flush all ghosts (and even raise an error).. We should not have routine cycles where dirty ghosts are kept in memory for more than a few operations. I'd even consider making "mark dirty" do an immediate flush but that is probably overkill.
+
+*DONE: the way this is handled is now that flush is called in different places. And the ghosts stored in the system are now "pure", and never pulled from serialization (we use our now robust learning tools to handle it*.)
+
+2) Mkdir's must revoke directory state
+
+*On TODO list, but now fairly trivial given other implementations today*
+
+3) Any learn operation that discovers a new hash or anything that changes the signature of a ghost must also revoke all known hashes.
+
+*DONE: New logic takes care of this*
+    
+4) Knowledge that something isn't there (failed stat) needs to do way more that it does currently. It should revoke directories along the path. There is no sense in writing state for objects that don't exist either. The second we find something in a place we didn't expect it, or not see something in a place we did expect it, some mechanism needs to revoke things properly.
+
+*DONE: If a stat has any meaningful signature change, it will invaldiate upstairs directories*.
+
+5) GetFullHash on a directory has to respect both the hash guard time and the enumeration guard time. If I ask for a hash on a directory, and its enumeration time guard is expired, i must do a full descent. On a containerized thing like a tarfile, I'm willing to accept a different guard time on the expansion.
+
+*Done. There is a deep scan guard now*. 
+
+6) The GFS_IP functionality needs to gracefully degrade. If I can't write the .gfsip file, just issue a warning. Furthermore, its possibly dangerous having things in there. I can't just flush it out all the time. Say we learn about a deleted file. findAFN for that file, and a getStat fail. Lets say the stat was accidental, not forced by guardtime. the program is going to continue to get successful findAFNs over and over again while it is running, and not pick up on this change, so the accidental stat won't spread knowledge to invalidate our cache. How to solve that? OTOH, inside the system aren't we just caching what is supposed to be in those gfs_ip files anyhow? I think we'd be covered by that.
+
+*DONE - its now fully disabled and new implementations can be cleaner becuase they will operate as "peers" to the AFN cache. The old ghost directory stuff will go away.*
+
+## So what was the root cause and solution
+
+
+Something is funky. Not picking up changes to a directory the way i'd expect. move large things in and out of a directory, and not even the most basic test to see if the checksum is still valid. (Not even a warning) I think whats happening is "hasAcceptableEnumeration()" may need to descent into the subtrees. 
+
+Also a problem for STORE - the store operation is not checkpointing and revoking the parent hashes. 
+
+Taint a directory taints parent, etc. But can we rely on that to avoid tainting all parents? No. What if the parent directory has never been incorporated? some criteria that says "hey, this directory ands its parents have already been revoked? 
+
+So if I write into /a/b/c/d/filex, i should walk up to my parents to the root, making sure each gets a dirChange event. But as an optimization, i can also just see if a parent has a revoked flag and not have to revoke everything up the chain over again. 
+
+*UPDATE: This is how it works now*
 
 # File Versions
 
