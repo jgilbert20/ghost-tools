@@ -46,7 +46,7 @@ local $main::GUARD_TIME_SECONDS_DEEPSCAN = undef;
 # Debug control
 
 my $ioDebug             = 1;   # Print stats, reads, readdirs, etc. 
-my $staleInfoDebug      = 0;   # Decisionmaking on if data is current enough
+my $staleInfoDebug      = 1;   # Decisionmaking on if data is current enough
 my $icDebug             = 0;   # TK incorporation
 my $tkdebug             = 0;   # TK general
 my $tkflushdebug        = 0;   # End of script TK flushes
@@ -55,7 +55,7 @@ my $gdbDebug            = 0;   # GhostDirectory
 my $duplicateDebug      = 0;   # Duplicate checking debugging
 my $granularSerialDebug = 0;   # Instruments the escape/unescape mechanism
 my $serializeDebug      = 0;   # Instruments the load/save at ghost level
-my $gChildDebug         = 0;
+my $gChildDebug         = 1;
 my $fseDebug            = 0;
 my $fseOjxDebug         = 0;
 my $fseSnapshotDebug    = 0;
@@ -2226,7 +2226,6 @@ sub saveGhostToStore()
 		{
 			CODEPATH( "Revoke AFN/Hash, no new hash");
 			debug "   HashChange: Revoked old hash, no new one" if $saveGhostDebug;
-
 			$self->revokeAFNforHash( $originalAbsFH, $afn );
 		}
 	}
@@ -2246,9 +2245,17 @@ sub saveGhostToStore()
 
 	debug "   Commited ghost to store" if $saveGhostDebug;
 
+	if( $g->hasAcceptableEnumeration() )
+	{
+		print "GOOD TO GO!\n";
+	}
+
+
+
+
 	my $id = $absGhost->debugID();
 	my $q = $absGhost->quickDebugString();
-	debug "<<Commited ghost $id to store $q";
+	debug "<< Commited ghost $id to store $q";
 
 	$g->printDebug();
 
@@ -2259,6 +2266,8 @@ sub saveGhostToStore()
 		print FILE "\n";
 		close FILE; 
 	}
+
+
 
 
 	return $g; 
@@ -3639,7 +3648,7 @@ sub getStatSourceVerify
 #
 # - iteration
 # - findDuplicates();
-# - forceFullCharacterization();
+
 
 package FilesystemExplorer::FS;
 
@@ -4333,9 +4342,6 @@ sub flushInternallyTracked
 		my $gd = $g->quickDebugString();
 		debug "WARNING: flushed $gd\n";
 		$g->flush();
-
-
-
  	}
 }
 
@@ -5835,11 +5841,12 @@ sub getFSE
 sub getChildren()
 {
 	my $self = shift;
+
 	my $tk = TruthKeeper::get();
 
 	my $c = $self->getChildrenLFNs();
 
-	my @r = map { $tk->obtainGhostForLFN( $_ ); } @$c;
+	my @r = map { $tk->obtainGhostForLFN( $_ ); } sort @$c;
 
 	# think about changing this to a reference
 	return @r;
@@ -5869,6 +5876,7 @@ sub getChildrenLFNs
 
 	return $self->{CHILDREN_LFNS};
 }
+
 
 sub getChildrenLFNsSourceVerify
 {
@@ -5920,6 +5928,11 @@ sub findDuplicateGhostsUnderTreeFullScan
 
 
 
+
+# Returns true only if getChildren() is a complete list. We know this because
+# we've summed up the signatures of our kids and they match. Once this step is
+# done once per ghost, a flag is set and it doesn't need to be done again
+
 # Tells us if the object's children list is up to date
 
 sub hasAcceptableEnumeration
@@ -5959,6 +5972,21 @@ sub hasAcceptableEnumeration
 		}
 	}
 
+
+	# and expensive double check!!!
+
+
+	my $Vhash = $self->calculateUnforcedSignatureHashOverChildren();
+
+	#print "Final check on hash...";
+
+	my $fh = $self->fullHash();
+
+	# print "Comparing caclulated [$Vhash] to stored [$fh]\n";
+
+	die "internal consistency check issue" if $Vhash ne $fh;
+
+
 	return 1;
 }
 
@@ -5982,7 +6010,7 @@ sub learnChildrenByLFN()
 
 	# Ideally, we call getChildren and do some sort of "merge"
 
-	my @existingGhosts =  ref $self->children() ? @{$self->children()} : ();
+	my @existingGhosts =  ref $self->{CHILDREN_LFNS} ?  @{$self->{CHILDREN_LFNS}} : (); # 0 ? @{$self->children()} : ();
 
 	debug "Existing ghosts @existingGhosts\n" if $gChildDebug;
 
@@ -6068,14 +6096,19 @@ sub calculateDeepFields
 	my $totCount = 0;
 
 	# Interesting case where we aren't actually calling isValidEnum?
+	# yes, actually, we are calling it through getChildrenLFNs
 	# TODO
 
-	foreach my $lfn ( @{$self->getChildrenLFNs( $time )} )
+	foreach my $lfn ( sort @{$self->getChildrenLFNs($time)} )
 	{
 		next if main::fileIsUsuallyIgnored( $lfn );
 		my $g = $tk->obtainGhostForLFN($lfn);
 		$g->calculateDeepFields( $time );
-		$g->getFullHash($time);
+
+
+		$g->forceCharacterization();
+
+
 		$earliestDateHash = $g->lastFullHash() if ( $g->lastFullHash() < $earliestDateHash );
 		$earliestDeepScan = $g->lastDeepScan() if ( $g->lastDeepScan() < $earliestDeepScan );
 		$totSize += $g->getDeepSize(); 
@@ -6109,6 +6142,63 @@ sub calculateDeepFields
 	$self->learnFullHash( $earliestDateHash, $hexdigest );
 	$self->learnDeepScan( $earliestDeepScan, $totSize, $totCount );
 }
+
+# Based on the currently registered directories, calculates the current checksum.
+# Unlike the deepFields call, this one does not force the answer from subdirectories
+
+sub calculateUnforcedSignatureHashOverChildren
+{
+	my $self = shift;
+
+	my $buffer = $self->createTreeSignatureBuffer();
+	return undef if not defined $buffer;
+
+	my $sha = Digest::SHA->new(1);
+	$sha->add( $buffer );
+	my $hexdigest = $sha->hexdigest();
+	if( 1 )
+	{
+		my $ed = $self->quickDebugString();
+		print "calculateSignatureHashOverChildren($ed) => $hexdigest\n";
+	}
+
+	return $hexdigest;
+}
+
+sub createTreeSignatureBuffer
+{
+	my $self = shift;
+	my $buffer = ""; 
+	
+	my $lfn = $self->lfn();
+
+	print "createTreeSignatureBuffer: Calculating unforced signature: $lfn\n";
+
+	my $tk = TruthKeeper::get();
+	my @c = map { $tk->obtainGhostForLFN( $_ ); } sort @{$self->{CHILDREN_LFNS}};
+
+	foreach my $g ( @c )
+	{
+		my $lfn = $g->lfn();
+	next if main::fileIsUsuallyIgnored( $lfn );
+
+		print "Checking $lfn\n";
+
+		return undef if( !$g->isFullyCharacterized() );
+
+	
+		my $gSig = $g->cloneForSignature();
+		my $gBuf = $gSig->serialize(pathMode=>'strict-basename');
+		$buffer .= $gBuf . "\n";
+
+		print "SigBufferGen: $gBuf\n";
+	}
+
+	return $buffer;
+
+}
+
+
 
 # Returns the current deep size of the object. The time parameter is passed to
 # "hasAcceptableDeepScan". If defined, it acts as the time guard for the information
@@ -6314,54 +6404,6 @@ sub hasAcceptableDeepScan
 
 
 
-# Tries to create a signature hash that is at least as old as the time
-# given
-
-sub calculateSignatureHashOverChildren
-{
-	my $self = shift;
-	my $time = shift;
-die;
-
-
-# DEAD
-
-
-	my $earliestDate = time();
-	my $buffer = ""; 
-
-	my $tk = TruthKeeper::get();
-
-	foreach my $lfn ( @{$self->getChildrenLFNs( $time )} )
-	{
-		next if main::fileIsUsuallyIgnored( $lfn );
-		my $g = $tk->obtainGhostForLFN($lfn);
-		$g->getFullHash($time);
-		$g->get($time);
-		$earliestDate = $g->lastFullHash() if ( $g->lastFullHash() < $earliestDate );
-		my $gSig = $g->cloneForSignature();
-		my $gBuf = $gSig->serialize(pathMode=>'strict-basename');
-		$buffer .= $gBuf . "\n";
-
-		print "CSHOC: $gBuf\n";
-
-	}
-
-
-	my $sha = Digest::SHA->new(1);
-	$sha->add( $buffer );
-	my $hexdigest = $sha->hexdigest();
-
-
-	if( 1 )
-	{
-		my $ed = $self->quickDebugString();
-
-		print "calculateSignatureHashOverChildren($ed)($time) => $hexdigest, $earliestDate\n";
-	}
-
-	return( $hexdigest, $earliestDate );
-}
 
 # Called when we've received definitive information (either from registerChild
 # or from a full scan) that we have a full enumeration of our contents.  If
@@ -6391,18 +6433,6 @@ sub registerChildLFN
 	my $self = shift; 
 	die "ni";
 }	
-
-
-# Returns true only if getChildren() is a complete list. We know this because
-# we've summed up the signatures of our kids and they match. Once this step is
-# done once per ghost, a flag is set and it doesn't need to be done again
-
-sub isFullyEnumerated
-{
-	my $self = shift; 
-
-	die "ni";
-}
 
 # canHaveChildren() - True if we can descend with a call to "getChildren"
 
@@ -6736,6 +6766,20 @@ sub forceCharacterization
 	$self->getSize();
 	# $self->getFastHash();	
 }
+
+sub isFullyCharacterized
+{
+	my $self = shift;
+
+	return 0 if not defined $self->lastFullHash();
+	return 0 if not defined $self->fullHash();
+	return 0 if not defined $self->size();
+	return 0 if not defined $self->lastStat();
+
+	return 1; 
+
+}
+
 
 sub hasAcceptableFullhash
 {
@@ -7701,7 +7745,6 @@ sub learnStat
 		{
 			$anythingHasChanged = 1; 
 		}
-
 	}	
 
 	$self->size($size);
@@ -7739,7 +7782,6 @@ sub canHaveChildren__learnSafe
 	die if( not defined $type );
 
 	# debug "Type is: $type\n";
-
 	# base case: no knowledge or hash
 
 	if( $type eq 'd' )
