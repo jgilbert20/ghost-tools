@@ -46,7 +46,7 @@ local $main::GUARD_TIME_SECONDS_DEEPSCAN = undef;
 # Debug control
 
 my $ioDebug             = 1;   # Print stats, reads, readdirs, etc. 
-my $staleInfoDebug      = 0;   # Decisionmaking on if data is current enough
+my $staleInfoDebug      = 1;   # Decisionmaking on if data is current enough
 my $icDebug             = 0;   # TK incorporation
 my $tkdebug             = 0;   # TK general
 my $tkflushdebug        = 0;   # End of script TK flushes
@@ -478,7 +478,11 @@ sub handleVerb
 		doverb_checkpoint();
 		return;
 	}
-
+	if( $verb eq "reconstruct" )
+	{
+		doverb_reconstruct();
+		return;
+	}
 
 	# Writes a permanent file of this entire tree
 
@@ -1080,6 +1084,12 @@ sub doverb_checksum()
 }
 
 
+
+
+
+
+
+
 # doverb_checkpoint  - ensures the paths we are given
 # are fully checkpointed, and that all metadata is up to date.
 #
@@ -1096,6 +1106,63 @@ sub doverb_checkpoint()
 	
 		if( $g->exists() )
 		{
+			# $g->calculateDeepFields();
+			my $deepSize = $g->getDeepSize();
+			my $deepCount = $g->getDeepCount();
+			my $fullHash = $g->getFullHash();
+
+			print "$fqlfn: $deepSize   $deepCount   $fullHash\n";
+
+		}
+		else
+		{
+			print "$fqlfn: file not found\n";
+		}
+	
+	
+
+
+		$g->flush();
+	}
+}
+
+sub reconstructAction
+{
+#	my $self = shift;
+	my $ghost = shift;
+
+	if( $ghost->canHaveChildren() )
+	{
+		my @c = $ghost->getChildren();
+		foreach my $g (@c)
+		{
+			my $lfn = $g->lfn();
+			print "LFN: $lfn\n";
+
+		} 
+
+
+	}
+
+}
+
+
+sub doverb_reconstruct()
+{
+	my $tk = TruthKeeper::get();
+	my ($targetGS, $targetStash) = $tk->makeGhostsFromCommandLine( @ARGV );
+	my $i = $targetGS->getIterator();
+	foreach my $tuple (@$targetStash)
+	{
+		my( $userFN, $fqlfn, $g ) = @$tuple;
+	
+		if( $g->exists() )
+		{
+
+			reconstructAction($g);
+
+
+
 			# $g->calculateDeepFields();
 			my $deepSize = $g->getDeepSize();
 			my $deepCount = $g->getDeepCount();
@@ -1146,111 +1213,12 @@ sub doverb_stat()
 	while( my $g = $i->next() )
 	{
 		my $lfn = shift; 
-
-
-
 		my $fullHash = $g->getFullHash();
 		# $g->printDebug();
 
 		print +(join "\t", $fullHash, $g->lfn()), "\n";
 	}
 }
-
-
-
-## A. There is a file fT already sitting at TARGET at this filename
-## 	A1. The hash of fT is correct - its what we want
-## 		-- Mark TARGET fT as claimed, no action needed, go to next file
-## 	A2. The hash is not correct
-## 		-- Mark as orphaned, select new orphaning location - during clearance MOVE phase (will be moved out first)
-## 		-- Flow down to Case B
-## B. There is no file at the remote location in TARGET tree at that filename, or the file in TARGET is marked orphaned
-## 	B1. There is no hash ANYWHERE at TARGET, PILLAGE, AUX, COPY or ORPHAN
-## 		-- Queue for remote copy, function done
-## 	B2. There is a hash available in PILLAGE that is not claimed
-## 		-- Queue move PILLAGE -> fT, claim it
-## 	B2. There is a hash availble in ORPHAN that is not claimed
-## 		-- Queue clearance move ORPHAN -> fT (assign new location) - DONE  (What about case of a swap..?)
-## 	B3. There is a hash available in TARGET that is claimed
-## 		-- Queue local copy, done
-## 	B4. There is a hash available in AUX
-## 		-- Queue local copy, done
-## 	B5. There is a hash available in PILLAGE that is claimed
-## 		-- Queue local copy, done
-## 	B6. There is a hash available in COPYLIST
-## 		-- Queue local copy, don## 
-
-
-## Core test cases
-##
-## Assemble target such that it has
-##
-## File0 - An immoveable file
-## File1 - A   # file in right place
-## File2 - B   # file needs a rename nad has to get out of the way
-## File6 - F   # orphaned in the new tree, no winkins
-## File-x1 - J # pure swap case
-## File-x2 - I # pure swap case
-## File9x - K  # make intentional orphan with data K
-## 
-## Move into it
-##
-## dir1/File3 - C # input t
-## dir2/File3 - D # input file that overlaps other input file
-## dir1/File4 - E # input file that that is a net new hash
-## dir1/File1 - A # target file already in the right place
-## dir1/File8 - E # two input files with same hash (trigger local move, 1x copy)
-## dir1/File2 - H # net new file overwriting a existing file who is needed elsewhere 
-## dir1/File5 - B # needs to pull fom the orphan
-## dir1/File-x1 - I # pure swap case
-## dir1/File-x2 - J # pure swap case
-## dir1/File9x - A # make an orphan
-## dir1/File9a - K # one of the places that 9x can go
-## dir1/File9b - K # a place for a copy of a wink in
-## dir1/File9c - K # a place for a copy of a wink in
-
-
-
-
-## also need to add cases where the orphan is actually a whole directory
-## e.g. a new directory replacing old directory,
-## and a new file replacing a directory, and a directory replacing a file
-
-## A case where we run out of wink-ins
-
-
-
-
-
-## iterate through all files in source
-## if file is present, and correct - CLAIMED
-## if file is present, and wrong - ORPHAN, add to PENDING
-## if file is not present add to PENDING
-
-# now go through all PENDING, assigning source LFNs
-# if we can find an unclaimed orphan, queue a local move on the CLEARANCE list
-# if we can find an calimed orphan, queue a local move on the ORPHANCOPY list
-# if we can find a target, move onto the LOCAL copy
-
-# first do all ORPHANCOPY operations
-# Then CLEARANCE moves
-# Then any orphans left, move out
-# then finally transfer the PENDING items
-
-# I think this will FAIL to handle a swap. Tower of hanoi problem.
-#
-
-
-# Go through all files in source and claim those paths in the destination
-# A1- if the file is present, and correct - mark destpath=DONE
-# A2- if the file is present, and incorrect - mark destpath=WRONGFILE
-# A3- if the file is not present - mark DESTPATH=EMPTY
-
-# now move all orphans to new location. If we can find any WRONGFILE slots they fit, 
-# move them there. Every move should update destpath to DONE
-
-# otherwise, give them new names .orphan. check the new names to make sure they don't have destpath
-# 
 
 sub doverb_rsync
 {
@@ -2276,6 +2244,10 @@ sub saveGhostToStore()
 	$self->storeGhostToAFN( $g, $afn );
 
 	debug "   Commited ghost to store" if $saveGhostDebug;
+
+	my $id = $g->debugID();
+	my $q = $g->quickDebugString();
+	debug "<<Commited ghost $id to store $q";
 
 	if( $g->everWasDirtyThisRun() )
 	{
@@ -6254,6 +6226,14 @@ sub learnDeepScan
 		$isAnythingChanged = 1; 
 	}
 
+
+	if( 1 )
+	{	
+		my $id = $self->debugID();
+		debug "Learn Decision: $id lastDeepScan:[$time] deepSize:[$deepSize] deepCount:[$deepCount]";
+	}
+
+
 	$self->lastDeepScan( $time );
 	$self->deepSize( $deepSize );
 	$self->deepCount( $deepCount );
@@ -6288,14 +6268,21 @@ sub hasAcceptableDeepScan
 		debug "hasAcceptableDeepScan:($x) $q\n" 
 	}
 
+	#$self->printDebug();
+
+
 	return 1 if $self->isImmutable();
 
-	return 0 if( not defined $self->lastDeepScan() );
+	if( not defined $self->lastDeepScan() )
+	{
+		debug "    hasAcceptableDeepScan: NO - no previous deep scan\n" if $staleInfoDebug;
+		return 0;
+	}
 
 	if( defined $timeguard && $self->lastDeepScan() < $timeguard )
 	{
 		CODEPATH( "invalidating lastDeepScan due to timeguard" );
-		debug "lastDeepScan:($timeguard) - timeguard case\n" if $staleInfoDebug;;
+		debug "    hasAcceptableDeepScan: NO lastDeepScan:($timeguard) - timeguard case\n" if $staleInfoDebug;;
 		return 0;
 	}
 
@@ -6307,10 +6294,12 @@ sub hasAcceptableDeepScan
 		{
 
 			CODEPATH( "deep scan too old, recheck forced" );
-			debug (join '', "Forcing recalculation (", main::expressRelativeTime( $age ), ")\n" ) if $staleInfoDebug;
+			debug (join '', "    hasAcceptableDeepScan: NO  Forcing recalculation (", main::expressRelativeTime( $age ), ")\n" ) if $staleInfoDebug;
 			return 0; 
 		}
 	}
+
+	debug "    hasAcceptableDeepScan: YES\n" if $staleInfoDebug;
 
 	return 1;
 
@@ -6327,6 +6316,11 @@ sub calculateSignatureHashOverChildren
 {
 	my $self = shift;
 	my $time = shift;
+die;
+
+
+# DEAD
+
 
 	my $earliestDate = time();
 	my $buffer = ""; 
@@ -6743,18 +6737,19 @@ sub hasAcceptableFullhash
 	my $self = shift;
 	my $timeguard = shift;
 
+	my $timeguardx = defined $timeguard ? $timeguard : "_undef_";
 
 	if($staleInfoDebug)
 	{
 	my $q= $self->quickDebugString();
-	debug "hasAcceptableFullhash:($timeguard) $q\n" 
-}
+	debug "hasAcceptableFullhash:($timeguardx) $q\n" 
+	}
 
 	# debug "Checking if I like my hash\n";
 
 	if( $self->isImmutable() )
 	{
-			debug "hasAcceptableFullhash:($timeguard) - Immutable\n" if $staleInfoDebug;;
+			debug "hasAcceptableFullhash:($timeguardx) - Immutable\n" if $staleInfoDebug;;
 
 		#debug "I'm immutable - i like my hash";
 		return 1;
@@ -6762,7 +6757,7 @@ sub hasAcceptableFullhash
 
 	if( not defined $self->fullHash() or $self->fullHash() eq "" )
 	{
-			debug "hasAcceptableFullhash:($timeguard) not defined\n" if $staleInfoDebug;;
+			debug "hasAcceptableFullhash:($timeguardx) not defined\n" if $staleInfoDebug;;
 
 		#debug "has not defined, reject";
 		return 0;
@@ -6770,7 +6765,7 @@ sub hasAcceptableFullhash
 
 	if( defined $timeguard && $self->lastFullHash() < $timeguard )
 	{
-			debug "hasAcceptableFullhash:($timeguard) explicit timeguard\n" if $staleInfoDebug;
+			debug "hasAcceptableFullhash:($timeguardx) explicit timeguard\n" if $staleInfoDebug;
 
 		CODEPATH( "invalidating fullHash due to timeguard" );
 		return 0;
@@ -6783,14 +6778,14 @@ sub hasAcceptableFullhash
 		if( $age > $main::GUARD_TIME_SECONDS_FULLHASH )
 		{
 			CODEPATH( "Hash too old, recheck forced" );
-				debug "hasAcceptableFullhash:($timeguard) implicit timeguard\n" if $staleInfoDebug;
+				debug "hasAcceptableFullhash:($timeguardx) implicit timeguard\n" if $staleInfoDebug;
 
 			debug ( join '', "Forcing hash recalculation (", main::expressRelativeTime( $age ), ")\n") if $staleInfoDebug;
 			return 0; 
 		}
 	}
 
-	debug "hasAcceptableFullhash:($timeguard) HASH OK\n" if $staleInfoDebug;
+	debug "hasAcceptableFullhash:() HASH OK\n" if $staleInfoDebug;
 
 	# debug "Yes, hash is OK.";
 
@@ -6845,7 +6840,7 @@ sub hasAcceptableStat
 	if( defined $timeguard && $self->lastStat() < $timeguard )
 	{
 		CODEPATH( "invalidating stat due to timeguard" );
-		debug "hasAcceptableStat:($timeguard) - timeguard case\n" if $staleInfoDebug;;
+		debug "    hasAcceptableStat:($timeguard) - timeguard case\n" if $staleInfoDebug;;
 		return 0;
 	}
 
@@ -6857,7 +6852,7 @@ sub hasAcceptableStat
 		{
 
 			CODEPATH( "Hash too old, recheck forced" );
-			debug (join '', "Forcing recalculation (", main::expressRelativeTime( $age ), ")\n" ) if $staleInfoDebug;
+			debug (join '', "    hasAcceptableStat: Forcing recalculation (", main::expressRelativeTime( $age ), ")\n" ) if $staleInfoDebug;
 			return 0; 
 		}
 	}
@@ -7238,6 +7233,20 @@ sub learnFromGhost
 			die "How did we learn nothing from the target? suspicious!";
 		}
 	}
+
+	# if( defined $g->lastDeepScan() )
+	# {
+	# 	if( !defined $self->lastDeepScan() || $self->lastDeepScan() < $g->lastDeepScan() )
+	# 	{
+
+	# 	}
+	# }
+
+	if( defined $g->lastDeepScan() )
+	{
+
+			$self->learnDeepScan( $g->lastDeepScan(), $g->deepSize(), $g->deepCount );
+		}
 
 
 	if( $learnDebug )
