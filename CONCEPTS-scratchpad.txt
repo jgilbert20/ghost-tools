@@ -3,6 +3,12 @@
 
 It is a collection of work in progress (or sometimes retired) ideas.. anything that is current has been moved to the full concept file. 
 
+- [ ] wire in a reconstruct verb that uses recursion
+- [ ] add logic to flush and recover directory objects from OJX store.
+- [ ] rework snapshot intake and writes
+- [ ] now build a proper reconstruct verb 
+
+
 - [ ] directory size changes should NOT revoke the directory
 - [ ] any creation of a new file should revoke parent hash, (call learnContentsChanged)
 - [ ] revoke enum (and therefore LC) when file is added
@@ -81,6 +87,81 @@ Another open question: What exactly is a backup? Is it a snapshot? Or a collecti
 We also need some way of handling volumes. We want the behavior that a copy of the contents of the volume are stored in durable places both on the volume and on a variety of other "archival" stores.
 
 
+# East Cambridge Design 
+
+The proper persistence behavior for directories is to flush a full directory listing to a disk as a file in the object store. The contents should be the file versions exactly as they were at that time.  Any time we call $g->flush(), this should happen.
+
+Proliferation will be addressed with garbage collection.
+
+ANy containered objects should do this, and that is the backing store for the ghost to get its contents in cases where the contents may no longer exist via readdir(). This case is most likely to occur when the ghosts are made immutable (as file versions.)
+
+When you read a snapshot file for a restore, we need to make sure we create all of these little directory objects too. (Those objects can fortunately be detached from the snapshot and be first class objects).
+
+This hopefully helps avoid pulling the entire snapshot into memory.
+
+This will create snap:2343df:a/b/c objects in your AFN cache.
+
+Now you can do an ls
+
+	gfs ls snap:foo.snap:a/b/c
+
+And when you need the contents of c, you’ll have the hash. Now you look up that object.
+
+You can imagine having some kind of really cool $ghost->reconstruct() thing that just figures out how to do it with a bunch of store operations.
+
+Now here is the f’in wierd part. When a ghost is immutable, do we have to distinguish it better? The “c” that came out of the snapshot is a different “c” than a different snapshot? Even if their contents and modtimes are the same? I think the answer surprisingly is no. If we’ve commited in our signature for a directory that “c” of hash 2342c means a certain thing, it should ALWAYS mean that certain thing.
+
+So how do we reconnect with UUID and sequence number later? Well, we’ve learned from the snapshot into the global AFN directory. But many of those files actually don’t exist.
+
+So on restore, I think we create the new ghosts using the snapshot as a baseline ghost, and that will pick up this data.
+
+Can we avoid many file accesses to get data for each directory? Several answers here. First, many of those file accesses will collapse when we get packfiles. Secondly, we could create a very simple additional database that maps hash -> AFNs of children. Or maybe AFN->AFNs of children might be even better. 
+
+So when we read a snapshot file, we will be creating new directory objects now, not just files. We’ll check that the read contents match checksums. And then the persistance code will suck all of that stuff in. A snapshot is sort of an example of a deep tree persistence object. We will want similiar things for tar file enumerations.
+
+So that further implies that we create a more generalized idea of a managed object.
+
+	ManagedObject::DeepTree::Snapshot
+	ManagedObject::Directory
+
+Managed objects should know how to load from files and save to files.
+
+I think this is better/cleaner than the ghoststore approach. But maybe we’ll merge or combined approaches. GS were sort of written with the idea of fully enumerated things and iterators, and now that my ghost architecture had containers, they are less important. My future snapshot writer needs something different.
+
+	my $s = ManagedObject::DeepTree::Snapshot->new();
+	$s->setRoot( $rootGhost );
+	$s->readFromFile(); 
+	$s->saveToFile( "foo/bar.txt" );
+	$s->fsck()
+	my $root = $s->getRoot();
+	$root->getChildren();
+
+So is a snapshot a source of truth? I think answer is no. I think instead it declares a namespace. Lets say that the snapshot file s.snap has hash [3ff39]. The LFNS are going to look like
+
+	snap:s.snap:a/b/c
+
+And the AFN is
+
+	snap:3ff39:a/b/c
+
+When you call get children on the LFN “snap:s.snap:a/b/c”, we’re going to have two strategies. First, the c object has a hash. We can easily look up that hash in our object store. This gets us the LFN names, and we use those to pull in new ghosts. We can also convert to AFN, and we’ll get the same hash. Its probably dangerous to actually pull in the ghosts from the file. 
+
+now we have a new problem. ghosts that are part of snapshot are immutable. So we’re going to have to somehow figure out how you recall a immutable ghost. Its reasonable to think that all recalled versions of that AFN should be identical. We also have to make sure that the final ghost is marked as immutable, and only learns from immutable sources.
+
+Basically, you want logic that learnFromGhost() will populate the immutable flag, preventing further learns. I’m not sure if the code does this. So it will need to.
+
+Now we have a way of doing fast recursive LS of snapshots, where the recursive data will pull from the snapshot.
+
+
+
+
+
+
+
+
+
+
+ 
  
 
 
