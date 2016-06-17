@@ -76,7 +76,11 @@ And what if you want a file that has multiple entries (e.g. 100 files -> 1 file,
 
 How do you find this object and manage it?
 
-Another open question: What exactly is a backup? Is it a snapshot? Or a collection of file versions? Theoretically, it could just be a pointer to the has of the top level nodes. 
+Another open question: What exactly is a backup? Is it a snapshot? Or a collection of file versions? Theoretically, it could just be a pointer to the hash of the top level nodes. 
+
+We also need some way of handling volumes. We want the behavior that a copy of the contents of the volume are stored in durable places both on the volume and on a variety of other "archival" stores.
+
+
  
 
 

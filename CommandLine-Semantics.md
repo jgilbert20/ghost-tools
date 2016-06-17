@@ -25,7 +25,7 @@ The syntax is:
 
 Where handler refers to the object type, root describes the name of the object, and path refers to the subpath inside the object.
 
-There is no obligation to use this syntax. GFS works just fine if you would like everything just to have a plain old UNIX path. But the special syntax enables you to do things that aren’t normally possible. In the case of a volume, like we are about to use, the volume keeps track of its contents even when they are intentionally (or unintentionally) moved around, or even when the mount point is different. 
+There is no obligation to use this syntax. GFS works just fine if you would like everything just to have a plain old UNIX path. But the special syntax enables you to do things that aren’t normally possible. In the case of a volume, like we are about to use, the volume keeps track of its contents even when they are intentionally (or unintentionally) moved around, or even when the mount point is different. It also handles the idea that a volume may be offline at times. 
 
 So bear with me for a second and just try this:
 
@@ -186,7 +186,7 @@ Say you issue a backup command like this one after removing all of its pointers 
 
 GFS doesn’t actually need metadata to track backups its made. It can infer the correct behavior without knowing what happened earlier. 
 
-In the case of big-file.PSD, GFS is smart enough to go back and look to see if had a hash duplicate of big-file.PSD inside of the ~/backups directory. If it doesn’t, a copy is initiated. If it does have a copy, it will will avoid backing up. It doesn’t need meta-data to tell us if a backup has been made. Of course, it doesn’t know what is in the backups directory anymore because you destroyed its tracking pointers. So GFS will simply reconstruct the information it formally had “on demand” by reading the source files.
+In the case of big-file.PSD, GFS is smart enough to go back and look to see if had a hash duplicate of big-file.PSD inside of the ~/backups directory. To learn this, it will automatically re-checkpoint that directory. If it doesn’t, a copy is initiated. If it does have a copy, it will will avoid backing up. It doesn’t need meta-data to tell us if a backup has been made. Of course, it doesn’t know what is in the backups directory anymore because you destroyed its tracking pointers. So GFS will simply reconstruct the information it formally had “on demand” by reading the source files.
 
 The principal GFS always uses is: *The correctness of the operation is not defined by the metadata, its defined by the actual files on the disk*.
 
