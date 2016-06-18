@@ -1,6 +1,6 @@
 # Ghost Tools
 
-Simple zero-infrastructure tools for safety managing large collections of your digital files (backups, archival, replication, etc), inspired by git and related tools. Instant content-awarne file operations without any hassle.
+Transparently turns all of your existing servers, laptops, S3 buckets and dropboxes into one big de-duplicating content aware virtual filesystem that can archive, backup, replicate, synchronize and restore. GFS is zero-infrastucture, and respects all of your existing file locations and usage patterns. Inspired by the power of merkle trees and git.
 
 Imagine all of your EXISING, as-is filesystems and organization schemes that you use on a daily basis were magically, natively content-aware and you had drop in replacement tools for things you do now that leveraged content awareness for backup, archive, snapshots, synchronization, etc. This is the premise of "ghost FS".
 
@@ -24,19 +24,28 @@ GFS's philosphy is "Go ahead without me. I'm smart -- I can catch up later."
 In a familiar, UNIX-like way, GFS can:
 
 - Rsync files and directories without ever transmitting a single unnecessary byte, even when files and directories are renamed or re-ordered behind its back
-- Create online and offline archives that can be partially locally cached
-- Instantly tell you if a file is mirrored in other places and the last time its bytes were checksumed
+- Create online and offline archives that can be partially or entirely locally cached
+- Instantly tell you if a file is mirrored in other places and the last time its bytes were checksumed, even on offline storage
 - Handle complex copies and file restores by sourcing files from the most efficient and promixal locations (think "mini CDN for my stuff")
 - Backup files with super-efficient incremental, delta and baselines
-- Snapshot versions of files for recovery later
+- Snapshot versions of files and directories for recovery, reconstruction or even just bitrot detection
 - Instantly search and extract files from zip files, tar files, backups
 - Cache nearly any deterministic file operation
+- Respect all of your existing file locations and usage patterns
 
-GFS pretends your existing as-is filesystems, cloud storage buckets and servers are all one large content aware file system inside a universal (but very familiar) namespace. This remapping is done transparently without any effort or new filenames to remember. In fact, you won't even be aware of the remapping most of the time. Inside this "ghost FS", all of the awesome properties of a content-aware file store are available, and we've implemented a set of general purpose tools to handle synchronization, backups, archival, snapshots, etc. Also inside this "pretend" name space are low level primatives that support deduplication, chunking, merges, splits, compression, encryption in a generalized and pluggable way.
+GFS pretends your existing as-is filesystems, cloud storage buckets and servers are all one large content aware file system inside a universal (but very familiar) namespace. This remapping is done transparently without any effort or new filenames to remember. In fact, you won't even be aware of the remapping most of the time. 
+
+Inside this "ghost FS", all of the awesome properties of a content-aware file store are available. 
+
+- Instantly locate any file or directory by checksum
+- Rapidly detect filesystem changes
+- Easily remove (or restore) duplicate files
+
+Inside GhostFS, we've implemented a set of general purpose tools to handle synchronization, backups, archival, snapshots, etc. Also inside this "pretend" name space are low level primatives that support deduplication, chunking, merges, splits, compression, encryption in a generalized and pluggable way.
 
 But its just pretend. On the outside of gfs, your files are exactly what they've always been, and don't have to move to new locations or new names.
 
-GFS's game of "pretend" is fast and quite resiliant. It transforms your filesystem into a content-aware semantics on a on-demand basis. Files are rarely checksumed more than once. And the metadata about GFS transforms is spread around in a highly recoverable (but always deletable) fashion. GFS is principaled that correctness of operations is invarient to metadata.
+GFS's game of "pretend" is fast and quite resiliant. It transforms your filesystem into a content-aware semantics on a *on-demand* basis. Files are rarely checksumed more than once. And the metadata about GFS transforms is spread around in a highly recoverable (but always deletable) fashion. GFS is principaled that correctness of operations is invarient to metadata -- the correctness is verifiable with actual files on disk. Metadata is used to cache. 
 
 Best of all: GFS imposes no conventions - by default your backups and files, repositories and archives stay as 100% files and directories you can recognize, search and recover at any time. They don't even have to be renamed. That means you can walk away from GFS -- destory some or all of its metadata -- and your backups stay valid and recoverable on a per-file (or even per-directory) basis. 
 
