@@ -4,6 +4,8 @@
 It is a collection of work in progress (or sometimes retired) ideas.. anything that is current has been moved to the full concept file. 
 
 - [ ] wire in a reconstruct verb that uses recursion
+- [ ] fix glitch that changing dir contents doesn't appear to revoke hashes
+	- [ ] reproduce by cloning dir and moving files and recheckpointing
 - [ ] add logic to flush and recover directory objects from OJX store.
 - [ ] rework snapshot intake and writes
 - [ ] now build a proper reconstruct verb 

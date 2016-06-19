@@ -46,7 +46,7 @@ local $main::GUARD_TIME_SECONDS_DEEPSCAN = undef;
 # Debug control
 
 my $ioDebug             = 1;   # Print stats, reads, readdirs, etc. 
-my $staleInfoDebug      = 1;   # Decisionmaking on if data is current enough
+my $staleInfoDebug      = 0;   # Decisionmaking on if data is current enough
 my $icDebug             = 0;   # TK incorporation
 my $tkdebug             = 0;   # TK general
 my $tkflushdebug        = 0;   # End of script TK flushes
@@ -55,7 +55,7 @@ my $gdbDebug            = 0;   # GhostDirectory
 my $duplicateDebug      = 0;   # Duplicate checking debugging
 my $granularSerialDebug = 0;   # Instruments the escape/unescape mechanism
 my $serializeDebug      = 0;   # Instruments the load/save at ghost level
-my $gChildDebug         = 1;
+my $gChildDebug         = 0;
 my $fseDebug            = 0;
 my $fseOjxDebug         = 0;
 my $fseSnapshotDebug    = 0;
@@ -64,9 +64,11 @@ my $revokeDebug         = 0;   # Special case of learn that just looks at hash r
 my $statStructDebug     = 0;
 my $provenanceDebug     = 1;
 
-# Constants
+# Constant Symbols 
 
 my $ZERO_LEN_FILE = [];
+my $CODE_SKIP_DUPLICATE = [];
+
 
 # Major globals
 
@@ -342,6 +344,9 @@ sub main()
 
 	handleVerb( $verb );
 
+	print "------------ MAIN ACTION COMPlETE ------------\n\n";
+
+
 	FSEFactory->shutdown();
 
 	$tk->flush();
@@ -597,6 +602,9 @@ sub doverb_debug()
 		my $gdb = GhostDatabase->getCore();
 		$gdb->debugDumpDB( $gdb->{AFN_TO_GHOST_DB});
 	}
+
+
+
 	elsif( $command eq 'dbtest')
 	{
 		my $gdb = GhostDatabase->getCore();
@@ -1126,23 +1134,72 @@ sub doverb_checkpoint()
 	}
 }
 
-sub reconstructAction
+sub reconstructTestAction
 {
 #	my $self = shift;
 	my $ghost = shift;
 
+	# First, look for an exact match
+
+	my $gdb = GhostDatabase->getCore();
+	$gdb->findAFNsForHash( $ghost );
+
+	my $lfn = $ghost->lfn();
+	print "reconstructAction: LFN: $lfn\n";
+
+	my $func = sub { my( $candidate, $target ) = @_; 
+			$candidate->isSameFilename( $target) ? $CODE_SKIP_DUPLICATE : $candidate };
+
+	my @dups = $ghost->forDuplicatesMap( $func );
+
+
+	foreach my $d (@dups)
+	{
+		my $x = $d->quickDebugString();
+		print "     -> $x\n"
+
+	}
+
+
+	if( @dups > 0 )
+	{	
+		print "reconstructAction: Found duplicate!\n";
+		return 1;
+	}
+	else
+	{
+		print "reconstructAction: No duplicate found, checking children..\n";
+
+	}
+
+	# I must be able to return "true" for every child
+
 	if( $ghost->canHaveChildren() )
 	{
 		my @c = $ghost->getChildren();
+		my @answers;
 		foreach my $g (@c)
 		{
 			my $lfn = $g->lfn();
-			print "LFN: $lfn\n";
+			main::debugLevel(1);
+
+
+
+
+
+
+
 
 			$g->flush();
+			main::debugLevel(-1);
 		} 
 
 
+	}
+	else
+	{
+		# no children, so reconstruction not possible
+		return 0; 
 	}
 
 }
@@ -1160,7 +1217,7 @@ sub doverb_reconstruct()
 		if( $g->exists() )
 		{
 
-			reconstructAction($g);
+			reconstructTestAction($g);
 
 
 
@@ -1902,7 +1959,8 @@ sub selftest
 				my $g = $self->findGhostByAFN( $afn );
 				die "AFN in HashToAFN database not found in afn DB" if not defined $g;
 				debug $g->quickDebugString();
-				die "Hash inconsistency between HashToAfn and AfnToGhost" if $g->fullHash() ne $k;
+				die "Hash inconsistency between HashToAfn and AfnToGhost: the hash->afn database says object has one hash,".  
+				     "but the AFN->ghost database has a different hash" if $g->fullHash() ne $k;
 			}	
 		}
 	}
@@ -1945,7 +2003,7 @@ sub debugDumpDB
 	my $cursor = $db->db_cursor() ;
 	while ($cursor->c_get($k, $v, DB_NEXT) == 0)
 	 { 
-	 	print "$k -> $v\n" 
+	 	print "$k\n   -> $v\n\n" 
 	}
 }
 
@@ -2057,6 +2115,10 @@ sub performRetreivalOnPerlStructFromKey
 	my $status; 
 
 	$main::run_db_gets++;
+
+	die unless defined $db;
+	die unless defined $key;
+
 
 	$status = $db->db_get( $key, $content );
 	if( !defined $status or $status == DB_NOTFOUND )
@@ -2243,7 +2305,7 @@ sub saveGhostToStore()
 
 	$self->storeGhostToAFN( $absGhost, $afn );
 
-	debug "   Commited ghost to store" if $saveGhostDebug;
+	debug "   Commited ghost to DB store" if $saveGhostDebug;
 
 	if( $g->hasAcceptableEnumeration() )
 	{
@@ -2252,7 +2314,7 @@ sub saveGhostToStore()
 
 		# $ojx->storeScalar($buffer);
 
-		print "GOOD TO GO!\n";
+		print "+++_+_+_+ ** TO implement: storage of the dirfile -- GOOD TO GO!\n";
 	}
 
 
@@ -2260,9 +2322,9 @@ sub saveGhostToStore()
 
 	my $id = $absGhost->debugID();
 	my $q = $absGhost->quickDebugString();
-	debug "<< Commited ghost $id to store $q";
+	debug "<< Commited ghost $id to store $q" if $saveGhostDebug;
 
-	$g->printDebug();
+	# $g->printDebug();
 
 	if( $g->everWasDirtyThisRun() )
 	{
@@ -4076,6 +4138,47 @@ sub moveGhost
 }
 
 
+sub forDuplicatesMap
+{
+	my $self = shift;
+	my $target = shift;
+	my $fitFunction = shift;
+
+	my $hash = $target->getFullHash();
+	my $gdb = GhostDatabase->getCore();
+
+	my $afns = $gdb->findAFNsForHash($hash);
+
+	my $tk = TruthKeeper::get();
+	my @g = map { $tk->obtainGhostForLFN( $_ ); } @$afns;
+	my @result;
+
+	foreach my $g (@g)
+	{
+		my $r = $target->isDuplicateOf( $g );
+
+		my $dstr = $g->quickDebugString();
+		my $dstr2 = $target->quickDebugString();
+		debug "findDuplicatesCustomSearch=($r) Candidate: $dstr\n"; 
+		debug "findDuplicatesCustomSearch=($r) Target:    $dstr2\n"; 
+
+		if( $r )
+		{
+			my $x = $fitFunction->($g, $target);
+			push @result, $x unless $x == $CODE_SKIP_DUPLICATE;
+		}
+		else
+		{
+			warn "XXXXX AFN database out of date!";
+			print "I'm looking for hash:$hash (on $dstr2)\n";
+			print "I retrieved target (on $dstr)\n";
+			print "However, isDuplicateOf() returned FALSE\n";
+		}
+		
+	}
+
+	return @result;
+}
 
 
 sub findDuplicateUnderTree
@@ -4084,7 +4187,6 @@ sub findDuplicateUnderTree
 	my $topLevel = shift;
 	my $target = shift;
 	my $just_one = shift || 0;
-
 
 	# print "enter\n";
 
@@ -5936,6 +6038,7 @@ sub getChildrenLFNsSourceVerify
 
 
 # Looks for ghosts the worst possible way - a full recursive decent
+# only used by debug code at the moment
 
 sub findDuplicateGhostsUnderTreeFullScan
 {
@@ -6197,7 +6300,8 @@ sub calculateUnforcedSignatureHashOverChildren
 	my $sha = Digest::SHA->new(1);
 	$sha->add( $buffer );
 	my $hexdigest = $sha->hexdigest();
-	if( 1 )
+
+	if( 0 )
 	{
 		my $ed = $self->quickDebugString();
 		print "calculateSignatureHashOverChildren($ed) => $hexdigest\n";
@@ -6213,7 +6317,7 @@ sub generateTreeSignatureBuffer
 	
 	my $lfn = $self->lfn();
 
-	print "createTreeSignatureBuffer: Calculating unforced signature: $lfn\n";
+	# print "createTreeSignatureBuffer: Calculating unforced signature: $lfn\n";
 
 	my $tk = TruthKeeper::get();
 	my @c = map { $tk->obtainGhostForLFN( $_ ); } sort @{$self->{CHILDREN_LFNS}};
@@ -6223,7 +6327,7 @@ sub generateTreeSignatureBuffer
 		my $lfn = $g->lfn();
 	next if main::fileIsUsuallyIgnored( $lfn );
 
-		print "Checking $lfn\n";
+		#print "Checking $lfn\n";
 
 		return undef if( !$g->isFullyCharacterized() );
 
@@ -6232,7 +6336,7 @@ sub generateTreeSignatureBuffer
 		my $gBuf = $gSig->serialize(pathMode=>'strict-basename');
 		$buffer .= $gBuf . "\n";
 
-		print "SigBufferGen: $gBuf\n";
+		#print "SigBufferGen: $gBuf\n";
 	}
 
 	return $buffer;
@@ -6584,14 +6688,14 @@ sub isSameFilename
 	my $self = shift;
 	my $other = shift;
 
-	my $fn1 = $self->lfn();
-	my $fn2 = $other->lfn();
+	my $fn1 = $self->getPath();
+	my $fn2 = $other->getPath();
 
 	# After some testing, it appears that abs_path (also see realpath(3)) 
 	# is the very best way to test for complete filename equivilence
 	# The testing read-out is below and turned off for now
 
-	if( 1 )
+	if( 0 )
 	{
 		debug "Checking if two files are the same filename:\n";
 		debug "   me: [$fn1]\n";
@@ -6617,7 +6721,14 @@ sub isSameFilename
 
 	# TODO: revisit if perl libraries give a better way to do this
 
-	return 1 if $self->absoluteLFN() eq $other->absoluteLFN();
+	 my $a = $self->absoluteLFN();
+	my $b  = $other->absoluteLFN();
+	my $r = $a eq $b;
+
+
+	debug "isSameFilename a:[$a] b:[$b] result:[$r]";
+
+	return 1 if $r;
 	return 0;
 }
 
@@ -7050,6 +7161,23 @@ sub moveGhost
 
 
 ############
+
+
+sub forDuplicatesMap()
+{
+	my $self = shift;
+	my $fitFunction = shift; 
+
+
+	# This is our lone check for enumeration, not really great
+
+	my $c = $self->getChildrenLFNs();
+
+	die "Warning - tree does not appear to have been enumerated recently." if not defined $self->fullHash();
+
+	return $self->getFSE()->forDuplicatesMap( $self, $fitFunction);
+}
+
 
 
 
@@ -7890,9 +8018,17 @@ sub learnFullHash
 	
 		# Rule 2: New information with same date must be same information
 
-		if( $self->lastFullHash() == $time )
+		if( $self->lastFullHash() == $time && !$self->canHaveChildren__learnSafe() )
 		{
-			die "Rule 2 violation" unless  $self->fullHash() eq $hash; 
+			if( $self->fullHash() ne $hash )
+			{
+
+				my $x = $self->fullHash();
+				print "I was supposed to learn hash:$hash for time $time\n";
+				print "But I have hash $x at the same time\n";
+
+				die "Rule 2 violation";
+			}
 		}
 	}
 
