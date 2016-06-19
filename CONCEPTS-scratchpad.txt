@@ -154,6 +154,24 @@ Now we have a way of doing fast recursive LS of snapshots, where the recursive d
 
 
 
+# South Cambridge Design 6/18
+
+In the above design, more of the reconstruction dynamcis move to tree operations as opposed to flat lists of nodes. An interesting question will come up as we move to a world where reconstruction is based on ghosts. We will need to go through a list of ghosts in BFS order, calling things like this:
+
+	let M be the ghost where were are testing for reconstructability
+	foreach n: all nodes at this node level 
+		m->canReconstructHash(n)
+
+In the ideal case, M=N, and the tree doesn't have to decend any further, saving a massive amount of subtree comparisons. 
+
+But when M !=N, we need to dig down deeper into M, cutting into smaller and smaller search trees. 
+
+One clear approach is to have M be fully enumerated into some hash lookup table. Then the hash LUT just checks to be sure that the node is actually underneath M. In most cases, this can be verified by AFN comparisons. But not always. For instance, split files, or tar files will not support this easily. 
+
+Git handles this using packfiles of closely related objects, and then scans them in MRU order. Not sure if this will universlaly work in our cases.
+
+
+
 
 
 
