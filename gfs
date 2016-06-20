@@ -60,8 +60,8 @@ my $fseDebug            = 0;
 my $fseOjxDebug         = 0;
 my $fseSnapshotDebug    = 0;
 my $learnDebug          = 0;
-my $revokeDebug         = 1;   # Special case of learn that just looks at hash revocation
-my $staleInfoDebug      = 1;   # Decisionmaking on if data is current enough
+my $revokeDebug         = 0;   # Special case of learn that just looks at hash revocation
+my $staleInfoDebug      = 0;   # Decisionmaking on if data is current enough
 my $statStructDebug     = 0;
 my $provenanceDebug     = 1;
 
@@ -390,7 +390,7 @@ sub getSHAforPath
 	my $sha = Digest::SHA->new(1);
 	$sha->addfile( $path );
 	my $hexdigest = $sha->hexdigest();
-	return $hexdigest;
+	return "SHA1/FULL/$hexdigest";
 }
 
 sub getSHAforBuffer
@@ -399,7 +399,7 @@ sub getSHAforBuffer
 	my $sha = Digest::SHA->new(1);
 	$sha->add( $buffer );
 	my $hexdigest = $sha->hexdigest();
-	return $hexdigest;
+	return "SHA1/FULL/$hexdigest";
 }
 
 
@@ -2569,9 +2569,9 @@ sub saveGhostToStore()
 		my $buffer = $g->generateTreeSignatureBuffer();
 		my $ojx = $main::coreOjxFSE;
 
-		# $ojx->storeScalar($buffer);
+		$ojx->absorbScalar($buffer);
 
-		print "+++_+_+_+ ** TO implement: storage of the dirfile -- GOOD TO GO!\n";
+		#print "+++_+_+_+ ** TO implement: storage of the dirfile -- GOOD TO GO!\n";
 	}
 
 
@@ -3702,8 +3702,9 @@ sub absorbScalar
 	my $targetPath = $self->makeContainingDirForHash($hash);
 	my $targetLFN = $self->makeFullPathForHash($hash);
 
-	my $ghost = obtainGhostForLFN( $targetLFN );
-	$ghost->writeContent( $buffer );
+	my $tk = TruthKeeper::get();
+	my $ghost = $tk->obtainGhostForLFN( $targetLFN );
+	$ghost->write( $buffer );
 	$ghost->flush();
 
 	return $ghost;
@@ -4131,10 +4132,9 @@ sub getFullHashSourceVerify
 	my $hexdigest = main::getSHAforPath( $path );
 
 	$main::run_files_fullread++;
-
 	$main::run_time_fullread += tv_interval( $START_GTOD );
 
-	return( "SHA1/FULL/$hexdigest");
+	return( $hexdigest );
 }
 
 
@@ -4358,11 +4358,10 @@ sub write
 	{
 
 		my $eHash = $target->getFullHash();
-	my $eJustHash = main::extractHashComponents( $eHash )->[2];
 
 		print "write() - file exists - existing:[$eHash] new:[$hash]\n";
 
-		if( $eJustHash eq $hash )
+		if( $eHash eq $hash )
 		{
 			print "write(): Source and destination are identical, no action.\n";
 			CODEPATH( "write.identical");
@@ -6599,8 +6598,6 @@ sub calculateDeepFields
 		$g->flush();
 
 	}
-
-
 
 	my $hexdigest = main::getSHAforBuffer( $buffer );
 
