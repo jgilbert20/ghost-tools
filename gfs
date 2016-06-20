@@ -309,8 +309,8 @@ sub handleDebugDump
 		run_files_stat         =>          $main::run_files_stat,
 		run_descriptors_read   =>    $main::run_descriptors_read,
 		run_descriptors_write  =>   $main::run_descriptors_write,
-		readdir_invokes        =>        $main::readdir_invokes,
-		readdir_entries        =>        $main::readdir_entries,
+		readdir_invokes        =>         $main::readdir_invokes,
+		readdir_entries        =>         $main::readdir_entries,
 		run_files_copied       =>        $main::run_files_copied,
 		run_bytes_copied       =>        $main::run_bytes_copied,
 		run_files_moved        =>         $main::run_files_moved,
@@ -319,14 +319,9 @@ sub handleDebugDump
 	};
 
 	open DEBUG, ">/tmp/gfsLast.dump" or die "Cannot open file for data dumping";
-
 	print DEBUG Dumper( \%debugDump );
 	print STDERR Dumper( \%debugDump );
-
 	close DEBUG;
-
-
-
 }
 
 
@@ -397,7 +392,6 @@ sub main()
 
 	print "------------ MAIN ACTION COMPlETE ------------\n\n";
 
-
 	FSEFactory->shutdown();
 
 	$tk->flush();
@@ -408,7 +402,6 @@ sub main()
 	}
 
 	reportCodepaths();
-
 	handleDebugDump();
 }
 
@@ -449,20 +442,16 @@ sub handleVerb
 		doverb_debug();
 		return;
 	}
-
 	if( $verb eq "test")
 	{
 		doverb_test();
 		return;
 	}
-
-
 	if( $verb eq "lsdup")
 	{
 		doverb_lsdup();
 		return;
 	}
-
 	if( $verb eq "help")
 	{
 		doverb_help();
@@ -513,26 +502,21 @@ sub handleVerb
 		doverb_compare();
 		return;
 	}
-
 	if( $verb eq "backup" )
 	{
 		doverb_backup();
 		return;
 	}
-
 	if( $verb eq "mkvol" )
 	{
 		doverb_voladd();
 		return;
 	}
-
-
 	if( $verb eq "checksum" )
 	{
 		doverb_checksum();
 		return;
 	}
-
 	if( $verb eq "checksum-single" )
 	{
 		doverb_checksum_single();
