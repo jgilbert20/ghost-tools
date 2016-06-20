@@ -1322,6 +1322,7 @@ sub doverb_checksum_single()
 	my $c = $targetGhost->getFullHash();
 
 	print "Full hash is $c\n";
+	$debugDump{run}->{getFullHash} = $c;
 
 	$targetGhost->flush();
 }
@@ -8303,6 +8304,21 @@ use File::Copy;
 use Cwd;
 
 
+sub assert
+{
+	my $self = shift;
+	my $expr = shift;
+
+	die if not ref $self;
+	die unless $expr;
+}
+
+sub waitForRollover
+{
+	my $self = shift;
+
+	sleep(1);
+}
 
 sub go
 {
@@ -8318,6 +8334,10 @@ sub go
 	system( "cp -rv /tmp/gfstest/dir-a /tmp/gfstest/dir-b");
 
 	$te->gfsrun( '--chdir /tmp/gfstest checkpoint . -G 0 ');
+	my $r1 = $te->gfsrun( '--chdir /tmp/gfstest --debug-dump checksum-single dir-a/file1 ');
+	my $r2 = $te->gfsrun( '--chdir /tmp/gfstest --debug-dump checksum-single dir-b/file1 ');
+	$te->assert( $r1->{run}->{getFullHash} eq $r2->{run}->{getFullHash} );
+	$te->waitForRollover();
 
 	$te->mv( "/tmp/gfstest/dir-b/file1", "/tmp/gfstest/dir-b/file1-renamed" );
 	$te->mv( "/tmp/gfstest/dir-b/file1", "/tmp/gfstest/dir-b/file2-renamed" );
@@ -8364,11 +8384,29 @@ sub gfsrun
 		local *FILE;
 		open FILE, "<$TESTSTATE_LASTRUN_STD";
 		# $TESTSTATE_LAST_OUTPUT = <FILE>;
-		close FILE
+		close FILE;
 	}
 
+	my $buff = undef;
 
+	if( -e '/tmp/gfsLast.dump' )
+	{
+		local $/ = undef;
+		local *DUMP;
+		open DUMP, "</tmp/gfsLast.dump" or die "Cannot read it";
+		$buff = <DUMP>;
+		close DUMP;
+	}
 
+	$self->rm( '/tmp/gfsLast.dump' );
+
+	# print $buff;
+
+$Data::Dumper::Terse=1;
+my $VAR1;
+eval  $buff ;
+
+	return  $VAR1;
 }
 
 sub clear
