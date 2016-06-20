@@ -17,7 +17,6 @@ my $TESTSTATE_LASTRUN_ERR;
 my $TESTSTATE_LAST_OUTPUT;
 my $TESTSTATE_TEST_NAME;
 
-
 sub clear_test_env
 {
 	undef $TESTSTATE_PWD;
@@ -29,12 +28,11 @@ sub clear_test_env
 	system( 'rm -rv /tmp/gfstest/' );
 }
 
-
 sub testname
 {
 	my $name = shift;
 	$TESTSTATE_TEST_NAME = $name;
-}	
+}
 
 sub mkdirs($)
 {
@@ -73,9 +71,9 @@ sub getTrueSHA
 {
 	my $path = shift;
 	my $sha = `shasum $path`;
-	chomp $sha; 
+	chomp $sha;
 	($sha =~ /^([^\s]+)\s/ ) or die;
-	my $r = $1; 
+	my $r = $1;
 	chomp $r;
 	return $r;
 }
@@ -116,15 +114,15 @@ sub extractReportedChecksum
 {
 	my $k = shift;
 
-	 # print $TESTSTATE_LAST_OUTPUT;
+	# print $TESTSTATE_LAST_OUTPUT;
 
 	die "failed to find CS" unless( $TESTSTATE_LAST_OUTPUT =~ /^SHA1\/FULL\/([\w\/]+)\s+.*$k$/m);
 	my $r = $1;
 	chomp $r;
 
- 	# print "GFS reported $k -> $r\n";
+	# print "GFS reported $k -> $r\n";
 
-	return $r; 
+	return $r;
 }
 
 sub verifyReportedChecksum
@@ -140,8 +138,6 @@ sub verifyReportedChecksum
 	print "$TESTSTATE_TEST_NAME - OK - gfs_checksum - $seed - $path\n";
 
 }
-
-
 
 sub verifyFile
 {
@@ -223,26 +219,25 @@ sub test_rsyncmega
 	mkfile '/tmp/gfstest/target/file-x2', 'I';
 	mkfile '/tmp/gfstest/target/file9x',  'K';
 
-#     T     S
-# A   1  
-# B   1
-# C      	1   file3
-# E         1   file4
-# H         1   file2
-# I   1     1
-# J   1     1
-# K   1     1
-# F   1
+	#     T     S
+	# A   1
+	# B   1
+	# C      	1   file3
+	# E         1   file4
+	# H         1   file2
+	# I   1     1
+	# J   1     1
+	# K   1     1
+	# F   1
 
-
-# E an H are the only things that have to come over e-file8,file4  h-file2 
+	# E an H are the only things that have to come over e-file8,file4  h-file2
 
 ## dir1/File3 - C # input t
 ## dir2/File3 - D # input file that overlaps other input file
 ## dir1/File4 - E # input file that that is a net new hash
 ## dir1/File1 - A # target file already in the right place
 ## dir1/File8 - E # two input files with same hash (trigger local move, 1x copy)
-## dir1/File2 - H # net new file overwriting a existing file who is needed elsewhere 
+## dir1/File2 - H # net new file overwriting a existing file who is needed elsewhere
 ## dir1/File5 - B # needs to pull fom the orphan
 ## dir1/File-x1 - I # pure swap case
 ## dir1/File-x2 - J # pure swap case
@@ -266,9 +261,6 @@ sub test_rsyncmega
 	`touch  /tmp/gfstest/source/zero`;
 
 }
-
-
-
 
 # test_simplePathnames();
 test_rsyncmega();
