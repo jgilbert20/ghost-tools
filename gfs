@@ -14,6 +14,7 @@ use Time::HiRes qw( CLOCK_REALTIME gettimeofday tv_interval);
 use Getopt::Long;
 use POSIX; # needed for time formating
 use Cwd qw(abs_path); # best way to get absolute paths
+use Data::Dumper;
 
 # Database Layer
 
@@ -81,6 +82,8 @@ my $GENERAL_DEBUG = 1;
 my $USUAL_IGNORE = 1;
 my $DEBUG_INDENT = 0;
 
+my %debugDump; 
+
 # Run statistics - globals
 
 local $main::run_files_fullread = 0;
@@ -122,11 +125,15 @@ $main::coreGhostDatabase = undef;
 my $OPT_ALL = 0;
 my $OPT_STATS = 0;
 my $OPT_CP = 0;
+my $OPT_DEBUG_DUMP = 0;
+my $OPT_CHDIR = undef;
 my $OPT_GUARDTIME = undef;
 
 &GetOptions( 'all' => \$OPT_ALL,
 			 'G|guard=s' => \$OPT_GUARDTIME,
 			 'C|cp' => \$OPT_CP,
+			 'chdir=s' => \$OPT_CHDIR,
+			 'debug-dump' => \$OPT_DEBUG_DUMP,q
 			 'stats' => \$OPT_STATS );
 
 
@@ -137,6 +144,14 @@ if( defined $OPT_GUARDTIME )
 	$main::GUARD_TIME_SECONDS_FULLHASH    = $OPT_GUARDTIME;
 #	debug "Guard time set to: $main::GUARD_TIME_SECONDS_\n";
 }
+
+if( defined $OPT_CHDIR )
+{
+	debug( "Changing to [$OPT_CHDIR]" );
+	die "Attempted chdir to dir:[$OPT_CHDIR] that doesn't exist" unless -e $OPT_CHDIR;
+	chdir $OPT_CHDIR;
+}
+
 
 # Utility function to present relative time in a human readable way
 
@@ -279,6 +294,42 @@ sub reportCodepaths
 	}
 }
 
+sub handleDebugDump
+{
+	my $self = shift;
+
+	return unless $OPT_DEBUG_DUMP;
+
+	$debugDump{codepaths} = \%codepathCount;
+	$debugDump{stats} = 
+	{
+		run_files_fullread     =>      $main::run_files_fullread,
+		run_bytes_fullread     =>      $main::run_bytes_fullread,
+		run_time_fullread      =>       $main::run_time_fullread,
+		run_files_stat         =>          $main::run_files_stat,
+		run_descriptors_read   =>    $main::run_descriptors_read,
+		run_descriptors_write  =>   $main::run_descriptors_write,
+		readdir_invokes        =>        $main::readdir_invokes,
+		readdir_entries        =>        $main::readdir_entries,
+		run_files_copied       =>        $main::run_files_copied,
+		run_bytes_copied       =>        $main::run_bytes_copied,
+		run_files_moved        =>         $main::run_files_moved,
+		run_db_puts            =>             $main::run_db_puts,
+		run_db_gets            =>             $main::run_db_gets,
+	};
+
+	open DEBUG, ">/tmp/gfsLast.dump" or die "Cannot open file for data dumping";
+
+	print DEBUG Dumper( \%debugDump );
+	print STDERR Dumper( \%debugDump );
+
+	close DEBUG;
+
+
+
+}
+
+
 sub init
 {
 	verifyWorkingDirectories();
@@ -357,6 +408,8 @@ sub main()
 	}
 
 	reportCodepaths();
+
+	handleDebugDump();
 }
 
 
@@ -396,6 +449,13 @@ sub handleVerb
 		doverb_debug();
 		return;
 	}
+
+	if( $verb eq "test")
+	{
+		doverb_test();
+		return;
+	}
+
 
 	if( $verb eq "lsdup")
 	{
@@ -607,6 +667,7 @@ sub doverb_debug()
 
 	elsif( $command eq 'dbtest')
 	{
+		
 		my $gdb = GhostDatabase->getCore();
 		$gdb->selftest();
 	}
@@ -682,6 +743,12 @@ sub doverb_debug()
 
 
 
+sub doverb_test
+{
+	TestEnvironment->go();
+
+
+}
 
 
 
@@ -8229,6 +8296,87 @@ sub getStatSourceVerify
 
 package TestEnvironment;
 
+use File::Basename;
+use File::Spec;
+use File::Path;
+use File::Copy;
+use Cwd;
+
+
+
+sub go
+{
+	my $class = shift;
+
+	my $te = TestEnvironment->new("hashrevoke");
+	$te->clear();
+	$te->mkdirs( "/tmp/gfstest" );
+	$te->mkdirs( "/tmp/gfstest/dir-a/" );
+
+	$te->mkfile( "/tmp/gfstest/dir-a/file1", 12 );	
+	$te->mkfile( "/tmp/gfstest/dir-a/file2", 14);	
+	system( "cp -rv /tmp/gfstest/dir-a /tmp/gfstest/dir-b");
+
+	$te->gfsrun( '--chdir /tmp/gfstest checkpoint . -G 0 ');
+
+	$te->mv( "/tmp/gfstest/dir-b/file1", "/tmp/gfstest/dir-b/file1-renamed" );
+	$te->mv( "/tmp/gfstest/dir-b/file1", "/tmp/gfstest/dir-b/file2-renamed" );
+
+	$te->gfsrun( '--chdir /tmp/gfstest checkpoint . -G 0');
+
+	$te->gfsrun( '--chdir /tmp/gfstest debug dbtest');
+
+	exit(0);
+
+
+}
+
+sub gfsrun
+{
+	my $self = shift;
+	my @c = @_;
+
+	my $runPrefix = "/tmp/gfsrun";
+	my $TESTSTATE_LASTRUN_STD = "$runPrefix.stdout";
+	my $TESTSTATE_LASTRUN_ERR = "$runPrefix.stderr";
+
+	my $cmd = "gfs @c  > $TESTSTATE_LASTRUN_STD 2> $TESTSTATE_LASTRUN_ERR";
+	print "RUN:[$cmd]\n";
+	system($cmd );
+
+	if ($? == -1) {
+	   die "failed to execute: $!\n";
+	}
+	elsif ($? & 127) {
+	   die "child died with signal %d, %s coredump\n",
+	       ($? & 127),  ($? & 128) ? 'with' : 'without';
+	}
+	else {
+	   printf "child exited with value %d\n", $? >> 8;
+	   die unless $? >> 8 == 0;
+	}
+
+
+
+
+	{
+		local $/ = undef;
+		local *FILE;
+		open FILE, "<$TESTSTATE_LASTRUN_STD";
+		# $TESTSTATE_LAST_OUTPUT = <FILE>;
+		close FILE
+	}
+
+
+
+}
+
+sub clear
+{
+	my $self = shift;
+	system( 'rm -r /tmp/gfstest/' );
+}
+
 sub new
 {
 	my $class = shift;
@@ -8239,14 +8387,15 @@ sub new
 
 sub mkdirs($)
 {
+	my $self=shift;
 	my $dir = shift;
 
 	# my $dirx = dirname $dir;
 
 	# print "MKDIRS:[$dir]\n";
-	eval { mkpath( $dir, 1 ) };
-	$@ and die "Couldn't create dir path: $! $@";
-	die "Did not find new path" if not -d $dir;
+	mkpath( $dir );
+	$@ and die "Couldn't create dir path [$dir]: $! $@";
+	die "Did not find new path [$dir]" if not -d $dir;
 
 	return 1;
 }
@@ -8256,18 +8405,21 @@ sub mkdirs($)
 sub mkfile($$)
 {
 	my $self = shift; 
+
 	my $path = shift;
 	my $seed = shift;
 
 	my $TESTSTATE_TEST_NAME= $self->{TESTSTATE_TEST_NAME};
 
-	mkdirs(dirname($path) );
+	#mkdirs(dirname($path) );
 
 	open FILE, ">$path" or die "Cannot open $path: $!";
 	print FILE "X-$seed" x 100;
 	close FILE;
 
-	$self->{shaForSeed}->{$seed} = getTrueSHA( $path );
+	die unless -e $path;
+
+	$self->{shaForSeed}->{$seed} = $self->getTrueSHA( $path );
 
 	print "$TESTSTATE_TEST_NAME - mkfile - $seed - $path\n";
 
@@ -8293,8 +8445,9 @@ sub mv
 
 	my $a = shift;
 	my $b = shift;
+
 	my $TESTSTATE_TEST_NAME= $self->{TESTSTATE_TEST_NAME};
-	File::Copy->move( $a, $b );
+	File::Copy::move( $a, $b );
 
 	print "$TESTSTATE_TEST_NAME - mv - $a -> $b\n";
 }

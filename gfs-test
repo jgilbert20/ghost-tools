@@ -158,11 +158,13 @@ sub verifyFile
 
 use File::Copy;
 
-sub move
+sub mv
 {
+	my $self = shift;
+
 	my $a = shift;
 	my $b = shift;
-
+	my $TESTSTATE_TEST_NAME= $self->{TESTSTATE_TEST_NAME};
 	File::Copy->move( $a, $b );
 
 	print "$TESTSTATE_TEST_NAME - mv - $a -> $b\n";
