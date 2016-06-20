@@ -173,6 +173,36 @@ One clear approach is to have M be fully enumerated into some hash lookup table.
 Git handles this using packfiles of closely related objects, and then scans them in MRU order. Not sure if this will universlaly work in our cases.
 
 
+# Car dealership thoughts
+
+Snapshots are important - they are how backups get saved and restored. I need to get them right in order to have full backup and restore functionality. 
+
+A little stymied. What is a snaphot object exactly? I used to have a nice clean definition -- an addressable file type. E.g you ask for thing X, and it opens a file and gets it for you.
+
+But now they are acting a lot more like pointers. Imagine a really clean backup that has nothing changed. It basically a date and the hash of the directory object. Of course, to make them more portable, you have to write out some associated metadata (potentially every ghost underneath.) But I see no reason to make each of these objects some special namespace to themselves.
+
+They are sort of like commit objects now. Meaning they need to have their own little data store. 
+
+To play this out, lets map it out a bit more. 
+
+I backup a directory, and I get a signed new object in some namespace. 
+
+	commit:93994234234
+
+The name doesn't even really matter. It could just be the hash of that object. 
+
+Does it get its own FSE handler? Maybe a good idea since you might want say restore a partial part of the tree. 
+
+So this is the long term direction to head.
+
+But it does raise some obnoxious issues. In writing the metadata store, we'll have the versions of the ghosts which may differ from their latest versions. Might be nice to rename them in some other namespace so we can address the older versions.
+
+Maybe this is how we handle fileversion objects?
+
+I need a fast clean decision for the initial implementation.
+
+The simplest thing is that unpacking the metadata store just is equivlilent to learn operations on existing ghosts. So that's what we'll do.
+
 
 
 

@@ -648,9 +648,18 @@ sub doverb_debug()
 		my $gdb = GhostDatabase->getCore();
 		$gdb->debugDumpDB( $gdb->{AFN_TO_GHOST_DB});
 	}
+	elsif( $command eq 'newsnapwrite')
+	{	
 
+		my $name = shift @ARGV;
+		my $tk = TruthKeeper::get();
+		my ($targetGS, $targetStash) = $tk->makeGhostsFromCommandLine( $name );
+		my( $targetUserFN, $targetFqlfn, $targetGhost ) = @{$targetStash->[0]};
 
-
+		my $m = ManagedObject::DeepTree::Snapshot->new();
+		$m->addToplevelGhost( $targetGhost );
+		$m->writeToFile( "foo" );
+	}
 	elsif( $command eq 'dbtest')
 	{
 		
@@ -1914,6 +1923,80 @@ sub globalMkPath
     die "Did not find new path" if not -d $p;
 
 }
+
+# Encapsulation around the snapshot format
+
+package ManagedObject::DeepTree::Snapshot;
+
+sub new
+{
+	my $class = shift;
+	my $path = shift;
+	my $self = {};
+	bless $self, $class;
+
+	$self->{TOPGHOSTS} = {};
+	return $self; 
+}
+
+sub addToplevelGhost
+{
+	my $self = shift;
+	my $g = shift;
+
+ 	$self->{TOPGHOSTS}->{$g->lfn()} = $g;
+
+}
+
+sub writeToFile
+{
+	my $self = shift;
+	my $fn = shift;
+
+	open FILE, ">$fn" or die "Could not open $fn to write snapshot";
+
+	foreach my $g (values %{$self->{TOPGHOSTS}} )
+	{
+
+
+		$self->writeRecursiveMetadataForGhost( $g );
+	}
+
+
+
+
+	close FILE;
+
+}
+
+sub writeRecursiveMetadataForGhost
+{
+	my $self = shift;
+	my $g = shift;
+
+	my $q = $g->quickDebugString();
+	print "DTss: Writing $q\n";
+
+	print FILE $g->serialize();
+	print FILE "\n";
+	$g->addDebugProvenance( "writeDeep" );
+
+	if( $g->canHaveChildren() )
+	{
+		print FILE "BEGIN\n";
+		my @c = $g->getChildren();
+		foreach my $c ( @c )
+		{
+			$self->writeRecursiveMetadataForGhost($c);
+		}
+		print FILE "END\n";	
+	}
+
+	return; 
+}
+
+
+
 
 # Encapsulation around a fast disk-based database of ghost information
 
@@ -6185,14 +6268,13 @@ sub hasAcceptableEnumeration
 
 	# print "Comparing caclulated [$Vhash] to stored [$fh]\n";
 
-	die "internal consistency check issue" if $Vhash ne $fh;
-
+	if( defined $fh )
+	{
+		die "internal consistency check issue [$Vhash] ne [$fh]" if $Vhash ne $fh;
+	}
 
 	return 1;
 }
-
-
-
 
 
 # Caller is giving us a complete list of our children from primary source
