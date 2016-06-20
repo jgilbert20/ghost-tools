@@ -388,9 +388,11 @@ sub main()
 
 	my $verb = shift @ARGV;
 
+	print "\n------------ SCRIPT START: $verb ------------\n";
+
 	handleVerb( $verb );
 
-	print "------------ MAIN ACTION COMPlETE ------------\n\n";
+	print "------------ MAIN ACTION COMPLETED ------------\n\n";
 
 	FSEFactory->shutdown();
 
@@ -1203,14 +1205,11 @@ sub reconstructTestAction
 
 	my @dups = $ghost->forDuplicatesMap( $func );
 
-
 	foreach my $d (@dups)
 	{
 		my $x = $d->quickDebugString();
 		print "     -> $x\n"
-
 	}
-
 
 	if( @dups > 0 )
 	{	
@@ -1225,26 +1224,31 @@ sub reconstructTestAction
 
 	# I must be able to return "true" for every child
 
+
 	if( $ghost->canHaveChildren() )
 	{
 		my @c = $ghost->getChildren();
+		my $numChildren = 0;
+		my $reconstructable = 0;
 		my @answers;
+
 		foreach my $g (@c)
 		{
 			my $lfn = $g->lfn();
 			main::debugLevel(1);
+			$numChildren++;
 
-
-
-
-
-
-
+			my $result = reconstructTestAction($g);
+			if( $result )
+			{
+				$reconstructable++;
+			}
 
 			$g->flush();
 			main::debugLevel(-1);
 		} 
 
+		print "reconstructAction: $reconstructable/$numChildren children can be reconstituted\n";
 
 	}
 	else
@@ -1268,8 +1272,9 @@ sub doverb_reconstruct()
 		if( $g->exists() )
 		{
 
-			reconstructTestAction($g);
+			my $r = reconstructTestAction($g);
 
+			print "Result from reconstruct: $r\n";
 
 
 			# $g->calculateDeepFields();
@@ -7220,12 +7225,7 @@ sub forDuplicatesMap()
 	my $self = shift;
 	my $fitFunction = shift; 
 
-
-	# This is our lone check for enumeration, not really great
-
-	my $c = $self->getChildrenLFNs();
-
-	die "Warning - tree does not appear to have been enumerated recently." if not defined $self->fullHash();
+	# die "Warning - tree does not appear to have been enumerated recently." if not defined $self->fullHash();
 
 	return $self->getFSE()->forDuplicatesMap( $self, $fitFunction);
 }
