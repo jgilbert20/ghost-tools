@@ -373,6 +373,29 @@ sub gfs_unescape($)
 	return $v;
 }
 
+
+sub getSHAforPath
+{
+	my $path = shift;
+	my $sha = Digest::SHA->new(1);
+	$sha->addfile( $path );
+	my $hexdigest = $sha->hexdigest();
+	return $hexdigest;
+}
+
+sub getSHAforBuffer
+{
+	my $buffer = shift;
+	my $sha = Digest::SHA->new(1);
+	$sha->addfile( $buffer );
+	my $hexdigest = $sha->hexdigest();
+	return $hexdigest;
+}
+
+
+
+
+
 sub main()
 {
 	# print "Welcome to Ghost.\n";
@@ -658,8 +681,19 @@ sub doverb_debug()
 
 		my $m = ManagedObject::DeepTree::Snapshot->new();
 		$m->addToplevelGhost( $targetGhost );
-		$m->writeToFile( "foo" );
+		$m->writeToFile( "foo.newsnap" );
 	}
+	elsif( $command eq 'newsnapread')
+	{	
+
+		my $name = shift @ARGV;
+
+		my $m = ManagedObject::DeepTree::Snapshot->new();
+		$m->readFromFile( "foo.newsnap" );
+	}
+
+
+
 	elsif( $command eq 'dbtest')
 	{
 		
@@ -1928,6 +1962,13 @@ sub globalMkPath
 
 package ManagedObject::DeepTree::Snapshot;
 
+sub debug($)
+{
+	my $a = shift;
+	main::debug( "DT: " . $a );
+}
+
+
 sub new
 {
 	my $class = shift;
@@ -1953,20 +1994,12 @@ sub writeToFile
 	my $self = shift;
 	my $fn = shift;
 
-	open FILE, ">$fn" or die "Could not open $fn to write snapshot";
-
+	open FILE, ">$fn" or die "Could not open $fn to write deep tree";
 	foreach my $g (values %{$self->{TOPGHOSTS}} )
 	{
-
-
 		$self->writeRecursiveMetadataForGhost( $g );
 	}
-
-
-
-
 	close FILE;
-
 }
 
 sub writeRecursiveMetadataForGhost
@@ -1977,9 +2010,10 @@ sub writeRecursiveMetadataForGhost
 	my $q = $g->quickDebugString();
 	print "DTss: Writing $q\n";
 
+	$g->addDebugProvenance( "writeDeep" );
+
 	print FILE $g->serialize();
 	print FILE "\n";
-	$g->addDebugProvenance( "writeDeep" );
 
 	if( $g->canHaveChildren() )
 	{
@@ -1996,7 +2030,65 @@ sub writeRecursiveMetadataForGhost
 }
 
 
+sub readFromFile
+{
+	my $self = shift;
+	my $fn = shift;
 
+	open FILE, "<$fn" or die "Could not open $fn to read deep tree";
+	my $tk = TruthKeeper::get();
+	# my $p = $tk->obtainGhostForLFN( "virt:root:");
+
+	$self->slurpChildren( undef );
+
+	close FILE;
+}
+
+
+sub slurpChildren
+{
+	my $self = shift;
+	my $parent = shift;
+
+	my $lastGhostRead = undef; 
+
+	my @childrenLFN;
+
+	while( my $nextLine = <FILE> )
+	{
+		chomp $nextLine;
+		if( $nextLine eq 'BEGIN' )
+		{
+			debug "DeepTreeRead: BEGIN"; 
+			main::debugLevel(1);
+			die unless defined $lastGhostRead;
+			$self->slurpChildren( $lastGhostRead );
+			next;
+		}
+		if( $nextLine eq 'END' )
+		{
+			debug "DeepTreeRead: END"; 
+			die unless defined $parent; 
+			$parent->learnChildrenByLFN( time(), \@childrenLFN );
+			main::debugLevel(-1);
+			return $parent;
+			next;
+		}
+
+		my $readGhost = Ghost->newFromSerialized( $nextLine );
+		my $tk = TruthKeeper::get();
+		my $ghost = $tk->obtainGhostForLFN( $readGhost->lfn() );
+		$ghost->learnFromGhost( $readGhost );
+		$lastGhostRead = $ghost; 
+		$ghost->flush();
+		my $q = $ghost->quickDebugString();
+		debug "DeepTreeRead: Read: $q"; 
+		push @childrenLFN, $readGhost->lfn(); 
+	}
+
+	return @childrenLFN; 
+
+}
 
 # Encapsulation around a fast disk-based database of ghost information
 
@@ -4007,9 +4099,7 @@ sub getFullHashSourceVerify
 
 	my $START_GTOD = [gettimeofday];
 
-	my $sha = Digest::SHA->new(1);
-	$sha->addfile( $path );
-	my $hexdigest = $sha->hexdigest();
+	my $hexdigest = main::getSHAforPath( $path );
 
 	$main::run_files_fullread++;
 
@@ -4017,6 +4107,8 @@ sub getFullHashSourceVerify
 
 	return( "SHA1/FULL/$hexdigest");
 }
+
+
 
 # CORE
 
@@ -6408,9 +6500,8 @@ sub calculateDeepFields
 	}
 
 
-	my $sha = Digest::SHA->new(1);
-	$sha->add( $buffer );
-	my $hexdigest = $sha->hexdigest();
+
+	my $hexdigest = main::getSHAforBuffer( $buffer );
 
 
 	if( 1 )
@@ -6426,6 +6517,9 @@ sub calculateDeepFields
 	$self->learnDeepScan( $earliestDeepScan, $totSize, $totCount );
 }
 
+
+
+
 # Based on the currently registered directories, calculates the current checksum.
 # Unlike the deepFields call, this one does not force the answer from subdirectories
 
@@ -6436,9 +6530,7 @@ sub calculateUnforcedSignatureHashOverChildren
 	my $buffer = $self->generateTreeSignatureBuffer();
 	return undef if not defined $buffer;
 
-	my $sha = Digest::SHA->new(1);
-	$sha->add( $buffer );
-	my $hexdigest = $sha->hexdigest();
+	my $hexdigest = main::getSHAforBuffer( $buffer );
 
 	if( 0 )
 	{

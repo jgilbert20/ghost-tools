@@ -203,6 +203,12 @@ I need a fast clean decision for the initial implementation.
 
 The simplest thing is that unpacking the metadata store just is equivlilent to learn operations on existing ghosts. So that's what we'll do.
 
+Still some funky issues.. directories that come out of these tree things are technically immutable. We don't ever want them refreshing their contents from the central store.
+
+so we have a contradiction. On the one hand, we want to persist all directories into the repository of objects. But when we load them as ghost, they are subject to refresh rules. Say i aske for the directory that represents a backup i want to restore. it needs to be handed to be as an immutable object. getting the children can only happen when i pull contents from the repository (or if I happen to have another directory with that hash laying around, but this really an edge case.) So getChildrenLFN on immutable needs different behavior. 
+
+or maybe we just need a more generalized way of naming and retrieving immutale objects. 
+
 
 
 
