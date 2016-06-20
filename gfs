@@ -30,7 +30,7 @@ use MLDBM qw( BerkeleyDB::Hash Storable );
 
 sub debug($);
 
-local $main::SCRIPT_START = time();
+local $main::SCRIPT_START = Time::HiRes::time();
 local $main::SCRIPT_START_GTOD = [gettimeofday];
 
 # These parameters control our acceptable "out of dateness". If undefined,
@@ -47,7 +47,6 @@ local $main::GUARD_TIME_SECONDS_DEEPSCAN = undef;
 # Debug control
 
 my $ioDebug             = 1;   # Print stats, reads, readdirs, etc. 
-my $staleInfoDebug      = 0;   # Decisionmaking on if data is current enough
 my $icDebug             = 0;   # TK incorporation
 my $tkdebug             = 0;   # TK general
 my $tkflushdebug        = 0;   # End of script TK flushes
@@ -61,7 +60,8 @@ my $fseDebug            = 0;
 my $fseOjxDebug         = 0;
 my $fseSnapshotDebug    = 0;
 my $learnDebug          = 0;
-my $revokeDebug         = 0;   # Special case of learn that just looks at hash revocation
+my $revokeDebug         = 1;   # Special case of learn that just looks at hash revocation
+my $staleInfoDebug      = 1;   # Decisionmaking on if data is current enough
 my $statStructDebug     = 0;
 my $provenanceDebug     = 1;
 
@@ -96,6 +96,8 @@ local $main::readdir_invokes = 0;
 local $main::readdir_entries = 0;
 local $main::run_files_copied = 0;
 local $main::run_bytes_copied = 0;
+local $main::run_files_written = 0;
+local $main::run_bytes_written = 0;
 local $main::run_files_moved = 0;
 local $main::run_db_puts = 0;
 local $main::run_db_gets = 0;
@@ -191,6 +193,12 @@ sub debugLevel
 
 	$DEBUG_INDENT += $v;
 
+}
+
+
+sub main::now
+{
+	return Time::HiRes::time();
 }
 
 
@@ -313,6 +321,8 @@ sub handleDebugDump
 		readdir_entries        =>         $main::readdir_entries,
 		run_files_copied       =>        $main::run_files_copied,
 		run_bytes_copied       =>        $main::run_bytes_copied,
+		run_files_written       =>        $main::run_files_written,
+		run_bytes_written       =>        $main::run_bytes_written,
 		run_files_moved        =>         $main::run_files_moved,
 		run_db_puts            =>             $main::run_db_puts,
 		run_db_gets            =>             $main::run_db_gets,
@@ -387,7 +397,7 @@ sub getSHAforBuffer
 {
 	my $buffer = shift;
 	my $sha = Digest::SHA->new(1);
-	$sha->addfile( $buffer );
+	$sha->add( $buffer );
 	my $hexdigest = $sha->hexdigest();
 	return $hexdigest;
 }
@@ -448,6 +458,9 @@ sub handleStats
 
 	print "Files copied    : $main::run_files_copied\n";
 	print "Bytes copied    : $main::run_bytes_copied\n";
+	print "Files written   : $main::run_files_written\n";
+	print "Bytes written   : $main::run_bytes_written\n";
+
 	print "Files moved     : $main::run_files_moved\n";
 
 	print "Database puts   : $main::run_db_puts\n";
@@ -691,7 +704,19 @@ sub doverb_debug()
 		my $m = ManagedObject::DeepTree::Snapshot->new();
 		$m->readFromFile( "foo.newsnap" );
 	}
+	elsif( $command eq 'write-lfn')
+	{	
 
+		my $contents = shift @ARGV;
+		my $name = shift @ARGV;
+		my $tk = TruthKeeper::get();
+		my ($targetGS, $targetStash) = $tk->makeGhostsFromCommandLine( $name );
+		my( $targetUserFN, $targetFqlfn, $targetGhost ) = @{$targetStash->[0]};
+
+		$targetGhost->write( $contents );
+
+
+	}
 
 
 	elsif( $command eq 'dbtest')
@@ -2069,7 +2094,7 @@ sub slurpChildren
 		{
 			debug "DeepTreeRead: END"; 
 			die unless defined $parent; 
-			$parent->learnChildrenByLFN( time(), \@childrenLFN );
+			$parent->learnChildrenByLFN( main::now(), \@childrenLFN );
 			main::debugLevel(-1);
 			return $parent;
 			next;
@@ -3542,6 +3567,9 @@ sub setPointer
 		$self->internalMkDir( $dirPath );
 	}
 
+	$main::run_bytes_written += length $value;
+	$main::run_files_written ++;
+
 	open FILE, ">$targetPath" or die "Could not open [$targetPath] for pointer: $!";
 	print FILE $value;
 	close FILE,
@@ -3669,15 +3697,16 @@ sub absorbScalar
 	my $self = shift;
 	my $buffer = shift;
 
-	my $hash = "";
-
-	die;
-
+	my $hash = main::getSHAforBuffer( $buffer );
 
 	my $targetPath = $self->makeContainingDirForHash($hash);
 	my $targetLFN = $self->makeFullPathForHash($hash);
 
+	my $ghost = obtainGhostForLFN( $targetLFN );
+	$ghost->writeContent( $buffer );
+	$ghost->flush();
 
+	return $ghost;
 }
 
 # A universal method that says "take the things I pointed to, and make sure
@@ -4248,10 +4277,9 @@ sub store
 
 	main::globalMkPath( $dirname );
 
-
 	my $finalTarget; 
 
-	if( $target->exists( time() ) )
+	if( $target->exists( main::now() ) )
 	{
 		if( $target->isDuplicateOf($sourceGhost) )
 		{
@@ -4306,6 +4334,79 @@ sub store
 	return $finalTarget; 
 
 	# die "Copy not implemented";
+}
+
+
+sub write
+{
+	my $self = shift;
+	my $target = shift;
+	my $content = shift; 
+	my $hash = shift;
+
+	$hash = main::getSHAforBuffer( $content ) if not defined $hash; 
+
+	die "store only works for single files" unless !$target->exists( main::now() ) || $target->isSingleFile();
+	my $destPath = $target->getPath();
+	my $dirname = File::Basename::dirname( $destPath );
+
+	print "write() - WRITE ->[$destPath]\n";
+
+	main::globalMkPath( $dirname );
+
+	if( $target->exists( main::now() ) )
+	{
+
+		my $eHash = $target->getFullHash();
+	my $eJustHash = main::extractHashComponents( $eHash )->[2];
+
+		print "write() - file exists - existing:[$eHash] new:[$hash]\n";
+
+		if( $eJustHash eq $hash )
+		{
+			print "write(): Source and destination are identical, no action.\n";
+			CODEPATH( "write.identical");
+			return $target; 
+		}
+		else
+		{
+			print "write(): destination exists, overwriting\n";
+			my $newLocation = $target->generateAlternativeLocation( 'writeOperation' );
+			CODEPATH( "store.relocate");
+
+			# should be a move, not a copy, but that means we have to work out move semantics
+			$target->moveGhost( $newLocation );
+		}
+	}
+
+	my $finalPath = $destPath;
+	my $sourceSize = length $content;
+
+	$main::run_files_written++;
+	$main::run_bytes_written += $sourceSize;
+
+	print "*** WRITE [$sourceSize] bytes->[$finalPath]\n" if $ioDebug;
+
+
+	open FILE, ">$destPath" or die "Cannot open for write $destPath: $!";
+	print FILE $content;
+	close FILE; 
+
+	$target->learnContentsChanged( main::now() );
+
+	print "About to do next test\n";
+
+	# Perform a quick verification that the file sizes match. Not strictly
+	# needed. The caller can force more verification if it wants.
+
+	if( $target->getSize() != $sourceSize )
+	{
+		die "Assert: My write succeeded but the getSize() no longer matches - what gives?";
+	}
+
+	return $target; 
+
+
 
 }
 
@@ -4338,9 +4439,9 @@ sub moveGhost
 
 	print "move() - MOVE - [$srcPath]->[$destPath]\n";
 
-	die "move() - already a file present at target location!" if $target->exists( time() );
+	die "move() - already a file present at target location!" if $target->exists( main::now() );
 
-	my $originalSize = $source->getSize( time() );
+	my $originalSize = $source->getSize( main::now() );
 
 	$main::run_files_moved++;
 	my $r = move( $srcPath, $destPath );
@@ -4350,7 +4451,7 @@ sub moveGhost
 		die "Copy operation failed - [$srcPath]->[$destPath]: err: $!";
 	}
 
-	my $effectiveTime = time() ;
+	my $effectiveTime = main::now() ;
 	$target->learnIsACopyOfGhost( $source );
 
 	$source->learnContentsChanged( $effectiveTime );
@@ -5254,7 +5355,7 @@ sub scanDir
 
 	my $lfns = $g->getFSE()->getImmediateChildren( $g );
 
-	$g->learnChildrenByLFN( time(), $lfns );
+	$g->learnChildrenByLFN( main::now(), $lfns );
 
 #	my @children = $g->getChildren();
 
@@ -6263,7 +6364,7 @@ sub getChildrenLFNsSourceVerify
 
 	# $self->{CHILDREN_LFNS} = $lfns;
 
-	$self->learnChildrenByLFN( time(), $lfns );
+	$self->learnChildrenByLFN( main::now(), $lfns );
 
 
 }
@@ -6461,8 +6562,8 @@ sub calculateDeepFields
 		return;
 	}
 
-	my $earliestDateHash = time();
-	my $earliestDeepScan = time();
+	my $earliestDateHash = main::now();
+	my $earliestDeepScan = main::now();
 	my $buffer = ""; 
 
 	my $tk = TruthKeeper::get();
@@ -6589,7 +6690,7 @@ sub getDeepSize
 	{
 		if( ! $self->hasAcceptableDeepScan( $time ) )
 		{
-			my $t = time();
+			my $t = main::now();
 			$self->calculateDeepFields( $t );
 		}
 		return $self->deepSize();
@@ -6607,7 +6708,7 @@ sub getDeepCount
 	{
 		if( ! $self->hasAcceptableDeepScan( $time ) )
 		{
-			my $t = time();
+			my $t = main::now();
 			$self->calculateDeepFields( $t );
 		}
 		return $self->deepCount();
@@ -6642,7 +6743,7 @@ sub learnDeepScan
 
 	die unless defined $time;
 
-	die "incoming information newer than current time ($time)" if $time > time();
+	die "incoming information newer than current time ($time)" if $time > main::now();
 
 	$self->verifyGhostIsMutable();
 
@@ -7241,7 +7342,7 @@ sub getFullHash
 		# The key strategy here is to stat the file twice before and after.
 		# This ensures that the file isn't changing underneath us
 
-		my $t = time();
+		my $t = main::now();
 
 		$self->getStatSourceVerify( $t );
 		return undef if not $self->exists();
@@ -7258,6 +7359,8 @@ sub hasAcceptableStat
 	my $self = shift;
 	my $timeguard = shift;
 
+	# $self->printDebug();
+
 	if( $staleInfoDebug )
 	{
 		my $q = $self->quickDebugString();
@@ -7272,7 +7375,7 @@ sub hasAcceptableStat
 	if( defined $timeguard && $self->lastStat() < $timeguard )
 	{
 		CODEPATH( "invalidating stat due to timeguard" );
-		debug "    hasAcceptableStat:($timeguard) - timeguard case\n" if $staleInfoDebug;;
+		debug "    hasAcceptableStat:($timeguard) - timeguard case\n" if $staleInfoDebug;
 		return 0;
 	}
 
@@ -7289,6 +7392,8 @@ sub hasAcceptableStat
 		}
 	}
 
+
+	debug "    hasAcceptableStat:() - Yes, stat = OK\n" if $staleInfoDebug;
 	return 1;
 }
 
@@ -7305,7 +7410,7 @@ sub getMode
 	}
 	else
 	{
-		$self->getStatSourceVerify( time() );
+		$self->getStatSourceVerify( main::now() );
 		return $self->mode();
 	}	
 }
@@ -7314,14 +7419,15 @@ sub getMode
 sub getSize
 {
 	my $self = shift;
+	my $guard = shift; 
 
-	if( $self->hasAcceptableStat() )
+	if( $self->hasAcceptableStat($guard) )
 	{
 		return $self->size();
 	}
 	else
 	{
-		$self->getStatSourceVerify( time() );
+		$self->getStatSourceVerify( main::now() );
 		return $self->size();
 	}	
 }
@@ -7336,7 +7442,7 @@ sub getMTime
 	}
 	else
 	{
-		$self->getStatSourceVerify( time() );
+		$self->getStatSourceVerify( main::now() );
 		return $self->mtime();
 	}	
 }
@@ -7364,6 +7470,18 @@ sub store
 	my $thing = shift;
 
 	return $self->getFSE()->store( $thing, $self );
+}
+
+
+
+# writes the content as the destination of the ghost. 
+
+sub write
+{
+	my $self = shift;
+	my $content = shift;
+
+	return $self->getFSE()->write( $self, $content );
 }
 
 # Makes a smallfile file - needed because GFS does not copy files that are
@@ -7483,7 +7601,7 @@ sub getStatPresence
 
 	if( not $self->hasAcceptableStat($time) )
 	{
-		$self->getStatSourceVerify( time() );
+		$self->getStatSourceVerify( main::now() );
 	}
 
 	if( main::statModeParse_isError( $self->mode() ) )
@@ -7564,7 +7682,7 @@ sub learnFromGhost
 	#print Dumper( $self );
 	main::debugLevel(1);
 
-	die if defined $g->effectiveDate() and $g->effectiveDate() > time();
+	die if defined $g->effectiveDate() and $g->effectiveDate() > main::now();
 
 	my $sequence = $self->sequence();
 
@@ -7862,11 +7980,13 @@ sub learnContentsChanged
 	my $self = shift;
 	my $time = shift;
 
+	my $q = $self->quickDebugString();
+
 	die unless defined $time; 
 
 	if( (not defined $self->lastChanged() ) or ($self->lastChanged() < $time ))
 	{
-		debug " XX learnContentsChanged() called - checking revokes " if $revokeDebug || $learnDebug;
+		debug " XX learnContentsChanged($q) called - checking revokes " if $revokeDebug || $learnDebug;
 
 		if( defined $self->lastStat() && $self->lastStat() < $time )
 		{
@@ -7875,7 +7995,7 @@ sub learnContentsChanged
 			$self->lastStat( undef );
 			$self->statStruct( undef );
 			$self->mode( undef );
-			debug " XX Revoking statfields due to learnContentsChanged()" if $revokeDebug || $learnDebug;
+			debug " XX Revoking statfields due to learnContentsChanged($q)" if $revokeDebug || $learnDebug;
 			$self->markDirty( $time, "cc/stat");
 		}
 
@@ -7883,7 +8003,7 @@ sub learnContentsChanged
 		{
 			$self->fullHash( undef );
 			$self->lastFullHash( undef );
-			debug " XX Revoking hash due to learnContentsChanged()" if $revokeDebug || $learnDebug;
+			debug " XX Revoking hash due to learnContentsChanged($q)" if $revokeDebug || $learnDebug;
 			$self->markDirty( $time, "cc/hash");
 		}
 
@@ -7891,9 +8011,13 @@ sub learnContentsChanged
 		{
 			$self->deepSize( undef );
 			$self->deepCount( undef );
-			debug " XX Revoking deep fields due to learnContentsChanged()" if $revokeDebug || $learnDebug;
+			debug " XX Revoking deep fields due to learnContentsChanged($q)" if $revokeDebug || $learnDebug;
 			$self->markDirty( $time, "cc/deep");
 		}
+
+		# print "---------------- now i look like---\n";
+		# $self->printDebug();
+		# 		print "----------------\n";
 
 		# Optimization possible - don't do this if existing lastChanged is less than X seconds ago
 		# to prevent repeated walks up the tree;
@@ -7901,10 +8025,12 @@ sub learnContentsChanged
 		$self->lastChanged( $time );
 		$self->markDirty( $time, "cc+");
 		
-		debug " XX learnContentsChanged() - scanning parents" if $revokeDebug || $learnDebug;
+		debug " XX learnContentsChanged($q) - scanning parents" if $revokeDebug || $learnDebug;
 
 		if( $self->exists() )
 		{
+			$self->flush();
+
 			debug " Node exists, lets look for parent..";
 			my $plfn = $self->getParentLFN();
 
@@ -7982,7 +8108,7 @@ sub learnStat
 	die if $self->isImmutable();
 
 	die "learnStat() did not get a time argument" unless defined $time;
-	die "incoming information newer than current time ($time)" if $time > time();
+	die "incoming information newer than current time ($time)" if $time > main::now();
 
 	my $size = shift;
 	my $mtime = shift;
@@ -8043,7 +8169,6 @@ sub learnStat
 			 if defined $mtime and defined $self->mtime() and $self->mtime() != $mtime;
 		die "Rule2: same date mismatch C" if defined $mode  and defined $self->mode()  and $self->mode() ne $mode;
 		# its okay for stat structs to differ slightly
-
 
 		die "Rule2: same date mismatch E" if defined $size  and not defined $self->size(); 
 		die "Rule2: same date mismatch F" if defined $mtime and not defined $self->mtime();
@@ -8211,7 +8336,7 @@ sub learnFullHash
 	die unless defined $time;
 	die unless defined $hash;
 
-	die "incoming information newer than current time ($time)" if $time > time();
+	die "incoming information newer than current time ($time)" if $time > main::now();
 
 	$self->verifyGhostIsMutable();
 
