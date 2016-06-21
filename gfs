@@ -60,7 +60,7 @@ my $fseDebug            = 0;
 my $fseOjxDebug         = 0;
 my $fseSnapshotDebug    = 0;
 my $learnDebug          = 0;
-my $revokeDebug         = 0;   # Special case of learn that just looks at hash revocation
+my $revokeDebug         = 1;   # Special case of learn that just looks at hash revocation
 my $staleInfoDebug      = 0;   # Decisionmaking on if data is current enough
 my $statStructDebug     = 0;
 my $provenanceDebug     = 1;
@@ -984,19 +984,19 @@ sub doverb_backup_run()
 
 	foreach my $tuple (@$sourceStash)
 	{
-		my( $userFN, $fqlfn, $g ) = @$tuple;
+		my( $userFN, $fqlfn, $topG ) = @$tuple;
 	
-		my $gx = $g->quickDebugString();
+		my $gx = $topG->quickDebugString();
 		print "backup - Working on $gx\n";
 
-		if( $g->exists() )
+		if( $topG->exists() )
 		{
 
 			my $func = sub 
 			{
 				my $ghost = shift;
 				my $q = $ghost->quickDebugString();
-				my $sourcePath = $g->getPath(); 
+				my $sourcePath = $ghost->getPath(); 
 				my $basename = basename $ghost->getPath();
 				my $newPath = File::Spec->catfile( $targetPath, "backup-$$", $sourcePath );
 				my $destLFN = main::assembleLFN( $targetHandler, $targetRoot, $newPath );
@@ -1026,13 +1026,13 @@ sub doverb_backup_run()
 				}
 			};
 
-			$g->traverse( $func );
+			$topG->traverse( $func );
 		}
 		else
 		{
 			print "$fqlfn: file not found\n";
 		}
-		$g->flush();
+		$topG->flush();
 	}
 
 
@@ -2659,6 +2659,8 @@ sub saveGhostToStore()
 		my $buffer = $g->generateTreeSignatureBuffer();
 		my $ojx = $main::coreOjxFSE;
 
+		die unless defined $buffer;
+
 		$ojx->absorbScalar($buffer);
 
 		#print "+++_+_+_+ ** TO implement: storage of the dirfile -- GOOD TO GO!\n";
@@ -4239,7 +4241,7 @@ sub getStatSourceVerify
 	my $path = $g->getPath();
 
 	print "*** STAT: $path\n"  if $ioDebug;
-	cluck "Stat snoop";
+	#cluck "Stat snoop";
 
 	$main::run_files_stat++;
 
@@ -4411,6 +4413,8 @@ sub store
 	}
 
 	$finalTarget->learnIsACopyOfGhost( $sourceGhost );
+	$finalTarget->learnContentsChanged( time() );
+
 
 	# Perform a quick verification that the file sizes match. Not strictly
 	# needed. The caller can force more verification if it wants.
@@ -4443,8 +4447,15 @@ sub write
 
 	main::globalMkPath( $dirname );
 
+	my $sourceSize = length $content;
+
 	if( $target->exists( main::now() ) )
 	{
+		if( $sourceSize == 0 && $target->getSize() == 0 )
+		{	
+			print "write() - both source and target are zero length file - no actions needed\n";
+			return $target; 
+		} 
 
 		my $eHash = $target->getFullHash();
 
@@ -4468,13 +4479,11 @@ sub write
 	}
 
 	my $finalPath = $destPath;
-	my $sourceSize = length $content;
 
 	$main::run_files_written++;
 	$main::run_bytes_written += $sourceSize;
 
 	print "*** WRITE [$sourceSize] bytes->[$finalPath]\n" if $ioDebug;
-
 
 	open FILE, ">$destPath" or die "Cannot open for write $destPath: $!";
 	print FILE $content;
@@ -4482,7 +4491,7 @@ sub write
 
 	$target->learnContentsChanged( main::now() );
 
-	print "About to do next test\n";
+	# print "About to do next test\n";
 
 	# Perform a quick verification that the file sizes match. Not strictly
 	# needed. The caller can force more verification if it wants.
@@ -4512,7 +4521,6 @@ sub moveGhost
 	my $self = shift;
 	my $source = shift;
 	my $target = shift;
-
 
 	die "file to move does not exist" unless $source->exists();
 
@@ -6406,10 +6414,11 @@ sub getFSE
 sub getChildren()
 {
 	my $self = shift;
+	my $time = shift;
 
 	my $tk = TruthKeeper::get();
 
-	my $c = $self->getChildrenLFNs();
+	my $c = $self->getChildrenLFNs($time);
 
 	my @r = map { $tk->obtainGhostForLFN( $_ ); } sort @$c;
 
@@ -6423,6 +6432,12 @@ sub getChildrenLFNs
 {
 	my $self = shift;
 	my $time = shift;
+
+	# if( not defined $self->{CHILDREN_LFNS} )
+	# {
+	# 	my $tk = TruthKeeper::get();
+	# 	$tk->getChildLFNs($self);
+	# }
 
 	# check our recency times. if we like them, return 
 	# TODO
@@ -6561,6 +6576,7 @@ sub hasAcceptableEnumeration
 		}
 		else
 		{
+			print $self->printDebug();
 			die "Not normally supposed to happen -- is this happening during a flush by any chance?";
 
 		}
@@ -8144,12 +8160,12 @@ sub learnContentsChanged
 		{
 			$self->flush();
 
-			debug " Node exists, lets look for parent..";
+			debug " learnContentsChanged - checking for revokes - Node exists, lets look for parent..";
 			my $plfn = $self->getParentLFN();
 
 			if( ! defined $plfn )
 			{
-				debug "I am the root, LCC over.";
+				debug " learnContentsChangedI am the root, LCC over.";
 				return;
 			}
 
@@ -8161,6 +8177,11 @@ sub learnContentsChanged
 				$parent->learnContentsChanged( $time );
 				$parent->flush();
 			}
+		}
+		else
+		{
+				debug " XX no action taken, ghost doesn't exist" if $revokeDebug || $learnDebug;
+
 		}
 	}
 	else
@@ -8177,18 +8198,20 @@ sub getParentLFN
 
 	my $lfn = $self->lfn();
 
-	debug "Searching for parent of [$lfn]";
+	debug "getParentLFN: Searching for parent of [$lfn]";
 
 	if( $self->canHaveChildren() )
 	{
-		my $plfn =  $self->getFSE()->getParentLFN( $self );
-		debug "   Parent is:[$plfn] (case1)";
+		my $plfn = $self->getFSE()->getParentLFN( $self );
+		my $plfn_x = defined $plfn ? $plfn : "<undef>";
+		debug "getParentLFN:   Parent is:[$plfn_x] (case1)";
 		return $plfn; 
 	}
 	else
 	{
 		 my $plfn = $self->getFSE()->getContainingDirLFN( $self );
-		 debug "   Parent is:[$plfn] (case2)";
+		 my $plfn_x = defined $plfn ? $plfn : "<undef>";
+		 debug "getParentLFN:   Parent is:[$plfn_x] (case2)";
 		return $plfn; 
 	}
 	

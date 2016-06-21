@@ -5,6 +5,7 @@ It is a collection of work in progress (or sometimes retired) ideas.. anything t
 
 
 
+
 Current goal: Tidy backup and restore. Backup writes new files into a tree and a commit hash of the directory state. Backups can be named. Restore takes the name and reconstructs it somewhere else. Permanent metadata about the state of the backup is checkpointed into a deep tree object so that if metadata is destroyed we can recover it. Work is done when we can back up a directory a few times, then restore it, then blow away metadata, restore that, and then restore another file.
 
 - [ ] wire in a reconstruct verb that uses recursion
@@ -23,6 +24,52 @@ Current goal: Tidy backup and restore. Backup writes new files into a tree and a
 - [ ] revoke enum (and therefore LC) when file is added
 - [ ] revoke enum during mkdirs
 - [ ] Lower priority: wire in reads of directory caches to properly populate children, find some easy way to get LFNs for children fast
+
+
+
+# special revocation rules
+
+
+scenario to clean up 
+mkdir bak
+checkpoint bak
+backup into bak
+rm -rf bak
+mkdir bak
+NO Checkpointing
+run abother backup: gfs backup run dir-a bak --stats
+
+what's happening here is that bak has a checksum in te database from the last time it was enumerated. we do a directory scan that comes up with a different hash. When that occurs, we should revoke the contents on the directory. But right now we don’t, and when we call hasAcceptableEnum() the check fails because of the mismatch. 
+
+reading the contents of the directory is akin to source verification in the new world order. But the current implementation doesn’t handle it that way -- it ALWAYS goes to the original.
+
+We need to refactor the hasAcceptableEnumeration code to handle this idea that the directory state works differnetly now.
+
+When you call getChildren or getChildrenLFNs, we should pull in children from the directory object, if it exists. This provides the answer to the LFNS (and thus the children.) If we cannot locate the directory object, we can keep the hash, but we must pass to source verify. If hasAcceptableEnumeration passes the date check and we have the file, we are essentially good to go, and we just return what we have. If for some reason, the date check isn’t good or the backing file is not loadable, we should scan the actual disk with readdir. At this point, a few different things could happen. First, the new contents could have a different hash, and we call “learnContentsChanged” on the directory. Incidentally, we’ll also discover deleted files and other such things which should propogate. Second situation: the contents could be the same, but we’ll up the enumeration date to the most recent read. In cases where the type of the file changes, we need to deal with this too (e.g. a directory has become a file, or a file has become a directory)
+
+I think as part of this cleanup, we might want to think about a formal type tag sitting on the ghost. A stat has to be able to learn that a type tag has changed. learnStat should ALWAYS update the type tag to its correct value. And in cases where the type tag changes, propogate a change event.
+
+Types:
+
+f - file
+x - deleted file
+d - directory
+
+In cases where a directory is now found to be a file, we need to learnDeleted on the directory. Curiously, i’m not sure that type is super important right nw. I could probably defer this bit until we actually have other types (like commits?)
+
+and learn deleted on the directory may need to cascade down to revoke ghosts. Either that or we just wait for the usual checks for “getDuplicates” to cascade. But it cleaner if we do the dirty work. Not sure if that is strictly needed. If we revoke the deepScan, the user will get around to this eventually by checkpointing, etc. But what if the removal is discovered on a volume? Does checkpoint have a way of revoking all of those pesky hash->AFN things? Another way of handling could be with a deliberate flush: if you checkpoint X, you drop all objects formerly under that part of the tree from both tables. Basically a forced form of garbage collection.
+
+If we had multiple hash->AFN lookup mechanisms, revocation could simply delete out the one that doesn’t exist, or mark it dead. So for instance, if each volume had its own hash->AFN LUT we could get away with that.
+
+
+
+
+
+
+
+ 
+
+
 
 
 
