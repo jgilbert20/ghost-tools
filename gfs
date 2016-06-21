@@ -59,7 +59,7 @@ my $gChildDebug         = 0;
 my $fseDebug            = 0;
 my $fseOjxDebug         = 0;
 my $fseSnapshotDebug    = 0;
-my $learnDebug          = 1;
+my $learnDebug          = 0;
 my $revokeDebug         = 0;   # Special case of learn that just looks at hash revocation
 my $staleInfoDebug      = 0;   # Decisionmaking on if data is current enough
 my $statStructDebug     = 0;
@@ -402,6 +402,12 @@ sub getSHAforBuffer
 	return "SHA1/FULL/$hexdigest";
 }
 
+sub assembleHashFromDigest
+{
+	my $digest = shift;
+
+	return "SHA1/FULL/$digest";
+}
 
 
 
@@ -672,21 +678,26 @@ sub doverb_debug()
 	elsif( $command eq 'cleargfs' )
 	{
 		system( "find . -name '.gfs_ip' -print0  | xargs -0 rm -v" );
+		system( "find . -name '__gfs*' -print0  | xargs -0 rm -vr" );
 	}
+
+	# Dumps the entire hash->ghost database
 	elsif( $command eq 'dbdump-hash')
 	{
 		my $gdb = GhostDatabase->getCore();
 		$gdb->debugDumpDB( $gdb->{HASH_TO_AFN_DB});
-
 	}
-		elsif( $command eq 'dbdump-afn')
+	
+	# Dumps the entire AFN->ghost database
+	elsif( $command eq 'dbdump-afn')
 	{
 		my $gdb = GhostDatabase->getCore();
 		$gdb->debugDumpDB( $gdb->{AFN_TO_GHOST_DB});
 	}
+
+	# Writes a new-style snapshot (basically a deep tree)
 	elsif( $command eq 'newsnapwrite')
 	{	
-
 		my $name = shift @ARGV;
 		my $tk = TruthKeeper::get();
 		my ($targetGS, $targetStash) = $tk->makeGhostsFromCommandLine( $name );
@@ -704,11 +715,16 @@ sub doverb_debug()
 		my $m = ManagedObject::DeepTree::Snapshot->new();
 		$m->readFromFile( "foo.newsnap" );
 	}
+
+	# Writes the string into a file witha  given name, exercising 
+	# the dynamic hash state update process 
 	elsif( $command eq 'write-lfn')
 	{	
-
 		my $contents = shift @ARGV;
 		my $name = shift @ARGV;
+
+		die "usage: write-lfn [string contents] [filename]" unless defined $contents and defined $name;
+
 		my $tk = TruthKeeper::get();
 		my ($targetGS, $targetStash) = $tk->makeGhostsFromCommandLine( $name );
 		my( $targetUserFN, $targetFqlfn, $targetGhost ) = @{$targetStash->[0]};
@@ -718,10 +734,29 @@ sub doverb_debug()
 
 	}
 
+	# Get info for a hex digest 
+	elsif( $command eq 'hashinfo')
+	{	
+		my $digest = shift @ARGV || die "must provide a digest (hex stuff only)";
+		my $hash = assembleHashFromDigest( $digest );
+
+		my $gdb = GhostDatabase->getCore();
+
+		my $afns = $gdb->findAFNsForHash($hash);
+
+		my $tk = TruthKeeper::get();
+		my @g = map { $tk->obtainGhostForLFN( $_ ); } @$afns;
+		my @result;
+
+		foreach my $g (@g)
+		{
+			$g->printDebug();
+
+		}
+	}
 
 	elsif( $command eq 'dbtest')
-	{
-		
+	{	
 		my $gdb = GhostDatabase->getCore();
 		$gdb->selftest();
 	}
@@ -765,8 +800,8 @@ sub doverb_debug()
 		my $tk = TruthKeeper::get();
 		my ($targetGS, $targetStash) = $tk->makeGhostsFromCommandLine( $targetArg );
 		my ($sourceGS, $sourceStash) = $tk->makeGhostsFromCommandLine( $sourceArg );
-		my( $targetUserFN, $targetFqlfn, $targetGhost ) = @{$targetStash->[0]};
-		my( $sourceUserFN, $sourceFqlfn, $sourceGhost ) = @{$sourceStash->[0]};
+		my ( $targetUserFN, $targetFqlfn, $targetGhost ) = @{$targetStash->[0]};
+		my ( $sourceUserFN, $sourceFqlfn, $sourceGhost ) = @{$sourceStash->[0]};
 		
 		$targetGhost->findDuplicateGhostsUnderTreeFullScan($sourceGhost);
 	}
@@ -857,8 +892,11 @@ sub doverb_backup()
 #
 # Ghost->getHashUnderPath();
 
-sub doverb_backup_run()
+sub doverb_backup_run_OLD()
 {
+	die "Old implementation, works but not recursive ". 
+	"(relies on ghost stores, which i'm killing off..";
+
 	my $target = pop @ARGV;
 	my @source = @ARGV;
 	my $tk = TruthKeeper::get();
@@ -877,6 +915,9 @@ sub doverb_backup_run()
 	my ($targetHandler, $targetRoot, $targetPath)  = $targetGhost->getLFNcompontents();
 
 	my $verbose = 1;
+
+	my $buParent = $tk->obtainGhostForLFN( "snap:backup-$$:" );
+
 
 	my $sourceGSiterator = $sourceGS->getIterator();
 	while( my $g = $sourceGSiterator->next() )
@@ -918,35 +959,75 @@ sub doverb_backup_run()
 			$destGhost->store( $g );
 
 		}
+	}
+}
 
-		# how to implement?
-		# one way is to hit BDB
-		#    we first look for size duplicates across that entire path
-		#        then check the hashes
-		#        if too many, we force a hash strategy
-		#    second way is to check for a hash
-		#        and then filter out results not under that path
-		#	 the final check is hasAcceptableChecksum() 
-		#
-		# a volume would be able to do this more efficiently by letting us
-		# create a BDB locally
-		# 
-		# if we don't trust BDB is up to date, we'd have to checkpoint the working tree entirely.
-		# ghost can pass this up to its FSE (And should) 
+my $CODE_NO_DESCEND = [];
+my $CODE_YES_DESCEND = [];
 
 
 
+sub doverb_backup_run()
+{
+	my $target = pop @ARGV;
+	my @source = @ARGV;
+
+	my $tk = TruthKeeper::get();
+	my ($targetGS, $targetStash) = $tk->makeGhostsFromCommandLine( $target );
+	my ($sourceGS, $sourceStash) = $tk->makeGhostsFromCommandLine( @source );
+	my( $targetUserFN, $targetFqlfn, $targetGhost ) = @{$targetStash->[0]};
+
+	die "Deep scan of target too old - try again" unless $targetGhost->hasAcceptableDeepScan(); 
 
 
+	foreach my $tuple (@$sourceStash)
+	{
+		my( $userFN, $fqlfn, $g ) = @$tuple;
+	
+		my $gx = $g->quickDebugString();
+		print "backup - Working on $gx\n";
 
+		if( $g->exists() )
+		{
+
+			my $func = 
+			sub {
+				my $ghost = shift;
+				my $q = $ghost->quickDebugString();
+
+				my $dup = $targetGhost->findDuplicateUnderTree($ghost,$targetFqlfn,1);
+
+				if( $dup )
+				{
+					print "OK   $q\n";
+					return $CODE_NO_DESCEND;
+				}
+				else
+				{
+					# print "FAIL $q\n";
+					if( $ghost->canHaveChildren() )
+					{
+						return $CODE_YES_DESCEND; 
+					}
+					else
+					{
+						print "Copy needed $q\n";
+					}
+				}
+			};
+
+			$g->traverse( $func );
+		}
+		else
+		{
+			print "$fqlfn: file not found\n";
+		}
+		$g->flush();
 	}
 
 
-
-
-
-
 }
+
 
 
 sub doverb_voladd()
@@ -1250,10 +1331,6 @@ sub doverb_checkpoint()
 		{
 			print "$fqlfn: file not found\n";
 		}
-	
-	
-
-
 		$g->flush();
 	}
 }
@@ -4021,6 +4098,7 @@ package FilesystemExplorer::FS;
 use Time::HiRes qw( CLOCK_REALTIME gettimeofday tv_interval);
 use File::Basename;
 use File::Copy;
+use Carp qw (cluck);
 use base qw(Class::Accessor);
 FilesystemExplorer::FS->mk_accessors( qw(topLevelLFNs sizeToFNs) );
 
@@ -4151,6 +4229,7 @@ sub getStatSourceVerify
 	my $path = $g->getPath();
 
 	print "*** STAT: $path\n"  if $ioDebug;
+	# cluck "Stat snoop";
 
 	$main::run_files_stat++;
 
@@ -4520,7 +4599,7 @@ sub findDuplicateUnderTree
 	my $target = shift;
 	my $just_one = shift || 0;
 
-	# print "enter\n";
+	print "Find duplicates under tree\n";
 
 	my $hash = $target->getFullHash();
 	my $gdb = GhostDatabase->getCore();
@@ -4530,7 +4609,7 @@ sub findDuplicateUnderTree
 	my $tk = TruthKeeper::get();
 	my @g = map { $tk->obtainGhostForLFN( $_ ); } @$afns;
 
-	# print "g=@$afns\n";
+	print "g=[@$afns]\n";
 
 	my @result;
 
@@ -4539,7 +4618,7 @@ sub findDuplicateUnderTree
 		my $r = $target->isDuplicateOf( $g );
 
 		my $dstr = $g->quickDebugString();
-		# debug "findDuplicateUnderTree=($r) for $dstr\n"; 
+		debug "findDuplicateUnderTree=($r) for $dstr\n"; 
 
 		return $g if( $just_one );
 		push @result, $g; 
@@ -7087,35 +7166,36 @@ sub isDuplicateOf
 		debug "isDuplicateOf - other: $q2\n";
 	}
 
-	my $sSize = $self->getSize(); 
-	my $oSize = $other->getSize();
-
-	if( $duplicateDebug )
+	if( $self->isSingleFile() && $other->isSingleFile() )
 	{
-		debug "isDuplicateOf -  self-getSize=$sSize\n";
-		debug "isDuplicateOf - other-getSize=$oSize\n";
-	}
+		my $sSize = $self->getSize(); 
+		my $oSize = $other->getSize();
 
-	if( $sSize != $oSize )
-	{
-		debug "isDuplicateOf - Answer=NO (size)\n";
-		return 0;
-	}
+		if( $duplicateDebug )
+		{
+			debug "isDuplicateOf -  self-getSize=$sSize\n";
+			debug "isDuplicateOf - other-getSize=$oSize\n";
+		}
 
+		if( $sSize != $oSize )
+		{
+			debug "isDuplicateOf - Answer=NO (size)\n";
+			return 0;
+		}
+	}	
 
 
 #   die "Incomplete info self full hash" if not defined $self->fullHash();
 #	die "Incomplete info other full hash " if not defined $other->fullHash();
 
-		my $mH = $self->getFullHash();
-		my $oH = $other->getFullHash();
+	my $mH = $self->getFullHash();
+	my $oH = $other->getFullHash();
 
 	if( $duplicateDebug )
 	{
-
 		my $mI = $self->debugID();
 		my $oI = $other->debugID();
-		debug "isDuplicateOf - forcing hash $mH - $oH ($mI and $oI)\n";
+		debug "isDuplicateOf - forced hash $mH - $oH ($mI and $oI)\n";
 	}
 
 
@@ -8606,6 +8686,25 @@ sub getStatSourceVerify
 
 	return ( $size, $mtime, $mode );
 }
+
+sub traverse
+{
+	my $self = shift;
+	my $function = shift;
+
+	my $r = $function->($self);
+
+	if( $r == $CODE_YES_DESCEND )
+	{
+		my @c = $self->getChildren();
+		foreach my $c (@c)
+		{
+			$c->traverse($function);
+		}
+	}
+}
+
+
 
 ###
 

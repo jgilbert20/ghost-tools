@@ -1,4 +1,76 @@
 
+S3 File System with deduplication, etc. 
+
+https://bitbucket.org/nikratio/s3ql
+
+
+
+
+
+
+# bup - had many of the same ideas as JG! but more nicely done, espciecially around indexing and splits
+
+https://raw.githubusercontent.com/bup/bup/master/DESIGN
+
+
+# Backup tool issues
+
+http://burp.grke.org/images/burp2-report.pdf
+
+# attric denmo
+
+https://debian-administration.org/article/712/An_introduction_to_the_attic_backup_program
+
+
+
+# notes on filename compression
+
+
+http://codegolf.stackexchange.com/questions/4771/text-compression-and-decompression-nevermore
+
+http://www.mit.edu/afs.new/athena/astaff/source/src-9.3/third/findutils/locate/frcode.cache
+
+
+# packfile perl
+
+https://github.com/jacquesg/p5-Git-Raw/tree/master/xs
+
+
+
+
+# Notes on easy native C interfaces
+
+http://www.thegeekstuff.com/2012/03/swig-perl-examples/
+
+
+gcc -fpic -c -Dbool=char -I/System/Library/Perl/5.18/darwin-thread-multi-2level/CORE  area_wrap.c area.c -D_GNU_SOURCE
+
+gcc -shared area.o area_wrap.o -o area.so
+
+
+    gcc -c `perl -MConfig -e 'print join(" ", @Config{qw(ccflags optimize cccdlflags)}, "-I$Config{archlib}/CORE")'`  area.c area_wrap.cache
+
+http://www.swig.org/tutorial.html
+
+- replace .so with dylib
+
+    gcc `perl -MConfig -e 'print $Config{lddlflags}'` area.o area_wrap.o -o area.dylib
+
+Works
+
+    #!/usr/bin/perl
+    use strict;
+    use warnings;
+    use area;
+    my $area_of_cir = area::area_of_circle(5);
+    my $area_of_squ = area::area_of_square(5);
+    print "Area of Circle: $area_of_cir\n";
+    print "Area of Square: $area_of_squ\n";
+    print "$area::pi\n";
+
+
+
+
 
 # Cool tools to check
 

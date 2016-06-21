@@ -3,7 +3,14 @@
 
 It is a collection of work in progress (or sometimes retired) ideas.. anything that is current has been moved to the full concept file. 
 
+
+
+Current goal: Tidy backup and restore. Backup writes new files into a tree and a commit hash of the directory state. Backups can be named. Restore takes the name and reconstructs it somewhere else. Permanent metadata about the state of the backup is checkpointed into a deep tree object so that if metadata is destroyed we can recover it. Work is done when we can back up a directory a few times, then restore it, then blow away metadata, restore that, and then restore another file.
+
 - [ ] wire in a reconstruct verb that uses recursion
+- [ ] what do we do about revokes during the learn and flush? Hashes will change on the ghosts held by the GDB, but should that trigger revokes? Also sometimes it triggers stats too. This is quite wasteful. 
+	- [ ] one of these is triggered by learnHash which mkaes a call to canHaveChildren
+- [ ] rel2abs is generating paths like ../../../ in the AFN queue. 
 - [ ] fix glitch that changing dir contents doesn't appear to revoke hashes
 	- [ ] reproduce by cloning dir and moving files and recheckpointing
 - [ ] add logic to flush and recover directory objects from OJX store.
@@ -207,10 +214,51 @@ Still some funky issues.. directories that come out of these tree things are tec
 
 so we have a contradiction. On the one hand, we want to persist all directories into the repository of objects. But when we load them as ghost, they are subject to refresh rules. Say i aske for the directory that represents a backup i want to restore. it needs to be handed to be as an immutable object. getting the children can only happen when i pull contents from the repository (or if I happen to have another directory with that hash laying around, but this really an edge case.) So getChildrenLFN on immutable needs different behavior. 
 
-or maybe we just need a more generalized way of naming and retrieving immutale objects. 
+or maybe we just need a more generalized way of naming and retrieving immutale objects?
+
+# more thoughts - a wierd implication of directories as "first class" objects
+
+If i have an object like vol:foo:bar/two/three, what actually gets stored? I wonder if the idea of a sub directory should be universal between FSEs. So if directory X is moved to a volume, its hash should stay the same, right? That means that when you look to enumerate childred of an object, the children should inherit the FSE of the parent node. 
+
+that then implies that a volume object is really just a pointer in the hash database to the top node of the directory plus some information on tagging. When an online operation occurs to a volume, we update the volume pointer to whatever is our newest expression of top-level state. 
+
+then when we disconnect, lsdup and other actions will still work. Lets say i lsdup a file that is on a volume. I'll find a copy of that object in a few different AFNs. assuming i can identify at least one of those AFNs as a volume object, i'll recover it as immutable, and that will report back out to the duplication code.
+
+The point I'm struggling with in this is that it means a ton of extra ghosts are going to persist around. If I back up a file 6 times, and it is on 2 volumues, does that mean I have
+	
+	1 ghost for the actual file
+	2 ghosts for the actual file on the volumes
+	2 ghosts for the immutable volume representation of the file
+	6 ghosts for the snapshot
+
+That feels like a shit-ton of metadata. Probably some need for cullung or garbage collection if that is actually the correct design. How is it incrementally recovered? What needs to stay?
+
+Incremental recovery of the actual stuff isn't a problem. The ghosts for the immutable volume representation can be resolves from the ghost pointers from the top level volume node. I suppose the same is true for the snapshot. Fully enumerating the volume will recreate the intervening ghosts.
+
+If we move to a more distributed store for finding ghosts for hashes, (and ghosts for AFNs) -- rather than having them all jammed into a BDB -- which I think we're going to have to do sooner or later, I think the design becomes simpler.
+
+So my decision right now is to allow the ghost proliferation to occur, at least for the time being. We'll cound on GDB being super fast, and eventually we'll get this stuff compacted. Git shows up that compaction is possible.
+
+# How does a split work in the East Cambridge design?
+
+Another interesting question is what exactly is a split? We're representing the idea that 10 files construct 1 file. Lets start from the reconstruction case first. Say I'm told to recover a blob with checksum X. I first go into my AFN for Hash database. I'll get a bunch of fs: objects, but say none of them are available. I'll also get a split:[X] AFN. This AFN will have the hash of the file i'm trying to reconstruct. But its descriptor file will NOT have that same hash, unlike a directory.
+
+SO now I need a level of logical mapping. I have to take that AFN split:[x] and i guess its got to point somehow using a mechanism i haveb't invented yet into a descriptor file. And inside that descriptor file i learn the ghosts for each of the splits. We also want that descriptor file to support many:many.
+
+So on the split:[x] I call -> getChildren(), and we'll pull into that descriptor file and it will immutable, unflushable generate ghosts for the idea of the peices of the file i can then use. This file doesn't have to be very complex actually. It might just literally be a binary list of hashes. But I can build ghosts out of those, I think. 
+
+One of the mechanisms to consider is maybe the split DOESN"T appear in the hash->AFN space. but I also know that i can use namespaces like snap:[HASH] as a path to reconsturcting something. Rule: if its a blob, and I can't find it in the hash->AFN space, also look for split:[X] objects.
 
 
 
+
+# virtual directory problem
+
+I'm backing up directory a/foo b/bar and c/tar.
+
+Doing, this, I need to create a snapshot object representing this state. But there is no actual live directory that is the combination of these things. So I need some way to create a virtual directory.
+
+Decision: directories are directories no matter what FSE generates them. For time being, i will use snap: and make sure enumeration follows the handler of the parent. This may be a hack I regret, so I'll have to change it later.
 
 
 
@@ -496,68 +544,6 @@ canObtainGhostsUnderLFN()
 	- checks if the cache is fully populated
 obtainGhostsForHash()
 
-
-
-
-# bup - had many of the same ideas as JG! but more nicely done, espciecially around indexing and splits
-
-https://raw.githubusercontent.com/bup/bup/master/DESIGN
-
-
-# Backup tool issues
-
-http://burp.grke.org/images/burp2-report.pdf
-
-# attric denmo
-
-https://debian-administration.org/article/712/An_introduction_to_the_attic_backup_program
-
-
-
-# notes on filename compression
-
-
-http://codegolf.stackexchange.com/questions/4771/text-compression-and-decompression-nevermore
-
-http://www.mit.edu/afs.new/athena/astaff/source/src-9.3/third/findutils/locate/frcode.cache
-
-
-# packfile perl
-
-https://github.com/jacquesg/p5-Git-Raw/tree/master/xs
-
-
-
-
-# Notes on easy native C interfaces
-
-http://www.thegeekstuff.com/2012/03/swig-perl-examples/
-
-
-gcc -fpic -c -Dbool=char -I/System/Library/Perl/5.18/darwin-thread-multi-2level/CORE  area_wrap.c area.c -D_GNU_SOURCE
-
-gcc -shared area.o area_wrap.o -o area.so
-
-
-	gcc -c `perl -MConfig -e 'print join(" ", @Config{qw(ccflags optimize cccdlflags)}, "-I$Config{archlib}/CORE")'`  area.c area_wrap.cache
-
-http://www.swig.org/tutorial.html
-
-- replace .so with dylib
-
-	gcc `perl -MConfig -e 'print $Config{lddlflags}'` area.o area_wrap.o -o area.dylib
-
-Works
-
-	#!/usr/bin/perl
-	use strict;
-	use warnings;
-	use area;
-	my $area_of_cir = area::area_of_circle(5);
-	my $area_of_squ = area::area_of_square(5);
-	print "Area of Circle: $area_of_cir\n";
-	print "Area of Square: $area_of_squ\n";
-	print "$area::pi\n";
 
 
 
