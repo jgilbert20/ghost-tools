@@ -975,10 +975,12 @@ sub doverb_backup_run()
 	my $tk = TruthKeeper::get();
 	my ($targetGS, $targetStash) = $tk->makeGhostsFromCommandLine( $target );
 	my ($sourceGS, $sourceStash) = $tk->makeGhostsFromCommandLine( @source );
-	my( $targetUserFN, $targetFqlfn, $targetGhost ) = @{$targetStash->[0]};
+	my ($targetUserFN, $targetFqlfn, $targetGhost ) = @{$targetStash->[0]};
+	my ($targetHandler, $targetRoot, $targetPath)  = $targetGhost->getLFNcompontents();
 
 	die "Deep scan of target too old - try again" unless $targetGhost->hasAcceptableDeepScan(); 
 
+	# my $buParent = $tk->obtainGhostForLFN( "snap:backup-$$:" );
 
 	foreach my $tuple (@$sourceStash)
 	{
@@ -990,10 +992,14 @@ sub doverb_backup_run()
 		if( $g->exists() )
 		{
 
-			my $func = 
-			sub {
+			my $func = sub 
+			{
 				my $ghost = shift;
 				my $q = $ghost->quickDebugString();
+				my $sourcePath = $g->getPath(); 
+				my $basename = basename $ghost->getPath();
+				my $newPath = File::Spec->catfile( $targetPath, "backup-$$", $sourcePath );
+				my $destLFN = main::assembleLFN( $targetHandler, $targetRoot, $newPath );
 
 				my $dup = $targetGhost->findDuplicateUnderTree($ghost,$targetFqlfn,1);
 
@@ -1007,11 +1013,15 @@ sub doverb_backup_run()
 					# print "FAIL $q\n";
 					if( $ghost->canHaveChildren() )
 					{
+						print "MKDIR needed [$newPath]\n";
 						return $CODE_YES_DESCEND; 
 					}
 					else
 					{
-						print "Copy needed $q\n";
+						print "COPY needed [$sourcePath] -> [$newPath]\n";
+						my $destGhost = $tk->obtainGhostForLFN( $destLFN );
+						$destGhost->store( $ghost );
+						$destGhost->flush();
 					}
 				}
 			};
@@ -4229,7 +4239,7 @@ sub getStatSourceVerify
 	my $path = $g->getPath();
 
 	print "*** STAT: $path\n"  if $ioDebug;
-	# cluck "Stat snoop";
+	cluck "Stat snoop";
 
 	$main::run_files_stat++;
 
@@ -6541,7 +6551,19 @@ sub hasAcceptableEnumeration
 
 	if( defined $fh )
 	{
-		die "internal consistency check issue [$Vhash] ne [$fh]" if $Vhash ne $fh;
+		if( defined $Vhash )
+		{	
+			if( $Vhash ne $fh )
+			{
+				print $self->printDebug();
+				die "internal consistency check issue [$Vhash] ne [$fh]";
+			}
+		}
+		else
+		{
+			die "Not normally supposed to happen -- is this happening during a flush by any chance?";
+
+		}
 	}
 
 	return 1;
@@ -7090,7 +7112,7 @@ sub makeDebugString
 	return "ghostDump($debugID): lfn:[$lfn] uuid:[$uuid] seq:[$sequence] eDT:[$effectiveDate] type:[$type] mode:[$mode] l_FH:[$lastFullHash] ".
 	"full:[$fullHash] ldirscan:[$lastDirScan] l_stat:[$lastStat] size:[$size]".
 	" mtime:[$mtime] immutable[$immutable] statStruct:[$statStruct] attr:[$attributes] provenance:[$p]".
-	"lastCx:[$lastChanged] deepSz:[$deepSize] deepCt[$deepCount] lastDeepScan:[$lastDeepScan]";
+	"lastCx:[$lastChanged] deepSz:[$deepSize] deepCt[$deepCount] lastDeepScan:[$lastDeepScan] l_enum[$lastEnumerated]";
 }
 
 sub isSameFilename
@@ -8370,7 +8392,7 @@ sub learnStat
 
 		my $ls = $self->lastStat();
 		my $diff = $time - $ls; 
-		print "$time - $ls = $diff > $main::GUARD_TIME_SECONDS_STAT\n";
+		debug "learnStat: $time - $ls = $diff > $main::GUARD_TIME_SECONDS_STAT\n" if $learnDebug;
 
 		if( $time - $self->lastStat() > $main::GUARD_TIME_SECONDS_STAT )
 		{
@@ -8471,7 +8493,7 @@ sub learnFullHash
 	{
 		# RULE 1: A stat can never be older than the hash in a given ghost
 
-		if( (! $self->canHaveChildren() ) and
+		if( (! $self->canHaveChildren__learnSafe() ) and
 			($self->lastFullHash() < $time) and 
 			($self->lastStat() < $time ))	
 		{	
@@ -8702,6 +8724,8 @@ sub traverse
 			$c->traverse($function);
 		}
 	}
+
+	$self->flush();
 }
 
 

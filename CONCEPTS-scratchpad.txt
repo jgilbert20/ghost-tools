@@ -261,6 +261,18 @@ Doing, this, I need to create a snapshot object representing this state. But the
 Decision: directories are directories no matter what FSE generates them. For time being, i will use snap: and make sure enumeration follows the handler of the parent. This may be a hack I regret, so I'll have to change it later.
 
 
+# Directories and "store"
+
+If we are committed to directories as first class objects, we need to be able to fire "store" events at them to get them in other places. This is especially important with backups. But like many of my recent forays into “directores = 1st class”, it comes along with an unusual and frustrating set of coralaries that have unintuitive ramifications.
+
+Consider this example: I have a directory dir-a that I want to store in another location. Some of the files in dir-a are already at that location somewhere. Some of the other files are not.
+
+First, I look for dir-a’s hash in the remote location. Not seeing it, I should not just move dir-a over wholesale along with all of its contents. Instead,  I should mkdir at the remote location. ANd now consider, for each child, if each of them can be reconstructed on the other side. If they can, we skip. If they can’t, we copy that one over too.
+
+But the confusing thing is that at the end of the day, I will not have actually copied over the directory physically on disk. I will have copied over enough that can-reconstruct will pass.
+
+This is all sort of muddled in my brain. I can’t tell if its because these are new confusing thoughts, or if its because I’m loosing interest trying to solve these puzzles. I feel like there is a general purpose operation here that is eluding my brain and preventing me from coming up with a solid bulletproof abstraction for this.
+
 
 
 
