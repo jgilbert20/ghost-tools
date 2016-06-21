@@ -5,6 +5,9 @@ It is a collection of work in progress (or sometimes retired) ideas.. anything t
 
 
 
+- [ ] Have discovered that writes into the object store do not appear to immediately enter the cache. (Not sure why...)
+
+
 
 Current goal: Tidy backup and restore. Backup writes new files into a tree and a commit hash of the directory state. Backups can be named. Restore takes the name and reconstructs it somewhere else. Permanent metadata about the state of the backup is checkpointed into a deep tree object so that if metadata is destroyed we can recover it. Work is done when we can back up a directory a few times, then restore it, then blow away metadata, restore that, and then restore another file.
 

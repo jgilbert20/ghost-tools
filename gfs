@@ -675,6 +675,13 @@ sub doverb_debug()
 		my( $targetUserFN, $targetFqlfn, $targetGhost ) = @{$targetStash->[0]};
 		$targetGhost->printDebug();
 	}
+	elsif( $command eq 'help' )
+	{
+		print "Working debug verbs: dump cleargfs dbdump-hash dbdump-afn writelfn hashinfo\n";
+		print "                     dbfsck lschildren\n";
+		print "\n";
+
+	}
 	elsif( $command eq 'cleargfs' )
 	{
 		system( "find . -name '.gfs_ip' -print0  | xargs -0 rm -v" );
@@ -758,7 +765,7 @@ sub doverb_debug()
 		}
 	}
 
-	elsif( $command eq 'dbtest')
+	elsif( $command eq 'dbfsck')
 	{	
 		my $gdb = GhostDatabase->getCore();
 		$gdb->selftest();
@@ -3574,6 +3581,12 @@ sub debug($)
 	main::debug( "fse/OJX: " . $a );
 }
 
+sub CODEPATH($)
+{	
+	my $p = shift; 
+	main::CODEPATH( "OJX: $p" );
+}
+
 sub new
 {
 	my $class = shift;
@@ -4505,6 +4518,8 @@ sub write
 	{
 		die "Assert: My write succeeded but the getSize() no longer matches - what gives?";
 	}
+
+	$target->learnFullHash( time(), $hash );
 
 	return $target; 
 }
