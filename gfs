@@ -59,7 +59,7 @@ my $gChildDebug         = 0;
 my $fseDebug            = 0;
 my $fseOjxDebug         = 0;
 my $fseSnapshotDebug    = 0;
-my $learnDebug          = 0;
+my $learnDebug          = 1;
 my $revokeDebug         = 0;   # Special case of learn that just looks at hash revocation
 my $staleInfoDebug      = 0;   # Decisionmaking on if data is current enough
 my $statStructDebug     = 0;
@@ -1233,6 +1233,9 @@ sub doverb_checkpoint()
 	{
 		my( $userFN, $fqlfn, $g ) = @$tuple;
 	
+		my $gx = $g->quickDebugString();
+		print "Checkpoint - Working on $gx\n";
+
 		if( $g->exists() )
 		{
 			# $g->calculateDeepFields();
@@ -2591,9 +2594,6 @@ sub saveGhostToStore()
 		close FILE; 
 	}
 
-
-
-
 	return $g; 
 }
 
@@ -3712,7 +3712,7 @@ sub absorbScalar
 
 # A universal method that says "take the things I pointed to, and make sure
 # you've stored it somewhere". In this form, you're not allowed to say where
-# it gets stored or how, just that it shpuld be there.
+# it gets stored or how, just that it should be there.
 
 sub absorb 
 {
@@ -6583,6 +6583,8 @@ sub calculateDeepFields
 
 		$g->forceCharacterization();
 
+		die if not defined $g->lastFullHash();
+		die if not defined $g->lastDeepScan();
 
 		$earliestDateHash = $g->lastFullHash() if ( $g->lastFullHash() < $earliestDateHash );
 		$earliestDeepScan = $g->lastDeepScan() if ( $g->lastDeepScan() < $earliestDeepScan );
@@ -7337,14 +7339,26 @@ sub getFullHash
 	else
 	{
 		# The key strategy here is to stat the file twice before and after.
-		# This ensures that the file isn't changing underneath us
+		# This ensures that the file isn't changing underneath us.
+		# Addendum: This appears to get tripped up in cases where the file does
+		# change. For instacne, the first getStatSourceVerify or the Hash could
+		# force a write to other files, changing the hash. 
+		# I'm weaking this check now.
 
 		my $t = main::now();
 
 		$self->getStatSourceVerify( $t );
 		return undef if not $self->exists();
+		my $oSize = $self->size();
 		$self->getFullHashSourceVerify( $t );
+
+		# weakening the check
+
+		$t = main::now();
 		$self->getStatSourceVerify( $t );
+		my $nSize = $self->size();
+
+		die "Not currently able to handle files that change in size during run - can sometimes happen with __gfslog" if $nSize != $oSize;
 
 		return $self->fullHash(); 
 	}
@@ -8107,6 +8121,10 @@ sub learnStat
 	die "learnStat() did not get a time argument" unless defined $time;
 	die "incoming information newer than current time ($time)" if $time > main::now();
 
+
+	#use Carp qw(cluck longmess shortmess);
+	#cluck "This is how we got here!";
+
 	my $size = shift;
 	my $mtime = shift;
 	my $mode = shift;
@@ -8161,7 +8179,23 @@ sub learnStat
 	if( (defined $self->lastStat()) and ($time == $self->lastStat() ))
 	{
 
-		die "Rule2: same date mismatch A" if defined $size  and defined $self->size()  and $self->size() != $size;
+
+		if( defined $size  and defined $self->size()  and $self->size() != $size )
+		{
+			print "Fatal Error. Stat data received with same date and different contents\n";
+			my $actualDate = $self->lastStat();
+			my $aSize = $self->size();
+			print "Incoming LEARN stat time = $time\n";
+			print "Existing stat time = $actualDate\n";
+			print "Incoming size = $size\n";
+			print "Existing size = $aSize\n";
+			print "Me:\n";
+			$self->printDebug();
+			die "Rule2: same date mismatch A: size"; 
+		}
+
+
+
 		die "Rule2: same date mismatch B: $mtime vs " . $self->mtime()
 			 if defined $mtime and defined $self->mtime() and $self->mtime() != $mtime;
 		die "Rule2: same date mismatch C" if defined $mode  and defined $self->mode()  and $self->mode() ne $mode;
@@ -8330,7 +8364,7 @@ sub learnFullHash
 		$self->printDebug();
 	}
 
-	die unless defined $time;
+	die "learn full hash passed an undefined time" unless defined $time;
 	die unless defined $hash;
 
 	die "incoming information newer than current time ($time)" if $time > main::now();
@@ -8644,6 +8678,8 @@ sub gfsrun
 	print "RUN:[$cmd]\n";
 	system($cmd );
 
+	# snippet from perl documtation to decode UNIX exit codes
+
 	if ($? == -1) {
 	   die "failed to execute: $!\n";
 	}
@@ -8658,7 +8694,7 @@ sub gfsrun
 
 
 
-
+	if(0)
 	{
 		local $/ = undef;
 		local *FILE;
@@ -8682,9 +8718,9 @@ sub gfsrun
 
 	# print $buff;
 
-$Data::Dumper::Terse=1;
-my $VAR1;
-eval  $buff ;
+	$Data::Dumper::Terse=1;
+	my $VAR1;
+	eval  $buff;
 
 	return  $VAR1;
 }
