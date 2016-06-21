@@ -740,13 +740,16 @@ sub doverb_debug()
 		my $digest = shift @ARGV || die "must provide a digest (hex stuff only)";
 		my $hash = assembleHashFromDigest( $digest );
 
-		my $gdb = GhostDatabase->getCore();
-
-		my $afns = $gdb->findAFNsForHash($hash);
-
 		my $tk = TruthKeeper::get();
-		my @g = map { $tk->obtainGhostForLFN( $_ ); } @$afns;
-		my @result;
+		my @g = $tk->obtainGhostsForHash( $hash );
+
+		# my $gdb = GhostDatabase->getCore();
+
+		# my $afns = $gdb->findAFNsForHash($hash);
+
+		# my $tk = TruthKeeper::get();
+		# my @g = map { $tk->obtainGhostForLFN( $_ ); } @$afns;
+		# my @result;
 
 		foreach my $g (@g)
 		{
@@ -1359,7 +1362,7 @@ sub reconstructTestAction
 	print "reconstructAction: LFN: $lfn\n";
 
 	my $func = sub { my( $candidate, $target ) = @_; 
-			$candidate->isSameFilename( $target) ? $CODE_SKIP_DUPLICATE : $candidate };
+			$candidate->isSameFilename( $target ) ? $CODE_SKIP_DUPLICATE : $candidate };
 
 	my @dups = $ghost->forDuplicatesMap( $func );
 
@@ -3786,6 +3789,8 @@ sub absorbScalar
 	my $self = shift;
 	my $buffer = shift;
 
+	CODEPATH( "absorbScalar" );
+
 	my $hash = main::getSHAforBuffer( $buffer );
 
 	my $targetPath = $self->makeContainingDirForHash($hash);
@@ -3847,7 +3852,6 @@ sub getHardFileFQLFNforGhost
 {
 	my $self = shift;
 	my $g = shift;
-
 
 	my $finalPath = $self->getHardFilePathForGhost( $g );
 	my $targetLFN = main::assembleLFN( "fs", "root", $finalPath);
@@ -4454,6 +4458,7 @@ sub write
 		if( $sourceSize == 0 && $target->getSize() == 0 )
 		{	
 			print "write() - both source and target are zero length file - no actions needed\n";
+			CODEPATH( "write.zerolength.case");
 			return $target; 
 		} 
 
@@ -4502,9 +4507,6 @@ sub write
 	}
 
 	return $target; 
-
-
-
 }
 
 
@@ -4567,48 +4569,6 @@ sub moveGhost
 }
 
 
-sub forDuplicatesMap
-{
-	my $self = shift;
-	my $target = shift;
-	my $fitFunction = shift;
-
-	my $hash = $target->getFullHash();
-	my $gdb = GhostDatabase->getCore();
-
-	my $afns = $gdb->findAFNsForHash($hash);
-
-	my $tk = TruthKeeper::get();
-	my @g = map { $tk->obtainGhostForLFN( $_ ); } @$afns;
-	my @result;
-
-	foreach my $g (@g)
-	{
-		my $r = $target->isDuplicateOf( $g );
-
-		my $dstr = $g->quickDebugString();
-		my $dstr2 = $target->quickDebugString();
-		debug "findDuplicatesCustomSearch=($r) Candidate: $dstr\n"; 
-		debug "findDuplicatesCustomSearch=($r) Target:    $dstr2\n"; 
-
-		if( $r )
-		{
-			my $x = $fitFunction->($g, $target);
-			push @result, $x unless $x == $CODE_SKIP_DUPLICATE;
-		}
-		else
-		{
-			warn "XXXXX AFN database out of date!";
-			print "I'm looking for hash:$hash (on $dstr2)\n";
-			print "I retrieved target (on $dstr)\n";
-			print "However, isDuplicateOf() returned FALSE\n";
-		}
-		
-	}
-
-	return @result;
-}
-
 
 sub findDuplicateUnderTree
 {
@@ -4670,6 +4630,8 @@ sub generateAlternativeLocation
 	my $finalNewOrphanLFN = 0; 
 
 	my $datestr = POSIX::strftime( "%Y%m%d", localtime() );
+
+	CODEPATH( "generateAlternativeLocation used" );
 
 	while( not $newOrphanNameFound )
 	{
@@ -4901,7 +4863,8 @@ sub printInternallyTrackedLFN
 # be stragglers of a sort. Also, if a handler is largely just working with
 # files in recursion, it may be hard to track down new information
 # accidentally discovered during recursion. But technically, if we're doing
-# our job, this cache should be completely clean.
+# our job, this cache should be completely clean, thus the need to print
+# warnings.
 
 sub flushInternallyTracked
 {
@@ -5108,6 +5071,8 @@ sub getGhostStoreForDescriptorFileCoveringFN
 
 sub incorporateGhostStore
 {
+	die "dead code";
+
 	my $self = shift;
 	my $gs = shift;
 
@@ -5192,6 +5157,124 @@ sub registerTruthyGhost
 	my $ghostForLFN = $self->ghostForLFN();
 	die "Collision [$lfn]" if exists $ghostForLFN->{$lfn};
 	$ghostForLFN->{$lfn} = $g;
+}
+
+
+sub forDuplicatesMap
+{
+	my $self = shift;
+	my $target = shift;
+	my $fitFunction = shift;
+
+	my $hash = $target->getFullHash();
+
+	my $gdb = GhostDatabase->getCore();
+
+	my $afns = $gdb->findAFNsForHash($hash);
+
+	my $tk = TruthKeeper::get();
+	my @g = map { $tk->obtainGhostForLFN( $_ ); } @$afns;
+	my @result;
+
+	foreach my $g (@g)
+	{
+		my $r = $target->isDuplicateOf( $g );
+
+		my $dstr = $g->quickDebugString();
+		my $dstr2 = $target->quickDebugString();
+		debug "findDuplicatesCustomSearch=($r) Candidate: $dstr\n"; 
+		debug "findDuplicatesCustomSearch=($r) Target:    $dstr2\n"; 
+
+		if( $r )
+		{
+			my $x = $fitFunction->($g, $target);
+			push @result, $x unless $x == $CODE_SKIP_DUPLICATE;
+		}
+		else
+		{
+			warn "XXXXX AFN database out of date!";
+			print "I'm looking for hash:$hash (on $dstr2)\n";
+			print "I retrieved target (on $dstr)\n";
+			print "However, isDuplicateOf() returned FALSE\n";
+		}
+		
+	}
+
+	return @result;
+
+}
+
+sub forGhostsWithHashMap
+{
+	my $self = shift;
+	my $hash = shift;
+	my $fitFunction = shift;
+
+	my $gdb = GhostDatabase->getCore();
+
+	my $afns = $gdb->findAFNsForHash($hash);
+
+	my $tk = TruthKeeper::get();
+	my @g = map { $tk->obtainGhostForLFN( $_ ); } @$afns;
+	my @result;
+
+	foreach my $g (@g)
+	{
+		my $r = $g->getFullHash();
+
+		my $dstr = $g->quickDebugString();
+		debug "forGhostsWithHashMap=($r) Candidate: $dstr\n"; 
+
+		if( defined $r and $r eq $hash )
+		{
+			my $x = $fitFunction->($g, $hash);
+			push @result, $x unless $x == $CODE_SKIP_DUPLICATE;
+		}
+		else
+		{
+			warn "XXXXX AFN database out of date!";
+			print "I'm looking for hash:$hash \n";
+			print "I retrieved target (on $dstr)\n";
+			print "However, i couldn't get a hash, or the hash was different\n";
+		}
+	}
+
+	return @result;
+}
+
+
+# universal way to get all known ghosts with a given hash. 
+
+sub obtainGhostsForHash
+{
+	my $self = shift;
+	my $hash = shift;
+
+	my $func = sub { my( $candidate, $hash ) = @_; return $candidate; };
+
+	return $self->forGhostsWithHashMap($hash, $func);
+}
+
+
+# Query our sources of truth to get the children for a ghost
+
+sub getChildrenLFNs
+{
+	my $self = shift;
+	my $ghost = shift;
+
+	# my @g = obtainGhostsForHash()
+
+
+	# my $ojx = $main::coreOjxFSE; 
+
+	# my $existingFullHash = $ghost->fullHash();
+
+	# if( defined $existingFullHash )
+	# {
+	# 	$ojx->
+
+	# }
 }
 
 # Normal logic to get a ghost. Nearly all ghost construction should come
@@ -6364,8 +6447,6 @@ sub newFromSerialized($)
 	$self->deepCount( shift @a );
 	$self->lastDeepScan( shift @a );
 
-
-
 	my $statStructSerialized = shift @a; 
 	if( defined $statStructSerialized )
 	{
@@ -6433,11 +6514,11 @@ sub getChildrenLFNs
 	my $self = shift;
 	my $time = shift;
 
-	# if( not defined $self->{CHILDREN_LFNS} )
-	# {
-	# 	my $tk = TruthKeeper::get();
-	# 	$tk->getChildLFNs($self);
-	# }
+	if( not defined $self->{CHILDREN_LFNS} )
+	{
+		my $tk = TruthKeeper::get();
+		$tk->getChildrenLFNs($self);
+	}
 
 	# check our recency times. if we like them, return 
 	# TODO
@@ -6842,10 +6923,7 @@ sub learnDeepScan
 
 	die if $self->isImmutable();
 
-
-
 	my $q = $self->quickDebugString();
-
 	my $hasSigChanged = 0;
 
 	if( $learnDebug )
@@ -6936,9 +7014,6 @@ sub learnDeepScan
 	{
 		$self->learnContentsChanged($time);
 	}
-
-
-
 }
 
 # Returns true if the deep scan data on the object appears valid. If the user
@@ -6957,7 +7032,6 @@ sub hasAcceptableDeepScan
 	}
 
 	#$self->printDebug();
-
 
 	return 1 if $self->isImmutable();
 
@@ -6990,13 +7064,7 @@ sub hasAcceptableDeepScan
 	debug "    hasAcceptableDeepScan: YES\n" if $staleInfoDebug;
 
 	return 1;
-
 }
-
-
-
-
-
 
 # Called when we've received definitive information (either from registerChild
 # or from a full scan) that we have a full enumeration of our contents.  If
@@ -7169,7 +7237,7 @@ sub isSameFilename
 
 	# TODO: revisit if perl libraries give a better way to do this
 
-	 my $a = $self->absoluteLFN();
+	my $a = $self->absoluteLFN();
 	my $b  = $other->absoluteLFN();
 	my $r = $a eq $b;
 
@@ -7197,7 +7265,6 @@ sub isDuplicateOf
 
 	if( $duplicateDebug )
 	{
-
 		my $q1 = $self->quickDebugString();
 		my $q2 = $other->quickDebugString();
 		debug "isDuplicateOf -  self: $q1\n";
@@ -7222,7 +7289,6 @@ sub isDuplicateOf
 		}
 	}	
 
-
 #   die "Incomplete info self full hash" if not defined $self->fullHash();
 #	die "Incomplete info other full hash " if not defined $other->fullHash();
 
@@ -7235,8 +7301,6 @@ sub isDuplicateOf
 		my $oI = $other->debugID();
 		debug "isDuplicateOf - forced hash $mH - $oH ($mI and $oI)\n";
 	}
-
-
 
 	return 1 if( $mH eq $oH );
 
@@ -7646,7 +7710,7 @@ sub forDuplicatesMap()
 	my $self = shift;
 	my $fitFunction = shift; 
 
-	# die "Warning - tree does not appear to have been enumerated recently." if not defined $self->fullHash();
+	die "Warning - tree does not appear to have been enumerated recently." if not defined $self->fullHash();
 
 	return $self->getFSE()->forDuplicatesMap( $self, $fitFunction);
 }
