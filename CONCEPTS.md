@@ -13,6 +13,55 @@ Every GFS operation (move, backup, etc) works by making ghosts of your files, an
 Ghosts can represent files or objects on your local computer as well as remote one. They are entirely generalized to point to any kind of data asset that can have a checksum.
 
 
+# Ghost contracts: What is truth? What is the single source of truth?
+
+[Current descriptions as of 6/22/2016]
+
+Ghost is a description of the potential state of a file.
+
+Currently, contracts look like this
+
+- No obligation for a specific ghost to be up to date
+- Only the ghosts from the TK are guarnteed to be single source of truth
+- Ghosts find their FSE by looking at their handler value
+- Ghosts can be in any number of ghost stores
+- TruthKeeper should make all ghosts that are intended to hold present state
+- The only reason TK is not used to make ghosts is in cases where you are deliberatly constructing older things
+- TK holds all ghost pointers and knows if they are dirty or not
+- Generally, the FSE doesn't hold links back to ghosts except in cases where a ghost is a root (like a snapshot)
+
+Its canonical that the LFN of a ghost once created must never change. If you need to reference a new thing, make a new ghost and copy over the data.
+
+
+# TruthKeeper evolved: Everything is learned
+
+[Current design]
+
+You wnat multiple directories of ghost information -
+  e.g. a backing store using BDB, .gfs_ip
+
+THe truthkeeper ALWAYS makes the ghost first during obtain. Then state is gathered from the others each in turn via new learn operations.
+
+When a ->save() is issued, the ghost is dropped out of the caches, and the ->saveGhost() message is given to each GDB
+
+We need some mechanism to be sure the ghosts are actually finalized on save, otherwise operations that create millions of ghost are going to drive crazy amounts of memory use.
+
+
+
+
+# What is a managed object exactly?
+
+[Current as of 6/22/2016]
+
+A managed object is a blob of information and metadata created by GFS, typically stored as a file on disk. They are typed and can be identified with a magic tag at the start of the file. The first use case of MOBs is a deep tree snapshot. But other uses are anticipated, for instance as “commits” (named backups).
+
+MOBs may refer to zero or more sub-objects as hash pointers. This means that a GC operation can be performed to make sure that the MOB’s metadata is reconstructable, and also to be able to purge dangling references. For instance a list of known backups might be stored as a MOB, where each backup is another MOB, a pointer to the head directory of the backup.
+
+MOBs are frequently carriers of ghost information, typically information locked down in place in time. Normally this ghost information is returned as immutable objects into the GFS layer. 
+
+My design intent is that managed objects can live anywhere the user wants them to live. Also I think they are effectively immutable. They are identified by their hash. 
+
+
 
 # effectiveDate
 

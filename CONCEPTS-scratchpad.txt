@@ -64,18 +64,6 @@ and learn deleted on the directory may need to cascade down to revoke ghosts. Ei
 If we had multiple hash->AFN lookup mechanisms, revocation could simply delete out the one that doesn’t exist, or mark it dead. So for instance, if each volume had its own hash->AFN LUT we could get away with that.
 
 
-# What is a managed object exactly?
-
-[Current as of 6/22/2016]
-
-A managed object is a blob of information and metadata created by GFS, typically stored as a file on disk. They are typed and can be identified with a magic tag at the start of the file. The first use case of MOBs is a deep tree snapshot. But other uses are anticipated, for instance as “commits” (named backups).
-
-MOBs may refer to zero or more sub-objects as hash pointers. This means that a GC operation can be performed to make sure that the MOB’s metadata is reconstructable, and also to be able to purge dangling references. For instance a list of known backups might be stored as a MOB, where each backup is another MOB, a pointer to the head directory of the backup.
-
-MOBs are frequently carriers of ghost information, typically information locked down in place in time. Normally this ghost information is returned as immutable objects into the GFS layer. 
-
-My design intent is that managed objects can live anywhere the user wants them to live. Also I think they are effectively immutable. They are identified by their hash. 
-
 
 
 # The duality (and triality) problem of ghosts (6/22)
@@ -115,41 +103,6 @@ It seems philosophically perplexing that a ghost that can update at any time som
 So it means that an mutable ghost directory effectively “points” at an immutable managed object. And the second contents change underneath it, it looses its hash and effectively the link to its full enumeration. 
 
 Again, I think this is all correct, but I’m trying to get comfortable with it.
-
-# Ghost contracts: What is truth? What is the single source of truth?
-
-[Current descriptions as of 6/22/2016]
-
-Ghost is a description of the potential state of a file.
-
-Currently, contracts look like this
-
-- No obligation for a specific ghost to be up to date
-- Only the ghosts from the TK are guarnteed to be single source of truth
-- Ghosts find their FSE by looking at their handler value
-- Ghosts can be in any number of ghost stores
-- TruthKeeper should make all ghosts that are intended to hold present state
-- The only reason TK is not used to make ghosts is in cases where you are deliberatly constructing older things
-- TK holds all ghost pointers and knows if they are dirty or not
-- Generally, the FSE doesn't hold links back to ghosts except in cases where a ghost is a root (like a snapshot)
-
-Its canonical that the LFN of a ghost once created must never change. If you need to reference a new thing, make a new ghost and copy over the data.
-
-
-# TruthKeeper evolved: Everything is learned
-
-[Current design]
-
-You wnat multiple directories of ghost information -
-	e.g. a backing store using BDB, .gfs_ip
-
-THe truthkeeper ALWAYS makes the ghost first during obtain. Then state is gathered from the others each in turn via new learn operations.
-
-When a ->save() is issued, the ghost is dropped out of the caches, and the ->saveGhost() message is given to each GDB
-
-We need some mechanism to be sure the ghosts are actually finalized on save, otherwise operations that create millions of ghost are going to drive crazy amounts of memory use.
-
-
 
 
 # New concept: Domain (6/22)
@@ -442,7 +395,7 @@ This is all sort of muddled in my brain. I can’t tell if its because these are
 
 
 
-# New semantics for directories (slightly different design)
+# New semantics for directories (Ideas prior to east-cambridge design)
 
 In an ideal backup scenario, I obtain a hash representing a particular directory. Primary source verification occurs by getting the hashes of all directories underneath. Therefore “has hash duplicate” still works. As long as the directory is EXACTLY the way it was, we are all good.
 
@@ -487,7 +440,7 @@ So how does this work? I have objects on disk whose SHA hashes will NOT match th
 
 Two ways to handle this. Either i have a logical hash separate from a physical hash. Or I’m just cool with physical hashes being a lie for certain metadata objects that I maintain anyway. 
 
-Actually, for tamper-proofing, maybe its work considering a compound hash?
+Actually, for tamper-proofing, maybe its worth considering a compound hash?
 
 Or maybe we go back to the idea of pointers for this sort of thing.
 
@@ -580,8 +533,6 @@ The recon should support
 - Finding a file inside a nested directory object
 - finding a subdirectory inside of a directory
 
-Okay, so version one of this 
-
 TODO We need to deal with deletes better - if we realize something is deleted, its parent should have its hash cleared.
 
 Source: a294d0c46d9768647f53e58fc69ebb0600c84236
@@ -646,37 +597,6 @@ reasonable to warn that the current target of the backup has not been checkpoint
 
 
 
-
-
-# Original notes from duplicateUnderPath
-
-We have to decide at this point if the universal cache is up to date. 
-Each FSE might handle this differently.
-
-I think the check would recurively look at subdirectories? Or maybe just
-simple time based? I'd like to find some way to prevent the need for the
-user to be smart enough to know that a checkpoint is needed.
-
-One way to handle this is there is some kind of
-"hasAcceptableDirscan()". If dirscan is popualted for an AFN, we could avoid
-the full traversal. But an acceptable dirscan on the .gfs_ip doesn't mean the
-one inside the cache is up to date.
-
-you'd want two fields (most recent enumer, and oldest enum.) 
-
-maybe there is a recursive way. I can "test my own" understanding.
-first, i get the GFS_IP for the current directory
-its going to have some stats in it about sizes and file counts and whatnot.
-and i compare that to my own db enumeration.
-
-BDB may or may not be quick enough to allow this..?
-but doesn't its Btree have some sort of "# records between?"
-that would be optimal
-that is the check?
-
-the problem of a cache of a cahce of this kind it hat the "full deal" is what matters.
-it seems to take about 1.4 user seconds to enumerate 1.36M rows in BDB
-that tells me we've got a lot of room to grow here
 
 
 
