@@ -40,7 +40,7 @@ local $main::SCRIPT_START_GTOD = [gettimeofday];
 # hash.
 
 local $main::GUARD_TIME_SECONDS_STAT = 10; 
-local $main::GUARD_TIME_SECONDS_ENUMERATION = undef; 
+local $main::GUARD_TIME_SECONDS_ENUMERATION = 10; 
 local $main::GUARD_TIME_SECONDS_FULLHASH = undef; 
 local $main::GUARD_TIME_SECONDS_DEEPSCAN = undef; 
 
@@ -55,14 +55,18 @@ my $gdbDebug            = 0;   # GhostDirectory
 my $duplicateDebug      = 0;   # Duplicate checking debugging
 my $granularSerialDebug = 0;   # Instruments the escape/unescape mechanism
 my $serializeDebug      = 0;   # Instruments the load/save at ghost level
-my $gChildDebug         = 0;
+my $gChildDebug         = 1;   # instrument learnChildAfns
+my $childTruthDebug     = 1;   # Code that pulls LFNs of children from repositories 
+my $managedObjectDebug  = 1;   # Code for extracting and creating managed objects
 my $fseDebug            = 0;
 my $fseOjxDebug         = 0;
 my $fseSnapshotDebug    = 0;
 my $learnDebug          = 0;
-my $revokeDebug         = 1;   # Special case of learn that just looks at hash revocation
+my $upNavDebug			= 0;   # debugging on getParent() and getParentLFN()
+my $revokeDebug         = 0;   # Special case of learn that just looks at hash revocation
 my $staleInfoDebug      = 0;   # Decisionmaking on if data is current enough
 my $statStructDebug     = 0;
+
 my $provenanceDebug     = 1;
 
 # Constant Symbols 
@@ -2473,9 +2477,8 @@ sub performRetreivalOnPerlStructFromKey
 
 	$main::run_db_gets++;
 
-	die unless defined $db;
-	die unless defined $key;
-
+	die "Retrieval requested without defined database" unless defined $db;
+	die "Retrieval requested on undefined key in $db" unless defined $key;
 
 	$status = $db->db_get( $key, $content );
 	if( !defined $status or $status == DB_NOTFOUND )
@@ -2666,6 +2669,7 @@ sub saveGhostToStore()
 
 	if( $g->hasAcceptableEnumeration() )
 	{
+		# this should delegate to a managed object
 		my $buffer = $g->generateTreeSignatureBuffer();
 		my $ojx = $main::coreOjxFSE;
 
@@ -4192,7 +4196,7 @@ sub getParentLFN
 
 	my $absPath = Cwd::realpath( $path  );
 
-	print "Getting parent of AFN: $absPath\n";
+	print "Getting parent of AFN: $absPath\n" if $upNavDebug;
 
 	if( $absPath eq File::Spec->rootdir() )
 	{
@@ -4501,7 +4505,7 @@ sub write
 	$main::run_files_written++;
 	$main::run_bytes_written += $sourceSize;
 
-	print "*** WRITE [$sourceSize] bytes->[$finalPath]\n" if $ioDebug;
+	print "*** WRITEFILE [$sourceSize] bytes->[$finalPath]\n" if $ioDebug;
 
 	open FILE, ">$destPath" or die "Cannot open for write $destPath: $!";
 	print FILE $content;
@@ -5263,34 +5267,148 @@ sub forGhostsWithHashMap
 sub obtainGhostsForHash
 {
 	my $self = shift;
-	my $hash = shift;
+	my $searchHash = shift;
+
+	die "hash not defined in call" unless defined $searchHash; 
 
 	my $func = sub { my( $candidate, $hash ) = @_; return $candidate; };
 
-	return $self->forGhostsWithHashMap($hash, $func);
+	return $self->forGhostsWithHashMap($searchHash, $func);
+}
+
+# returns a managed object backing file (the sort usually passed to a manage
+# object constructor) with a given hash
+
+
+sub obtainManagedObjectBackingFileByHash
+{
+	my $self = shift;
+	my $hash = shift;
+
+	die unless ref $self;
+	die unless defined $hash;
+	die unless length $hash > 0; 
+
+	debug "Looking for managed object with hash: $hash" if $managedObjectDebug;
+
+	# First strategy, find it directly by hash->AFN cache
+	my @ghostsWithHash = $self->obtainGhostsForHash( $hash );
+	my @moWithHash = grep { $_->isSingleFile() && $_->exists() } @ghostsWithHash;
+
+	# v1, just assume any managed object is some sort of directory. In the
+	# future, we'll get a magic value from the header of the file and use that
+	# to descriminate.
+
+	if( @moWithHash > 0 )
+	{
+		CODEPATH( "managed object via hash.to.afn");
+		my $result = shift @moWithHash;
+		return $result;
+	}
+
+	# second strategy here could be to probe the core OJX FSE directly, which
+	# handles the case that user has cleared the BDB.
+	# TODO
+
+	# NOT IMPLEMENTED
+
+	return undef; 
+}
+
+
+sub populateChildrenLFNs
+{
+	my $self = shift;
+	my $ghost = shift;
+
+	my $existingFullHash = $ghost->fullHash();
+
+	die unless $ghost->canHaveChildren();
+
+	if( defined $existingFullHash )
+	{
+		my @lfns = $self->getTKchildrenLFNs( $ghost );
+		my $infoAsOfDate = $ghost->lastFullHash();
+		$ghost->learnChildrenByLFN( $infoAsOfDate, \@lfns );
+	}	
+
+
 }
 
 
 # Query our sources of truth to get the children for a ghost
 
-sub getChildrenLFNs
+sub getTKchildrenLFNs
 {
 	my $self = shift;
 	my $ghost = shift;
 
-	# my @g = obtainGhostsForHash()
+	my $q = $ghost->quickDebugString() if $childTruthDebug;
+	debug "TK--getChildrenLFNs: Asked to retrieve children for $q" if $childTruthDebug;
 
+	my $existingFullHash = $ghost->fullHash();
 
-	# my $ojx = $main::coreOjxFSE; 
+	if( defined $existingFullHash )
+	{
+		debug "TK--getChildrenLFNs: Object has been hashed ($existingFullHash), checking for managed object" if $childTruthDebug;
 
-	# my $existingFullHash = $ghost->fullHash();
+		my $r = $self->obtainManagedObjectBackingFileByHash( $existingFullHash );
 
-	# if( defined $existingFullHash )
-	# {
-	# 	$ojx->
-
-	# }
+		if( defined $r )
+		{
+			# TODO should delegate to a managed object... we have a symettry
+			# problem: directories are written out by ghosts in a function
+			# called generateTreeSignatureBuffer but read here. Not elegant.
+			# this is really hackish actually. 
+			my $p = $r->getReadonlyHardFile();
+			return $self->intakeTruthAndLFNsFromFile( $ghost, $p );
+		}
+		else
+		{
+			debug "TK--getChildrenLFNs: No managed object with directory contents found" if $childTruthDebug;
+		}
+	}
+	else
+	{
+		# Exercised in case where directory is net new, or hash has been revoked (Test both)
+		CODEPATH( 'tk.getchildrenlfns.nosuch');
+		debug "TK--getChildrenLFNs: No hash, no way to recover children from managed obj" if $childTruthDebug;
+		return undef; 
+	}
 }
+
+sub intakeTruthAndLFNsFromFile
+{
+	my $self = shift;
+	my $parent = shift;
+	my $path = shift;
+
+	debug "Pulling LFNs from directory file: $path\n" if $childTruthDebug;
+
+	my @lfns;
+
+	debug "*** READFILE $path\n" if $ioDebug; 
+
+	open FILE, "<$path" or die "Could not open $path for reading..";
+	while( <FILE> )
+	{
+		my $line = $_;
+		my $readGhost = Ghost->newFromSerialized( $line, ghostUsingBaremode => $parent );
+		my $readLFN = $readGhost->lfn();
+		my $tkGhost = $self->obtainGhostForLFN( $readLFN );
+		$tkGhost->learnFromGhost( $readGhost );
+		#my $gx = $tkGhost->makeDebugString();
+		my $gx = $tkGhost->quickDebugString();
+		debug "Generated new ghost $gx\n" if $childTruthDebug;
+		$tkGhost->flush();
+		push @lfns, $readLFN;
+
+	}
+	close FILE;
+
+	return @lfns; 
+}
+
 
 # Normal logic to get a ghost. Nearly all ghost construction should come
 # through this routine.
@@ -6420,6 +6538,21 @@ sub newFromSerialized($)
 
 	my $serialLFN = shift @a;
 
+	if( defined $options{'ghostUsingBaremode'} )
+	{
+		my $g = $options{'ghostUsingBaremode'};
+		my $handler = $g->getHandler();
+		my $root = $g->getRoot();
+		my $path = $g->getPath();
+		my $newPath = File::Spec->catfile( $path, $serialLFN );
+
+		my $original = $serialLFN;
+		$serialLFN = main::assembleLFN( $handler, $root, $newPath );
+		debug( "Inbound LFN:[$original] handler:[$handler] root:[$root] newPath:[$path] --> $serialLFN");
+
+	}
+
+
 	if( defined $options{'treeRoot'} )
 	{
 		my $root = $options{'treeRoot'};
@@ -6532,7 +6665,23 @@ sub getChildrenLFNs
 	if( not defined $self->{CHILDREN_LFNS} )
 	{
 		my $tk = TruthKeeper::get();
-		$tk->getChildrenLFNs($self);
+		$tk->populateChildrenLFNs($self);
+
+		# Design issue: what date to give?What "lastEnumeratedDate" do we use
+		# when we learn of our contents from a directory object? Hacking this
+		# now by avoidng learnLFNs.
+
+		# I think this really isn't a proper "learn".. Is really a
+		# deserialization? Ideally, the TK would tell us the effective date of
+		# this list, but this particular kind of managed object has no way to 
+		# store stuff like this.
+
+		# The key thing is that this batch of data is as current as the hash
+		# is. So i'm going to bascially go with that. Hack, right?
+
+
+
+
 	}
 
 	# check our recency times. if we like them, return 
@@ -6692,6 +6841,13 @@ sub learnChildrenByLFN()
 	my $lfns = shift; 
 
 
+	if( defined $self->lastEnumerated() )
+	{
+		die if $time < $self->lastEnumerated();
+	}
+
+	# TODO shouldn't i reject incomijng data if the lastEnumerated isn't one I like? 
+
 	my @lfns = @$lfns;
 
 	my $tk = TruthKeeper::get();
@@ -6710,7 +6866,7 @@ sub learnChildrenByLFN()
 
 	foreach my $e (@existingGhosts)
 	{
-		 $seenLFN{ $e->lfn() } = 0;
+		 $seenLFN{ $e } = 0;
 	}
 
 	foreach my $lfn ( @lfns )
@@ -6869,7 +7025,7 @@ sub generateTreeSignatureBuffer
 	foreach my $g ( @c )
 	{
 		my $lfn = $g->lfn();
-	next if main::fileIsUsuallyIgnored( $lfn );
+		next if main::fileIsUsuallyIgnored( $lfn );
 
 		#print "Checking $lfn\n";
 
@@ -6884,7 +7040,6 @@ sub generateTreeSignatureBuffer
 	}
 
 	return $buffer;
-
 }
 
 
@@ -8239,7 +8394,7 @@ sub learnContentsChanged
 		{
 			$self->flush();
 
-			debug " learnContentsChanged - checking for revokes - Node exists, lets look for parent..";
+			debug " learnContentsChanged - checking for revokes - Node exists, lets look for parent.." if $revokeDebug || $learnDebug;;
 			my $plfn = $self->getParentLFN();
 
 			if( ! defined $plfn )
@@ -8277,20 +8432,20 @@ sub getParentLFN
 
 	my $lfn = $self->lfn();
 
-	debug "getParentLFN: Searching for parent of [$lfn]";
+	debug "getParentLFN: Searching for parent of [$lfn]"  if $upNavDebug;
 
 	if( $self->canHaveChildren() )
 	{
 		my $plfn = $self->getFSE()->getParentLFN( $self );
 		my $plfn_x = defined $plfn ? $plfn : "<undef>";
-		debug "getParentLFN:   Parent is:[$plfn_x] (case1)";
+		debug "getParentLFN:   Parent is:[$plfn_x] (case1)" if $upNavDebug;
 		return $plfn; 
 	}
 	else
 	{
 		 my $plfn = $self->getFSE()->getContainingDirLFN( $self );
 		 my $plfn_x = defined $plfn ? $plfn : "<undef>";
-		 debug "getParentLFN:   Parent is:[$plfn_x] (case2)";
+		 debug "getParentLFN:   Parent is:[$plfn_x] (case2)" if $upNavDebug;
 		return $plfn; 
 	}
 	

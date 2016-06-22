@@ -4,14 +4,22 @@
 It is a collection of work in progress (or sometimes retired) ideas.. anything that is current has been moved to the full concept file. 
 
 
+- [x] Have discovered that writes into the object store do not appear to immediately enter the cache. (Not sure why...) - Fixed now
 
-- [ ] Have discovered that writes into the object store do not appear to immediately enter the cache. (Not sure why...)
+have discovered that BUP does write out git compatable objects, but git has no provisions for joining up files.
 
-
+	bup index . 
+	bup save -n foo .
+	cd ~/.bup  
+	git --work-tree=/tmp/foo checkout foo
+	./Users/jgilbert/PhotoFSX/LR-PhotoFS-LT/Vermont 2015 Unsorted/jag-151010-20875.CR2.bup/0e21bce/4bf95b/0fa36d/2ea61
+	./Users/jgilbert/PhotoFSX/LR-PhotoFS-LT/Vermont 2015 Unsorted/jag-151010-20875.CR2.bup/0e21bce/4bf95b/0fa36d/3224c
+	./Users/jgilbert/PhotoFSX/LR-PhotoFS-LT/Vermont 2015 Unsorted/jag-151010-20875.CR2.bup/0e21bce/4bf95b/0fa36d/34c24
 
 Current goal: Tidy backup and restore. Backup writes new files into a tree and a commit hash of the directory state. Backups can be named. Restore takes the name and reconstructs it somewhere else. Permanent metadata about the state of the backup is checkpointed into a deep tree object so that if metadata is destroyed we can recover it. Work is done when we can back up a directory a few times, then restore it, then blow away metadata, restore that, and then restore another file.
 
 - [ ] wire in a reconstruct verb that uses recursion
+- [ ] What "lastEnumeratedDate" do we use when we learn of our contents from a directory object? Hacking this now by avoidng learnLFNs. 
 - [ ] what do we do about revokes during the learn and flush? Hashes will change on the ghosts held by the GDB, but should that trigger revokes? Also sometimes it triggers stats too. This is quite wasteful. 
 	- [ ] one of these is triggered by learnHash which mkaes a call to canHaveChildren
 - [ ] rel2abs is generating paths like ../../../ in the AFN queue. 
