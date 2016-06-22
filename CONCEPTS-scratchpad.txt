@@ -4,37 +4,32 @@
 It is a collection of work in progress (or sometimes retired) ideas.. anything that is current has been moved to the full concept file. 
 
 
-- [x] Have discovered that writes into the object store do not appear to immediately enter the cache. (Not sure why...) - Fixed now
 
-have discovered that BUP does write out git compatable objects, but git has no provisions for joining up files.
 
-	bup index . 
-	bup save -n foo .
-	cd ~/.bup  
-	git --work-tree=/tmp/foo checkout foo
-	./Users/jgilbert/PhotoFSX/LR-PhotoFS-LT/Vermont 2015 Unsorted/jag-151010-20875.CR2.bup/0e21bce/4bf95b/0fa36d/2ea61
-	./Users/jgilbert/PhotoFSX/LR-PhotoFS-LT/Vermont 2015 Unsorted/jag-151010-20875.CR2.bup/0e21bce/4bf95b/0fa36d/3224c
-	./Users/jgilbert/PhotoFSX/LR-PhotoFS-LT/Vermont 2015 Unsorted/jag-151010-20875.CR2.bup/0e21bce/4bf95b/0fa36d/34c24
 
 Current goal: Tidy backup and restore. Backup writes new files into a tree and a commit hash of the directory state. Backups can be named. Restore takes the name and reconstructs it somewhere else. Permanent metadata about the state of the backup is checkpointed into a deep tree object so that if metadata is destroyed we can recover it. Work is done when we can back up a directory a few times, then restore it, then blow away metadata, restore that, and then restore another file.
 
-- [ ] wire in a reconstruct verb that uses recursion
-- [ ] What "lastEnumeratedDate" do we use when we learn of our contents from a directory object? Hacking this now by avoidng learnLFNs. 
+- [ ] actually test the new learnAFNlist() functionality with a few different cases to convince myself its stable
+- [ ] finish backup action - should write out a deep hash object
+- [ ] wire in a reconstruct verb that uses recursion. And we should be able to test it works by clearing the caches, recheckpointing, etc
+- [ ] rel2abs is generating paths like ../../../ in the AFN queue, can we actually just say revokes only happen on REAL things?
+- [ ] ultimately, checkpointing probably ought to clear out all objects below that path
 - [ ] what do we do about revokes during the learn and flush? Hashes will change on the ghosts held by the GDB, but should that trigger revokes? Also sometimes it triggers stats too. This is quite wasteful. 
-	- [ ] one of these is triggered by learnHash which mkaes a call to canHaveChildren
-- [ ] rel2abs is generating paths like ../../../ in the AFN queue. 
+	- [x] one of these is triggered by learnHash which mkaes a call to canHaveChildren [fixed]
+- [x] Have discovered that writes into the object store do not appear to immediately enter the cache. (Not sure why...) - Fixed now
+- [x] What "lastEnumeratedDate" do we use when we learn of our contents from a directory object? Hacking this now using lastFullHash date, which seems mostly correct.
 - [ ] fix glitch that changing dir contents doesn't appear to revoke hashes
 	- [ ] reproduce by cloning dir and moving files and recheckpointing
-- [ ] add logic to flush and recover directory objects from OJX store.
+- [x] add logic to flush and recover directory objects from OJX store.
 - [ ] rework snapshot intake and writes
 - [ ] now build a proper reconstruct verb 
 
 
 - [ ] directory size changes should NOT revoke the directory
-- [ ] any creation of a new file should revoke parent hash, (call learnContentsChanged)
+- [ ] any creation of a new file should revoke parent hash, (call learnContentsChanged) - mostly sure this is true
 - [ ] revoke enum (and therefore LC) when file is added
 - [ ] revoke enum during mkdirs
-- [ ] Lower priority: wire in reads of directory caches to properly populate children, find some easy way to get LFNs for children fast
+- [x] Lower priority: wire in reads of directory caches to properly populate children, find some easy way to get LFNs for children fast
 
 
 
@@ -50,7 +45,7 @@ mkdir bak
 NO Checkpointing
 run abother backup: gfs backup run dir-a bak --stats
 
-what's happening here is that bak has a checksum in te database from the last time it was enumerated. we do a directory scan that comes up with a different hash. When that occurs, we should revoke the contents on the directory. But right now we don’t, and when we call hasAcceptableEnum() the check fails because of the mismatch. 
+what's happening here is that bak has a checksum in the database from the last time it was enumerated. we do a directory scan that comes up with a different hash. When that occurs, we should revoke the contents on the directory. But right now we don’t, and when we call hasAcceptableEnum() the check fails because of the mismatch. 
 
 reading the contents of the directory is akin to source verification in the new world order. But the current implementation doesn’t handle it that way -- it ALWAYS goes to the original.
 
@@ -73,9 +68,17 @@ and learn deleted on the directory may need to cascade down to revoke ghosts. Ei
 If we had multiple hash->AFN lookup mechanisms, revocation could simply delete out the one that doesn’t exist, or mark it dead. So for instance, if each volume had its own hash->AFN LUT we could get away with that.
 
 
+# How does Bup Handle splits?
 
+have discovered that BUP does write out git compatable objects, but git has no provisions for joining up files.
 
-
+	bup index . 
+	bup save -n foo .
+	cd ~/.bup  
+	git --work-tree=/tmp/foo checkout foo
+	./Users/jgilbert/PhotoFSX/LR-PhotoFS-LT/Vermont 2015 Unsorted/jag-151010-20875.CR2.bup/0e21bce/4bf95b/0fa36d/2ea61
+	./Users/jgilbert/PhotoFSX/LR-PhotoFS-LT/Vermont 2015 Unsorted/jag-151010-20875.CR2.bup/0e21bce/4bf95b/0fa36d/3224c
+	./Users/jgilbert/PhotoFSX/LR-PhotoFS-LT/Vermont 2015 Unsorted/jag-151010-20875.CR2.bup/0e21bce/4bf95b/0fa36d/34c24
 
 
  

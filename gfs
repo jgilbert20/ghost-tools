@@ -6874,11 +6874,11 @@ sub learnChildrenByLFN()
 		debug "G: Learning child: lfn:[$lfn]\n" if $gChildDebug;
 		if( exists $seenLFN{$lfn} )
 		{
-			debug "G:   Child already registered\n" if $gChildDebug;
+			debug "G:   Child already registered: $lfn\n" if $gChildDebug;
 		}
 		else
 		{
-			debug "G:   Child already registered\n" if $gChildDebug;
+			debug "G:   Child not registered: $lfn, must be new\n" if $gChildDebug;
 			$hasContentsChanged = 1;
 		}
 
@@ -6909,7 +6909,7 @@ sub learnChildrenByLFN()
 
 	if( $hasContentsChanged and $hadExistingGhosts )
 	{
-		$self->hasContentsChanged( $time );
+		$self->learnContentsChanged( $time );
 	}
 
 }
@@ -8285,6 +8285,13 @@ sub learnDirscan
 	my $self = shift;
 	my $time = shift; 
 
+	if( defined $self->lastDirScan() && $self->lastDirScan() < $time )
+	{
+		# stale data, take no action
+		return; 
+	}
+
+
 	$self->verifyGhostIsMutable();
 
 	$self->lastDirScan( $time );
@@ -8837,6 +8844,7 @@ sub learnFullHash
 
 # Deleted means that we did not see the ghost on a recent scan. Mark as
 # deleted and set deleteDate.
+# This is relaly only half implemented right now. 
 
 # TODO change semantics, this is not sort of like an confimed negative
 
@@ -8845,9 +8853,17 @@ sub learnDeleted
 	my $self = shift;
 	my $time = shift; 
 
+	if( $self->lastDirScan() < $time )
+	{
+		# stale data, take no action
+		return; 
+	}
+
+	debug "LEARN: Deleted object\n";
+
 	$self->verifyGhostIsMutable();
 
-	$self->lastDirScan( $time );
+	#$self->lastDirScan( $time );
 
 	# TODO: Do we want a dirscan to always force an update to the ghost?
 	$self->markDirty($time, "del");
