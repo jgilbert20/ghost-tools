@@ -28,6 +28,175 @@ Current goal: Tidy backup and restore. Backup writes new files into a tree and a
 - [x] Lower priority: wire in reads of directory caches to properly populate children, find some easy way to get LFNs for children fast
 
 
+# Reconstruction revisited
+
+Reconstruction is when I am given a set of sources and asked if that entire set of sources could reconstruct the target. 
+
+The sources are a set of ghosts, and the target is presumably a single ghost.
+
+The best possible case is where the target ghost is already known to be at one of the sources. Assuming this is the case with acceptable bounds on deepScan etc, reconstruction would just mean getting rid of anything that isn’t the target.
+
+If the hash doesn’t exist, we go into the next level on the target. Recurively, we look for each item (either blobs or directories). Reconsutrction is assumed to be valid as long as the underlying hashes have reasonable lastScan times. 
+
+With directories, we have to be careful. Two things are needed to reconstruct the hash. First, we need the description of the directory’s state (which is strangely met as long as we can find a file with that hash.) The second is that we need some assurance that this pattern of hashes, down all the way to the leaves, is still on disk. 
+
+lastDeepScan is the latest date for which the fullHash on a directory is valid. This means that although the underlying bytes were not checked, the ghosts for all of the objects do add up to the hash. the lastFastHash is the oldest of all of these byte checks. 
+
+So this means that if a directory ghost has a hash and a valid deepScan, as far as the framework is concerned, that entire block of hashes spanning the entire chain of hashes is present on disk.
+
+There is an interesting optimization. Lets say I have object M, which represents 10,000 hashes. And lets say I have object R that is a subset of those hashes. If I assert that M can reconstruct R, I can save enumeration over those hashes in a really efficent way. Espcially if M sticks around.
+
+For instance, if I take a baseline of a massive file tree. And I emit data somewhere saying that each of those hashes is reconstructed by M, that saves me checking smaller things individually.
+
+A ghost that says X can be reconsturcted by Y is all we need. In the case of directories:
+
+	fs:root:x/y/R    -> [234a]
+
+Means that R is a container for 234a as a stack of hashes.
+
+What if I crated some other block
+
+	store:^ab1234:pointer2   -> [9934a]
+
+This basically says that if I have [ab1234], I could reconstruct 9934a, by using pointer2. This in turn can be validated by a filesystem hash:
+
+	fs:root:/big/file/here     -> [ab1234]
+
+So this means that the AFN->ghost hash can store meta data in a general way that X can reconstruct Y.
+
+In the above example, store: acts like a packfile pointer. If we repack, we simply emit new ghosts and garbage collect the old references. There also might be some way of incrementally building fast paths to objects we use frequently.
+
+So back to the reconstruct mode, as long as I can find an object that meets my scan critiera, if it say it has hash X and we know wht hash X implies hash Y, than that object reconstructs Y. Its sort of a transitive property of CRH();
+
+A reconstruct operation can always boil down to placing ghosts in the place that the target says to put them, and moving the other things out of the way. A reconstruct that cleans is almost as simple as a second pass that just goes through and removes everything found that isn’t in the target.
+
+Can this work with files that are split into tiny peices? Lets say I have a big file
+
+	fs:root:/path/bigfile.dat -> [234ab]
+
+When I split it up, I create a funny little truthy object that contains the following
+
+	split:^234ab:0000-0020    -> [abc423]
+	split:^234ab:0021-0040    -> [9c325f]
+	split:^234ab:0041-0070    -> [a7ccf3]
+
+The big file just stays where it is. (Nothing changes.) But i’ve now identified smaller peices of that object that could be matched from other files. This meta file say has hash [7672b]
+
+Now say I have a second big file that has many of the same blocks called bigfile2.dat.
+
+	fs:root:/path/bigfile2.dat -> [777e3]
+
+I split into many little peices and I’ll get:
+
+	split:^777e3:0000-0020    -> [abc423]
+	split:^777e3:0021-0040    -> [52234a] <--the only difference
+	split:^777e3:0041-0070    -> [a7ccf3]
+
+Together, all of this peices sum up (like a directory) to hash [123ab]
+
+Now I guess (and this is really the tricky thing), there needs to be some overarching object that holds these baby peices together. In this case, two objects. 
+
+	merge:^777e3:    -> [123ab]   (for bigfile 2) 
+	merge:^234ab:    -> [7672b]   (for bigfile 1)
+
+These two objects say that if you are looking for ^777e3, you can find it by pulling open the ^123ab object. 
+
+Now imagine there is some sort of absorb operation that pulls a file into an objectstore. 
+
+In this case, the operation needs to have backing state (e.g. I store state) for these two ghosts:
+
+	fs:root:/path/bigfile.dat -> [234ab]
+	fs:root:/path/bigfile2.dat -> [777e3]
+
+Technically these two files dont’ exist anymore. But if they were tied up in a commit object, we’ll preserve the ghosts of those files.
+
+When we try to reconstruct 777e3, we won’t find it. So we’ll look for merge:^77e3, and get a pointer to a split object. That will then share with us data like this
+
+	split:^777e3:0000-0020    -> [abc423]
+	split:^777e3:0021-0040    -> [52234a] <--the only difference
+	split:^777e3:0041-0070    -> [a7ccf3]
+
+Now, we could potentially treat this as a directory, which might work better. Lets pretend the split file actually reads like this:
+
+	split::^777e3              -> [123ab]
+	split::^777e3/0000-0020    -> [abc423]
+	split::^777e3/0021-0040    -> [52234a] <--the only difference
+	split::^777e3/0041-0070    -> [a7ccf3]
+
+Now according to the usual rules, if I want an object of 777e3, i can opt to replace it with its children. 123ab is the hash of the childrens descriptor. That assumes I have some clean way to locate the children, but it will be just as clean as the directory approach. 
+
+Remember the corresponding merge object was
+
+	merge:^777e3:    -> [123ab]   (for bigfile 2) 
+
+I actually think this is backwards. The merge object FULFILLS the hash of 777e3. Maybe its better to emit the truth in the oppositite way:
+
+	merge:^123ab:    -> [777e3]   (for bigfile 2) 
+
+That means that the merge object will appear on searches for the hash. So redoing the previoius logic, I seek 777e3. I don’t find a file, but rather a merge object. The merge object gives me a path that i can go to the FSE, and learn that 
+
+	split::^777e3              -> [123ab]
+
+Which now gets me to the 123ab object with the actual splits.
+
+When we read a split object, we could automatically make sure the merge object is created. The two are really just inverses of each other.
+
+This brings me to another point. In fact, its another contadicition about directories in the present implementation. There is no logical separation between the hash of the thing that describes a transformation and the hash of the result of the transformation.
+
+Say I have a directory A. I wonder if its really much cleaner to say
+
+	fs:root:/path/to/A    ->  [f66ed]
+	directory:^123bc      ->  [f66ed]
+
+Which basically says that if you need a directory with hash f66ed, you can get it either by reading it from disk right now, or by pulling it from a directory descriptor ^123bc.
+
+In the split/merge case, we have a bigfile2.dat blob with hash 777e3. I want to say you can get it either by reading from disk as a pathname, or by addressing a split object. But the split object does not have the hash 777e3. It has some other hash.
+
+Many operations in GFS seem to have this pattern. Either you get something by reading it from a place, or you get something by applying a transformation over several other things that have a descriptor that ties them together.
+
+In a strange way, the splits are the children of the blob. What if you had a second hash {99494} that could be stored on a ghost. Does this make it cleaner?
+
+	fs:root:/path/bigfile.dat -> [234ab] {}
+	merge:234ab               -> [234ab] {55332b}
+
+Where 55332b is the descriptor that can enumerate the children. Since there might be several different ways of enumerating children of an object, you’d not want to actually put this on the other thing. 
+
+I find this extra field overly redudant because the same hash seems to live in a few different places. 
+
+So that brings us back to merge objects then, which describ the result of combining a split object together. ANd then implictly give you the split object’s hash that you then track down, and get children on that object.
+
+
+
+
+
+Interesting new thought: if we generalized ghosts to be AFN -> state about a file. what if it was AFN -> truth about the AFN?
+
+Then the HASH->AFN map is actually just
+
+  fs:root:numchucks    -> [2342111] 
+	blob:2342111 -> (no hash), pointer=fs:root:numchucks
+
+But the lovely thing here now is that the revocation for the blob follows cleaner, learnable rules.
+
+I realy likke this. And it means I can get nearly everything i need out of a KV pair storage system.
+
+
+# MOBs and Packfiles
+
+So in this emerging architecture, we have split objects which are basically blobs tagged with a bit of extra information, and we have directory objects. How do we efficiently managed these things when they grow into the scale of millions?
+
+Clearly the packfile is the key here. But I think the GFS concept of a packfile is a little different. A packfile needs to be able to hold ghosts as well as MOBs (which are basically blobs.) 
+
+The packfiles have to have a way to quickly check if content is available by hash. There might even be use cases where we’d also want to be able to address things by AFN, but doing that poses some complications. (It would be really nice if all AFNs were themselves blobs but i’m not sure if SHA1 is strong enough to deal with them uniquely like that. Boy that would certainly solve a lot of problems if that were true. Then ghosts become blobs, and the AFN->ghost tree is just a hash->hash pointer table. Maybe this is worth a look.)
+
+The dumbest way I can think to implement packfiles is that we have some 
+
+
+
+# Volumes
+
+The tricky thing about volumes is that they can be unmounted. And then a ton of ghosts for that volume become invalid. The question is if we maintain two ghosts for both the actual state of the filesystem, as well as the viritual state of the disk. It might be cleaner if we didn’t create fs: objects at all. Theoretically this is possible. if you ask for a fs style ghost underneath a path that is part of a volume, what if the TK actually just passed you back a vol: object? I wonder if frankly most of the code would even care. In cases when the volume is offline, the volume ghosts would (somehow) be immutable. They could filfill searches for the hash they point to. Another way to handle this is for volume LFNs to be fs: handlers, but the ghosts are marked in such a way that unmounting the volume does not cause any revocation. 
+
 
 # special revocation rules
 
@@ -112,6 +281,32 @@ A very prototypical idea. But what if we could define a “domain” which is a 
 Whats nice about this structure is that the system can know the data returned are versioned and specific inside the scope.
 
 I’m thinking this would be the ideal backing store for a volume.
+
+Is there a compact way to “version” a domain? E.g. some sort of copy on write mechanic? If each backup was a domain, we’d have a massive amount of overlap between them. 
+
+You’d want to be able to fork a domain, and inside that new domain, it only writes new objects specific to that stream.
+
+Its sort of like a multi-version keystore with at least one consistent index on an interior field (hash).
+
+I’d also want some ability to store larger bits of data (a la packfile) inside the domain.
+
+/foo/bar.txt + effective date X ---> Object
+each object inside is basically a hash to another data structure that is compactable (e.g. some sort of extents mechanism.)
+
+That means that some data may be revoked. E.g. once an entry is removed, it still needs and entry there to prevent from being recalled.
+
+I think datomic does this.
+
+I’d really want pointer reassignment to work well. I’m not sure I can pin down why exactly. But this idea that I have a master list of backups and that list may change is driving me nuts.
+
+http://www.benhallbenhall.com/2013/06/version-data-keys-nosql-storage-environment/
+http://stackoverflow.com/questions/22920240/what-nosql-database-categories-support-versioning
+
+
+
+
+
+
 
 
 # How does Bup Handle splits?
