@@ -187,9 +187,62 @@ So in this emerging architecture, we have split objects which are basically blob
 
 Clearly the packfile is the key here. But I think the GFS concept of a packfile is a little different. A packfile needs to be able to hold ghosts as well as MOBs (which are basically blobs.) 
 
-The packfiles have to have a way to quickly check if content is available by hash. There might even be use cases where we’d also want to be able to address things by AFN, but doing that poses some complications. (It would be really nice if all AFNs were themselves blobs but i’m not sure if SHA1 is strong enough to deal with them uniquely like that. Boy that would certainly solve a lot of problems if that were true. Then ghosts become blobs, and the AFN->ghost tree is just a hash->hash pointer table. Maybe this is worth a look.)
+The packfiles have to have a way to quickly check if content is available by hash. There might even be use cases where we’d also want to be able to address things by AFN, but doing that poses some complications. (It would be really nice if all AFNs were themselves blobs but i’m not sure if SHA1 is strong enough to deal with them uniquely like that. Boy that would certainly solve a lot of problems if that were true. Then ghosts become blobs, and the AFN->ghost tree is just a hash->hash pointer table. Maybe this is worth a look. Maybe we just experimentally see if we get hash collisions on small filenames and go from there.)
 
-The dumbest way I can think to implement packfiles is that we have some 
+The dumbest way I can think to implement packfiles is that we have some table up front with a list of hashes and their offsets into the file. Git uses some kind of binary search, which seems reasonable. There might be some advantages to using git’s format directly. In any case, I think we’d want to support object revocation more explicitly. Or have overflow tables so the binary tree of hashes at the start doesn’t have to be known up front.
+
+My version of packfiles has to support ghosts. If I have a ghost that has information about hash XXXX but isn’t actually that hash, how does it get stored and retrieved? One dumb way is to let the content NOT equal the hash pointing to it. Maybe throw a bitflag on the LUT to distinguish between a blob and a descriptor. Of course, that means that a single hash might actually have several different contents. 
+
+Another way is that a packfile could be interleaved in some way.
+
+
+# KVS and immutability
+
+Is there any way to implement a key value store with immutable hash lookups?
+
+https://en.wikipedia.org/wiki/Persistent_data_structure
+https://www.ctl.io/developers/blog/post/immutability
+https://joearms.github.io/2015/06/19/Mutable-Value_Chains.html
+
+This kind of magic would actually enable some pretty neat behavior.
+
+Packfiles support blob storage, but not naming. If I want to ask a packfile what it has with a particular name, I am SOL. 
+
+here is a simple hypo. Say I have a file A with the trusted names of hashes in the format
+
+	name -> [hash]
+
+Now, I hash up that entire file A, and stick it in the database. Lets call that the HEAD. 
+
+Now time passes, and I start to want to change the names. I write the new values that I want into a new file B, and I stick along a pointer to the old file A. So the rule is, go to head, see if you can find the thing you want, if not, got to the next object and try there. This could be easily multithreaded with a reduce operation.
+
+If the names were self describing enough, i wouldn’t even need a pointer. You’d just carry an “effective date”.
+
+I think there are libraries to write out immutable Btrees somewhere. There is also this constant database which is pretty popular (Bindings in perl, haskell, etc)
+
+https://cr.yp.to/cdb.html
+
+Btree is harder to find:
+
+https://www.usenix.org/legacy/event/hotstorage11/tech/final_files/Twigg.pdf
+https://www.perforce.com/blog/110928/short-history-btree
+http://www.hpl.hp.com/techreports/2007/HPL-2007-193.pdf
+
+A nice implementation
+
+https://github.com/orodeh/bt
+https://github.com/orodeh/rocksdb
+
+Even a diagram!
+
+http://www.bzero.se/ldapd/btree.html
+https://www.usenix.org/legacy/event/lsf07/tech/rodeh.pdf
+
+Feels like the ideal data structure I want is basically a packfile architecutre for b-trees with COW. I think ZFS does this. I want to insert true K/V data (true = where the K != hash(value)) in a write-only mode and insert it as a immutable object when I’m done. Then I want primitives that let me open a new working file, store new K/V as COW, with pointers back to the old structures for the parts that haven’t changed.
+
+Every so often, I’m happy to checkpoint, meaning that I go through and build a new tree that compacts out all of the old versions. 
+
+Not really clear how optimal this needs to be. 
 
 
 
