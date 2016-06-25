@@ -39,6 +39,19 @@ gfs reconstruct foo.snap
 - [x] Lower priority: wire in reads of directory caches to properly populate children, find some easy way to get LFNs for children fast
 
 
+
+# Brain slow today
+
+X is a ghost. I want to reconstruct X. 
+
+Step 1: Check if I have a definition of X somewhere.
+	Case A: Yes, I have X. Next, go through X's children. Anything in X that is a real file should be copied. Anything that is a directory, repeat the other thing.
+
+	Case B: I can't find X. Oh. That sucks. well, that part won't be reconstructed. Better make a note somewhere and try the next shot.
+
+	
+
+
 # Reconstruction revisited
 
 Reconstruction is when I am given a set of sources and asked if that entire set of sources could reconstruct the target. 

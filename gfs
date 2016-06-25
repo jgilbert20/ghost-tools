@@ -727,8 +727,8 @@ sub doverb_debug()
 		$m->readFromFile( "foo.newsnap" );
 	}
 
-	# Writes the string into a file witha  given name, exercising 
-	# the dynamic hash state update process 
+	# Writes the string passed via commandline into a file with a given name,
+	# exercising  the dynamic hash state update process
 	elsif( $command eq 'write-lfn')
 	{	
 		my $contents = shift @ARGV;
@@ -741,9 +741,31 @@ sub doverb_debug()
 		my( $targetUserFN, $targetFqlfn, $targetGhost ) = @{$targetStash->[0]};
 
 		$targetGhost->write( $contents );
-
-
 	}
+
+	# Makes a directory at the pointed location - automatically moves 
+	# existing things if needed
+	#
+	elsif( $command eq 'mkdir')
+	{	
+		my $path = shift @ARGV;
+
+		die "usage: mkdir [path]" unless defined $path;
+
+		my $tk = TruthKeeper::get();
+		my ($targetGS, $targetStash) = $tk->makeGhostsFromCommandLine( $path );
+		my( $targetUserFN, $targetFqlfn, $targetGhost ) = @{$targetStash->[0]};
+
+
+		if( $targetGhost->exists() && !$targetGhost->canHaveChildren() )
+		{
+			$targetGhost->clearToNewPath();
+		}
+
+		$targetGhost->mkdir( $path );
+		$targetGhost->flush();
+	}
+
 
 	# Get info for a hex digest 
 	elsif( $command eq 'hashinfo')
@@ -1358,6 +1380,71 @@ sub doverb_checkpoint()
 		$g->flush();
 	}
 }
+
+
+# brain dead on airplane. trying my best. 
+
+sub newReconstruct
+{
+	my $pattern = shift; # the thing we want to reconstruct
+	my $target = shift; # place to reconstruct it under
+
+
+
+
+
+
+}
+
+
+sub reconstructHelper
+{
+	my $p = shift;
+	my $t = shift;
+
+
+	my $px = $p->quickDebugString();
+	my $tx = $t->quickDebugString();
+	
+	debug "Entering traverser for:";
+	debug "   Pattern: $px";
+	debug "    Target: $tx";
+
+	main::debugLevel(1);
+
+	# Great, here I am at P in the Pattern
+
+	# Simplest case, we just construct a subpath and call store
+	my $subThing = $t->createGhostAsSubpath( $p->getPathBasename() );
+
+	my $sx = $subThing->quickDebugString();
+	print "Made $sx";
+
+	# technicaly, should see if this new ghost exists, and could avoid the
+	# descent if it exists and has the same hash
+
+	if( $p->canHaveChildren() )
+	{
+		$subThing->mkdir();
+
+		foreach my $c ( $p->getChildren() )
+		{
+			reconstructHelper( $c, $subThing ); 
+		}
+	}
+	else
+	{
+		$subThing->store( $p );
+	}
+
+
+
+	main::debugLevel(-1);
+
+}
+
+
+
 
 sub reconstructTestAction
 {
@@ -4347,6 +4434,36 @@ sub touchSmallfile
 
 
 
+sub mkdir
+{
+	my $self = shift;
+	my $ghost = shift;
+
+	my $x = $ghost->quickDebugString();
+	debug "FSE/Mkdir: Asked to mkdir ($x)";
+
+	if( ! $ghost->exists( main::now() ) )
+	{
+		debug "FSE/Mkdir: Ghost doesn't exists case, making new directory";
+
+		main::globalMkPath( $ghost->getPath() );
+		$ghost->learnContentsChanged( main::now() );
+		return; 
+	}
+
+	if( $ghost->canHaveChildren() )
+	{
+		debug "FSE/Mkdir: Ghost already exists and is already a directory - end!";
+		return; 
+	}
+	else
+	{
+		debug "FSE/Mkdir: Not good, already exists but as a file!";
+		die "Cannot mkdir on a path that is a regular file - move it first!";
+	}
+
+
+}
 
 
 # 
@@ -4449,6 +4566,21 @@ sub store
 }
 
 
+sub clearToNewPath
+{
+	my $self = shift;
+	my $ghost = shift;
+
+	print "clearToNewPath requested.\n";
+	my $newLocation = $ghost->generateAlternativeLocation( 'clearToPath' );
+	CODEPATH( "clearToNewPath");
+
+	$ghost->moveGhost($newLocation);
+
+	return $newLocation;
+}
+
+
 sub write
 {
 	my $self = shift;
@@ -4523,6 +4655,8 @@ sub write
 
 	$target->learnFullHash( time(), $hash );
 
+	$target->flush();
+
 	return $target; 
 }
 
@@ -4581,6 +4715,8 @@ sub moveGhost
 		die "Assert: Move succeeded but the getSize() no longer matches - what gives? Orig=$originalSize New=$newSize";
 	}
 
+	$target->flush();
+	$source->flush();
 
 	return $target;
 }
@@ -7596,6 +7732,13 @@ sub getPath
 	return $path;
 }
 
+sub getPathBasename
+{
+	my $self = shift;
+	my ($handler, $root, $path ) = main::parseFQLFN( $self->lfn() );
+	return basename $path;
+}
+
 sub getLFNcompontents
 {
 	my $self = shift;
@@ -7859,14 +8002,36 @@ sub verifyGhostIsMutable
 # wonderful things that we just pass over to the FSE.
 #
 
-
-
 sub store
 {
 	my $self = shift;
 	my $thing = shift;
 
 	return $self->getFSE()->store( $thing, $self );
+}
+
+
+# Moves the ghost to a clear location
+
+sub clearToNewPath
+{
+	my $self = shift;
+	my $thing = shift;
+
+	return $self->getFSE()->clearToNewPath( $self );
+}
+
+
+
+# Tells the system we want this ghost to be a directory oject.  pass the buck
+# up to our FSE.  Generally, if we exist as a directory already, everything is
+# fine but if we don't, its an error.
+
+sub mkdir
+{
+	my $self = shift;
+
+	return $self->getFSE()->mkdir( $self );
 }
 
 
@@ -9016,10 +9181,13 @@ sub getStatSourceVerify
 	return ( $size, $mtime, $mode );
 }
 
+# calls a function you provide once per node, pre-traversal.
+
 sub traverse
 {
 	my $self = shift;
 	my $function = shift;
+	my @otherStuff = @_;
 
 	my $r = $function->($self);
 
@@ -9028,12 +9196,37 @@ sub traverse
 		my @c = $self->getChildren();
 		foreach my $c (@c)
 		{
-			$c->traverse($function);
+			$c->traverse($function, @otherStuff );
 		}
 	}
 
 	$self->flush();
 }
+
+
+sub createGhostAsSubpath()
+{
+	my $self = shift;
+	my $str = shift; 
+
+	die "not implemented yet";
+
+	my $parentPath = $self->getPath(); 
+	my $childPath = File::Spec->catfile( $parentPath, $str );
+	my $parentHandler = $self->getHandler();
+	my $parentRoot = $self->getRoot();
+	my $destLFN = main::assembleLFN( $parentHandler, $parentRoot, $childPath );
+
+	debug "createGhostAsSubpath: parent:[$parentPath] + str:[$str] -> [$childPath] ($destLFN)\n";
+
+	my $tk = TruthKeeper::get();
+	my $newChild = $tk->obtainGhostForLFN( $destLFN );
+
+	return $newChild; 
+}
+
+
+
 
 
 
