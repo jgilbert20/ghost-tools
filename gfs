@@ -749,7 +749,7 @@ sub doverb_debug()
 	elsif( $command eq 'hashinfo')
 	{	
 		my $digest = shift @ARGV || die "must provide a digest (hex stuff only)";
-		my $hash = assembleHashFromDigest( $digest );
+		my $hash = main::assembleHashFromDigest( $digest );
 
 		my $tk = TruthKeeper::get();
 		my @g = $tk->obtainGhostsForHash( $hash );
@@ -1375,7 +1375,8 @@ sub reconstructTestAction
 	my $func = sub { my( $candidate, $target ) = @_; 
 			$candidate->isSameFilename( $target ) ? $CODE_SKIP_DUPLICATE : $candidate };
 
-	my @dups = $ghost->forDuplicatesMap( $func );
+	my $tk = TruthKeeper::get();
+	my @dups = $tk->forDuplicatesMap( $ghost, $func );
 
 	foreach my $d (@dups)
 	{
@@ -1443,11 +1444,9 @@ sub doverb_reconstruct()
 	
 		if( $g->exists() )
 		{
-
 			my $r = reconstructTestAction($g);
 
 			print "Result from reconstruct: $r\n";
-
 
 			# $g->calculateDeepFields();
 			my $deepSize = $g->getDeepSize();
@@ -1462,9 +1461,6 @@ sub doverb_reconstruct()
 			print "$fqlfn: file not found\n";
 		}
 	
-	
-
-
 		$g->flush();
 	}
 }
@@ -2165,10 +2161,12 @@ sub readFromFile
 	my $fn = shift;
 
 	open FILE, "<$fn" or die "Could not open $fn to read deep tree";
-	my $tk = TruthKeeper::get();
+	#my $tk = TruthKeeper::get();
 	# my $p = $tk->obtainGhostForLFN( "virt:root:");
 
-	$self->slurpChildren( undef );
+	my @stuff = $self->slurpChildren( undef );
+
+	print Data::Dumper::Dumper( @stuff );
 
 	close FILE;
 }
@@ -4830,15 +4828,51 @@ sub makeGhostsFromCommandLine
 
 	foreach my $lfn (@stuff )
 	{
-		my $fqlfn = main::fullyQualifyLFN( $lfn );
+		# hack, but not sure a better way to handle. Might be better to move
+		# this logic into the obtain function and make sure fullyQualifyLFN()
+		# can deal with the carret notation
 
-		debug "Make Ghost Via CommandLine user provided ".
-			"lfn:[$lfn]->fqLFN:[$fqlfn] from command line to store\n"
-			if $tkdebug;
+		if( $lfn =~ /^\^(\w+)/ )
+		{
+			my $digest = $1; 
+			debug "Make Ghost Via CommandLine user provided ".
+				"digest:[$digest] from command line to store\n"
+				if $tkdebug;
 
-		my $g = $self->obtainGhostForLFN($fqlfn);
-		$gs->addGhost( $g );
-		push @stash, [$lfn, $fqlfn, $g ];
+			my $hash = main::assembleHashFromDigest( $digest );
+
+			my @g = $self->obtainGhostsForHash($hash);
+
+			my @ok;
+
+			print "Located the following ghosts for [$hash]\n";
+			foreach my $r ( @g )
+			{
+				my $xr = $r->quickDebugString();
+				print "    -> $xr\n";
+				push @ok, $r if $r->exists();
+			}
+
+			my $g = shift @ok; 
+
+			die "Could not find a valid, existing hash for [$lfn]" unless defined $g;
+
+			$gs->addGhost( $g );
+			push @stash, [$lfn, $g->lfn(), $g ];
+
+		}
+		else
+		{
+			my $fqlfn = main::fullyQualifyLFN( $lfn );
+
+			debug "Make Ghost Via CommandLine user provided ".
+				"lfn:[$lfn]->fqLFN:[$fqlfn] from command line to store\n"
+				if $tkdebug;
+
+			my $g = $self->obtainGhostForLFN($fqlfn);
+			$gs->addGhost( $g );
+			push @stash, [$lfn, $fqlfn, $g ];
+		}
 	}
 
 	return ($gs, \@stash);

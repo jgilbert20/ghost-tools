@@ -5,9 +5,20 @@ It is a collection of work in progress (or sometimes retired) ideas.. anything t
 
 Current goal: Tidy backup and restore. Backup writes new files into a tree and a commit hash of the directory state. Backups can be named. Restore takes the name and reconstructs it somewhere else. Permanent metadata about the state of the backup is checkpointed into a deep tree object so that if metadata is destroyed we can recover it. Work is done when we can back up a directory a few times, then restore it, then blow away metadata, restore that, and then restore another file.
 
+gfs checkpoint dir-a
+gfs debug newsnapwrite dir-a
+gfs debug newsnapread dir-a
+gfs reconstruct foo.snap
+
+
+
 - [ ] actually test the new learnAFNlist() functionality with a few different cases to convince myself its stable
 - [ ] finish backup action - should write out a deep hash object
 - [ ] wire in a reconstruct verb that uses recursion. And we should be able to test it works by clearing the caches, recheckpointing, etc
+- [ ] Test speed. 
+
+
+
 - [ ] rel2abs is generating paths like ../../../ in the AFN queue, can we actually just say revokes only happen on REAL things?
 - [ ] ultimately, checkpointing probably ought to clear out all objects below that path
 - [ ] what do we do about revokes during the learn and flush? Hashes will change on the ghosts held by the GDB, but should that trigger revokes? Also sometimes it triggers stats too. This is quite wasteful. 
@@ -238,11 +249,30 @@ Even a diagram!
 http://www.bzero.se/ldapd/btree.html
 https://www.usenix.org/legacy/event/lsf07/tech/rodeh.pdf
 
+other b tree
+http://fallabs.com/qdbm/plspex.html
+http://fallabs.com/kyotocabinet/
+
+
 Feels like the ideal data structure I want is basically a packfile architecutre for b-trees with COW. I think ZFS does this. I want to insert true K/V data (true = where the K != hash(value)) in a write-only mode and insert it as a immutable object when I’m done. Then I want primitives that let me open a new working file, store new K/V as COW, with pointers back to the old structures for the parts that haven’t changed.
 
 Every so often, I’m happy to checkpoint, meaning that I go through and build a new tree that compacts out all of the old versions. 
 
-Not really clear how optimal this needs to be. 
+Not really clear how optimal this needs to be. I have about 3M files in my collection. Thats 384MB of key values not using any compression. So this whole shebang could be about a few GB. 
+
+Anyway such a structure would let btree information scatter from node to node efficiently and would provide a natural structure for partitioning.
+
+The question I suppose is if it would outpreform simply tree based data structures and blobs in a packfile for the more typical workloads. For instance, what if we serialized ghosts with all of the relevant fields for each directory, and then created a merckle tree a-la git? That would work pretty well EXCEPT for the meta-information about verification. E.g. during checkpointing, massive updates to the lastStat would cause rewriting of the entire tree. UNLESS we had some mechanism for representing cascading updates. E.g. a deepLastStat, and if present on a parent, meant that all of the children were verified stats to that date. That would cut down on the rewrites enormously. Git sort of implicity has this -- a tree objects is taken to have its stats up to date simply because that is how git writes these objects out. This means you can represnt a checkpoint with a bit of data saying: “the oldest stat date of any object in this tree is X, and the oldest fullHash of any object int is tree y is Y” and seal that over all of the old ghosts.
+
+This new idea could potentially be massively more efficient than the B-tree thing. 
+
+But it would take some care and caution. When you pulled out a subpart of the tree to do something with it, that subtree doesn’t stand on its own anymore. You’d have to rewrite it on the spot after extracting it since its parent might override some of its fields.
+
+Another idea is that lastHash and lastStat might just not be thigs you need to keep on an ongoing basis at the ghost level. Sure, you need each instance of GFS to have its own data like this. But the stuff that gets checkpointed and shared could just be a high level “warrant” object that says “hey, i checked the following things as of X date”.
+
+
+
+
 
 
 
