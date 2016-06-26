@@ -2752,17 +2752,28 @@ sub saveGhostToStore()
 
 	debug "   Commited ghost to DB store" if $saveGhostDebug;
 
-	if( $g->hasAcceptableEnumeration() )
+	#if( $g->hasAcceptableEnumeration() )
+	if( $g->hasAcceptableDeepScan() && $g->hasAcceptableEnumeration() )
 	{
 		# this should delegate to a managed object
 		my $buffer = $g->generateTreeSignatureBuffer();
 		my $ojx = $main::coreOjxFSE;
 
-		die unless defined $buffer;
+		if( not defined $buffer )
+		{
+			# Strange case, lets report it
+			$g->printDebug();
+			die "Attempted to serialize [$g] and got something undefined - checkpoint issue?";
+		}
 
 		$ojx->absorbScalar($buffer);
 
 		#print "+++_+_+_+ ** TO implement: storage of the dirfile -- GOOD TO GO!\n";
+	}
+	else
+	{
+		warn "I am not writing $g into directory object b/c it has no recent deepscan i trust";
+
 	}
 
 

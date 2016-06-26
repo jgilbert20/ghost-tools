@@ -7,7 +7,23 @@ and end of test should reveal out of the universe of codepaths what was hit.
 each run should increment a runcount
 generate a unique name for that invocation
 and compare what it got this time to last time
+\
 
+
++++
+
+test case: 
+clear GFS
+make directoru with two files
+gfs debug lschildren. 
+
+should NOT create a directory object because deep scan not available
+
++++
+test all cases where a file could overwrite a directory
+or a directory could overwrite a file
+
++++
 
 for this to work, all prints must become debugs
 and the debug flags must be promoted to top level things
