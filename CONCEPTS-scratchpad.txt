@@ -49,7 +49,61 @@ Step 1: Check if I have a definition of X somewhere.
 
 	Case B: I can't find X. Oh. That sucks. well, that part won't be reconstructed. Better make a note somewhere and try the next shot.
 
-	
+
+
+
+
+
+
+
+# Thunk design
+
+StoreThunk basically writes a file that is a promise just containing the hash. 
+
+Maybe we write a thunk in cases where a restore / reconstruct cannot find the file. Then we provide some operations
+
+	gfs thunk make xxxx
+	gfs thunk restore .
+	gfs thunk ls . 
+
+I think the contract is that making a thunk forces the object into the internal repository no matter what. (Maybe a command line overrides this.)
+
+Restoring thunks is a copy operation. We’ll let the user GC to get rid of thunks.
+
+Thunks need to put their contents into a list of protected objects. GFS needs to be really sure that it never deletes something that has a thunk representation.
+
+The list of protected objects could be persisted by a pointer to a block which is a list of hashes pointing to a true or a false, with a header that points to the previous block in the chain. And every so often you do a compact operation.
+
+You’d actually get nice transactional semantics as long as the write to the new HEAD was atomic.
+
+The question is what content does a thunk  show to the layer. I think copying it with a store should pull the full thing. And getchecksum should get the interior of the file the thing it points to? 
+
+Actually I think it's best to treat it as a non file. Once it's been typed inclusion into directory objects or use in store and retrievals ought to be managed as a separate codepath. The default would always be to just treat it as a file with its own hash. 
+
+In some cases if we checkpoint it we'd want the directory objects to pretend the thunk was real. In other cases no. 
+
+We need the infrastructure to handle the idea that managed objects are registered. And we can mark i. Then ghost if they have been absorbed or not. 
+
+I'm not sure if absorbing needs learning rules. But typing does. 
+
+Change to hash should revoke type. 
+
+If we make the checksum stable we can handle finding thunks for any given file really easy. We can I'd all thunks by hashing the hash the sa,e way and look for duplicates. 
+
+If we had a check summing mechanism where the hash didn't start until after the header we could squeeze more functionality out of this trick. 
+
+So to do this, we need a getFileType which returns some sort of structured string. GFS can have its own types. Type is revoked when mode or hash changes. 
+
+I wonder if we should give mobs a namespace that is generated when a file is typed as a MOB. If we did this, it would be simpler to iterate through all objects of type X. 
+
+So when you read foo.mob, it creates a ghost
+
+	mob:thunk:[original hash] -> [hash of thunk]
+
+This means that when the hash is cleared, we may want to revoke these ghosts. Or maybe, since they will be verified anyway, we just 
+
+
+
 
 
 # Reconstruction revisited
