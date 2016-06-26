@@ -743,8 +743,28 @@ sub doverb_debug()
 		$targetGhost->write( $contents );
 	}
 
+
+	# Writes the string passed via commandline into a file with a given name,
+	# exercising  the dynamic hash state update process
+	elsif( $command eq 'new-recon')
+	{	
+		my $pattern = shift @ARGV;
+		my $target = shift @ARGV;
+
+		die "usage: new-recon [pattern] [target]" unless defined $pattern and defined $target;
+
+		my $tk = TruthKeeper::get();
+		my ($patternGS, $patternStash) = $tk->makeGhostsFromCommandLine( $pattern );
+		my( $patternUserFN, $patternFqlfn, $patternGhost ) = @{$patternStash->[0]};
+		my ($targetGS, $targetStash) = $tk->makeGhostsFromCommandLine( $target );
+		my( $targetUserFN, $targetFqlfn, $targetGhost ) = @{$targetStash->[0]};
+
+		reconstructHelper( $patternGhost, $targetGhost );
+	}
+
+
 	# Makes a directory at the pointed location - automatically moves 
-	# existing things if needed
+	# existing things if needed. Tested and works.
 	#
 	elsif( $command eq 'mkdir')
 	{	
@@ -1425,6 +1445,13 @@ sub reconstructHelper
 
 	if( $p->canHaveChildren() )
 	{
+		# We need to be sure this object is actually a directory, if not, clearance move
+
+		if( $subThing->exists() && !$subThing->canHaveChildren() )
+		{
+			$subThing->clearToNewPath();
+		}
+
 		$subThing->mkdir();
 
 		foreach my $c ( $p->getChildren() )
@@ -1434,10 +1461,17 @@ sub reconstructHelper
 	}
 	else
 	{
+		# We need to be sure this object is not a directory
+
+		if( $subThing->exists() && $subThing->canHaveChildren() )
+		{
+			$subThing->clearToNewPath();
+		}
+
 		$subThing->store( $p );
 	}
 
-
+	$subThing->flush();
 
 	main::debugLevel(-1);
 
@@ -1565,7 +1599,7 @@ sub doverb_checksum_single()
 
 	my $c = $targetGhost->getFullHash();
 
-	print "Full hash is $c\n";
+	print "Full hash is $targetGhost -> $c\n";
 	$debugDump{run}->{getFullHash} = $c;
 
 	$targetGhost->flush();
@@ -9228,8 +9262,6 @@ sub createGhostAsSubpath()
 {
 	my $self = shift;
 	my $str = shift; 
-
-	die "not implemented yet";
 
 	my $parentPath = $self->getPath(); 
 	my $childPath = File::Spec->catfile( $parentPath, $str );
