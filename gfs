@@ -6554,6 +6554,15 @@ sub new
 	return $self;
 }
 
+
+# bit of magic that makes (some) debug messages look better by overloading
+# stringification
+
+use overload fallback => 1,
+        '""' => sub { my $self = shift; return $self->quickDebugString() }; 
+
+
+
 # simple utility for seeing where ghosts came from to track down tricky
 # debugging scenarios
 
