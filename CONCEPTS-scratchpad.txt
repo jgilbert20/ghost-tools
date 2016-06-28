@@ -100,7 +100,114 @@ So when you read foo.mob, it creates a ghost
 
 	mob:thunk:[original hash] -> [hash of thunk]
 
-This means that when the hash is cleared, we may want to revoke these ghosts. Or maybe, since they will be verified anyway, we just 
+This means that when the hash is cleared, we may want to revoke these ghosts. Or maybe, since they will be verified anyway, we just leave that up to garbage collection.
+
+I suppose if you can’t find a hardfile with the hash anywhere its safe to purge this mob ghost.
+
+## MOB general
+
+$ghost->isManagedObject();
+
+Primary way to instantiate a MOB from a ghost
+
+	$mo = $ghost->getManagedObject();
+
+Primary way to trigger loading of mob contents
+
+	$ghost->absorbManagedObject();
+
+maybe its absorb that creates the mob lookups
+
+I think each mob should self sign so we can detect corruption
+
+each mob supports a serialize and deserialize syntax? actually, don’t know if that is a good idea. Better to connect the MOB to a file on disk to allow memory mapping, etc. Or maybe we need to support both syntaxes.
+
+
+# volume design 
+
+When you make a new volume, it will write a volume descriptor object with a random hash of the date, a name and maybe some other characteristics to a file at the root, maybe something like 000_GFS_VOLUME or somesuch. 
+
+When this file is discovered, it will register
+
+	mob:volume_hash:[volume_hash] -> [voldescriptor hash]
+	mob:volume_name:myvol         -> [voldescriptor hash]
+
+I guess the root of the object could be inferred from the ghost? How do we ensure a volume is uniquely loaded and not duplicated? We have to keep out any confusion as to where the latest place is. Maybe if at any point we get an isDuplicate() which doesn’t appear in the object store its a problem? I’m not sure we’ve got a great way of knowing if a ghst is part of a volume or object store.
+
+I THINK like most mobs, discovery should intake into the object store and eventually queue onto the authoritative list, or whatever construct we use to know which objects we “own” (and prevent from GC)
+
+So how do we know inside the framework that a particular ghost should be seen as part of a volume (or a object store, for that matter?)
+
+The dumbest way to do this is that we have the paths to the roots of these things, and every time we see an LFN we check it against this list.
+
+Does this support the case where the volume is available over ssh? I THINK so.
+
+so lets say we do a
+
+	gfs copy blah.txt vol:MyVol:neep.txt
+
+I get how this works. The volume handler is going to down reference to the local file system, aking it equivilent
+
+	gfs copy blah.txt fs:root:/volumes/mount/MyVol/neep.txt
+
+But if you executed the second thing directly, how do we update the ghost for ‘vol:MyVol:neep.txt’?
+
+One answer is that we don’t, and we leave it up to checkpointing of a volume to find things like this.
+
+One way to deal might be at the directory level.
+
+If every operation navigated to a path from the root, could it “pick up” this kind of extra data?
+
+So writing fs:root:/volumes/mount/MyVol/neep.txt presumably means we get the MyVol directory, and inside that ghost we’ll have data (i guess??) that has the association registered.
+
+Maybe one approach is to say that there are a surrounding set of observing ghosts to every ghost. When a ghost gets some sort of learn or update, this is passed along to all of the ghosts to take whatever action they need. 
+
+This architecture means that a single FS ghost could be part of multiple volumes, which is architecturally very tidy. Its probably a good trigger point for a lot of other behavior, including revocation of deepScans and enumerations. The question is where in the process it should propogate. The cleanest way to do it might be at flush() time. That way, you have a copy of the before and the after and can be very precise. 
+
+# volume design, idea 2
+
+Here is a bolder way to handle volumes that doesn’t require a proliferation of ghosts the same way. What if the main thing a volume tracks is the directory object of the volume itself? When you checkpoint the volume (maybe “gfs checkpoint --all” could help automatically look for connected volumes for you), it inserts a pointer to that object as the volume. We could also use that opportunity to write to a second object store inside the volume any objects found there. Now when you do a vol:XXX: lookup, you basically start traversing the versioned tree of directory objects. Some rule kicks in that makes them immutable if they can’t be found (or if the volume is believed to be disconnected.) Or maybe they are just always immutable on descent the same way that snapshots are (probably the best option.) 
+
+The challenge with this approach is we will have trouble reporting this situation back to the user without some obnoxious hacjs. Say we store a bunch of files under 
+
+	fs:root:/volumes/mount/MyVol/
+
+In this proposal, no vol: objects are actually created, except maybe one that serves as the head end (vol:NAME:). 
+
+Now, when we lsdups or take other actions, we won’t automatically see the volume affiliations. So we’ll have to query for alternative names (e.g. other top level nodes that point into the directory hash tree) and decide how to present the ghosts. Maybe we can handle that problem with a $ghost->getAliases() which returns all of the other things that point to that AFN? This feels a bit sloppy. Do I have a fast, clean way to know if I have subdirectory object X if hash Y sits underneath?
+
+Similiar problem to commit trees in git - how do i hunt down all of the commits that applied an update to a particular file? Git must just manually chew through the commit chain. I guess the point is that doing this is possible, and if its too slow for practical use, we can think abotu optimizations or caching. 
+
+On the plus side, it means 50% fewer ghosts floating around in the system and much less cleaning up to potentially do when volumes are added or removed. 
+
+Looks like the git guys struggled with this issue too:
+
+http://gitster.livejournal.com/35628.html
+
+Linus even seems to think these things shouldn’t be burdened into commits:
+
+http://article.gmane.org/gmane.comp.version-control.git/217
+
+Starting to read documentation and git source. Seems like this is a really strong committment.
+
+
+
+Nice DB, consider as alternative?
+
+https://symas.com/products/lightning-memory-mapped-database/
+
+Bitmap library derrived by git team, and explanation on how it is used for reachability (which I need too!)
+
+https://github.com/lemire/EWAHBoolArray
+http://githubengineering.com/counting-objects/
+https://docs.google.com/presentation/d/1t2qzSO4z5MbrN21Cz4RrLWz9IZ5ylJNwQassajKyPk8/view#slide=id.g3236f3d6_0_122
+
+So i’m pretty convinced now that commits of the parent directory objects are the way to handle tracking. At least, its a good first start. If the commit object had the date, the name, the source and the destination, everything is good. Maybe a link back to the last backup (of any kind) would be good to create a chain. 
+
+There apparently exist some great, lightning quick algorithims that git has used to efficiently do reachability (for handling pruning down backups.)
+
+So implications: Every checkpoint creates a commit object. YOu can checkpoint at any level of the tree. And every volume has a separate checkpoint object created for it every time you do a major operation. 
+
 
 
 

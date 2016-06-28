@@ -6570,6 +6570,7 @@ Ghost->mk_accessors( qw(lfn lastFullHash size mode _fullHash statStruct
 	uuid sequence effectiveDate attributes dirty isTKversion lastDirScan lastStat
 	mtime lastEnumerated firstStat fileStatus
 	lastChanged deepSize deepCount lastDeepScan
+	lastFileType fileType
 	children _immutable _debugID  ) );
 
 
@@ -6717,7 +6718,13 @@ sub pullValuesFromGhost
 	$self->lastChanged( 	 $target->lastChanged() );
 	$self->deepSize( 	     $target->deepSize() );
 	$self->deepCount( 	     $target->deepCount() );
-	$self->deepCount( 	     $target->lastDeepScan() );
+	$self->lastDeepScan(     $target->lastDeepScan() );
+
+	$self->lastFileType(     $target->lastFileType() );
+	$self->fileType(     $target->fileType() );
+
+ 
+
 
 	$self->statStruct( 	     $target->statStruct()->copy() );
 
@@ -6818,6 +6825,8 @@ sub newFromSerialized($)
 	$self->deepSize( shift @a );
 	$self->deepCount( shift @a );
 	$self->lastDeepScan( shift @a );
+	$self->lastFileType( shift @a );
+	$self->fileType( shift @a );
 
 	my $statStructSerialized = shift @a; 
 	if( defined $statStructSerialized )
@@ -7575,6 +7584,8 @@ sub makeDebugString
 	my $deepSize 		= defined( $self->deepSize() ) 		? $self->deepSize() : "undef";
 	my $deepCount 		= defined( $self->deepCount() ) 		? $self->deepCount() : "undef";
 	my $lastDeepScan 		= defined( $self->lastDeepScan() ) 		? $self->lastDeepScan() : "undef";
+	my $lastFileType 		= defined( $self->lastFileType() ) 		? $self->lastFileType() : "undef";
+	my $fileType 		= defined( $self->fileType() ) 		? $self->fileType() : "undef";
 
 
 
@@ -7590,7 +7601,8 @@ sub makeDebugString
 	return "ghostDump($debugID): lfn:[$lfn] uuid:[$uuid] seq:[$sequence] eDT:[$effectiveDate] type:[$type] mode:[$mode] l_FH:[$lastFullHash] ".
 	"full:[$fullHash] ldirscan:[$lastDirScan] l_stat:[$lastStat] size:[$size]".
 	" mtime:[$mtime] immutable[$immutable] statStruct:[$statStruct] attr:[$attributes] provenance:[$p]".
-	"lastCx:[$lastChanged] deepSz:[$deepSize] deepCt[$deepCount] lastDeepScan:[$lastDeepScan] l_enum[$lastEnumerated]";
+	"lastCx:[$lastChanged] deepSz:[$deepSize] deepCt[$deepCount] lastDeepScan:[$lastDeepScan] l_enum[$lastEnumerated]" .
+	"fileType:[$fileType] lastFT:[$lastFileType]";
 }
 
 sub isSameFilename
@@ -7748,6 +7760,8 @@ sub serialize()
 			  $self->deepSize(),
 			  $self->deepCount(),
 			  $self->lastDeepScan(),
+			  $self->lastFileType(),
+			  $self->fileType(),
 			  $statStructSerialized
 			  );
 
@@ -7762,6 +7776,8 @@ sub serialize()
 
 	return $s;
 }
+
+
 
 # as of refactor, only TK is really allowed to called this
 
@@ -7946,6 +7962,40 @@ sub getFullHash
 		return $self->fullHash(); 
 	}
 }
+
+
+
+
+# The rule is that this is lockstep with Hash. So as long as the hash is good, we are good.
+
+sub hasAcceptableFileType
+{
+	my $self = shift;
+	my $timeguard = shift;
+
+	# $self->printDebug();
+
+	if( $staleInfoDebug )
+	{
+		my $q = $self->quickDebugString();
+		my $x = defined $timeguard ? $timeguard : "undef";
+		debug "hasAcceptableFileType:($x) $q\n" 
+	}
+
+	return 1 if $self->isImmutable();
+
+	return 0 if( not defined $self->lastFileType() );
+	return 0 if( not defined $self->fileType() );
+
+	debug "    hasAcceptableFileType:() - Yes, fileType = OK\n" if $staleInfoDebug;
+
+	return 1;
+}
+
+
+
+
+
 
 
 sub hasAcceptableStat
