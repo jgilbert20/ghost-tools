@@ -74,13 +74,17 @@ my $provenanceDebug     = 1;
 my $ZERO_LEN_FILE = [];
 my $CODE_SKIP_DUPLICATE = [];
 
-
 # Major globals
 
 my $PATH_DEFAULT_OBJECT_STORE = '__gfs_ojx/test';
 my $DIRTYLOGFN                = '__gfslog';
 my $PATH_DEFAULT_DB_DIR       = "__gfs_dbd";
 my $DESCRIPTOR_FILENAME       = ".gfs_ip";
+my $GFS_MAGIC                 = "%%GfS_";
+my $GFS_MAGIC_LENGTH          = length $GFS_MAGIC;
+my $GFS_MAGIC_TYPE_LEN	      = 4;
+my $GFS_MAGIC_HEADER_SIZE     = $GFS_MAGIC_LENGTH + $GFS_MAGIC_TYPE_LEN ;
+
 my $SERIALIZATION_VERSION_NUMBER = 5;
 my $GENERAL_DEBUG = 1;
 my $USUAL_IGNORE = 1;
@@ -744,8 +748,8 @@ sub doverb_debug()
 	}
 
 
-	# Writes the string passed via commandline into a file with a given name,
-	# exercising  the dynamic hash state update process
+	# Takes the pattern provided and reconstructs it into the target
+
 	elsif( $command eq 'new-recon')
 	{	
 		my $pattern = shift @ARGV;
@@ -811,6 +815,21 @@ sub doverb_debug()
 		}
 	}
 
+	# Reports what we think the file type is. File type is an internal concept
+	# used to distinguish between regular files and meta-data bearing objects
+	#
+	elsif( $command eq 'readfiletype' )
+	{
+		my $name = shift @ARGV;
+		die "usage: readfiletype [path]" unless defined $name;
+		my $tk = TruthKeeper::get();
+		my ($targetGS, $targetStash) = $tk->makeGhostsFromCommandLine( $name );
+		my( $targetUserFN, $targetFqlfn, $targetGhost ) = @{$targetStash->[0]};
+		my $ft = $targetGhost->getFileType();
+		print "I belive the file type of [$name] is:[$ft]\n";
+	}
+
+
 	elsif( $command eq 'dbfsck')
 	{	
 		my $gdb = GhostDatabase->getCore();
@@ -841,7 +860,6 @@ sub doverb_debug()
 			my $sigGhost = $g->cloneForSignature();
 			print $sigGhost->serialize(pathMode=>'strict-basename');
 			print "\n";
-
 		}
 		print" -----\n";
 		$targetGhost->calculateSignatureHashOverChildren();
@@ -1443,6 +1461,8 @@ sub reconstructHelper
 	# technicaly, should see if this new ghost exists, and could avoid the
 	# descent if it exists and has the same hash
 
+	# If the node is a directory, we'll decend into it working recursively
+
 	if( $p->canHaveChildren() )
 	{
 		# We need to be sure this object is actually a directory, if not, clearance move
@@ -1458,6 +1478,10 @@ sub reconstructHelper
 		{
 			reconstructHelper( $c, $subThing ); 
 		}
+
+		# At this point we should look for LFNs in the target that aren't
+		# in the pattern and remove or orphan them 
+
 	}
 	else
 	{
@@ -1468,13 +1492,15 @@ sub reconstructHelper
 			$subThing->clearToNewPath();
 		}
 
+		# I think store will handle nearly everything for us (finding a thing
+		# with that hash and putting it at the new location.)
+
 		$subThing->store( $p );
 	}
 
 	$subThing->flush();
 
 	main::debugLevel(-1);
-
 }
 
 
@@ -2196,7 +2222,8 @@ sub extractHashComponents
 sub globalMkPath
 {
 	my $p = shift; 
-	# debug "Mkpath: $p";
+
+	debug "**** Mkpath: $p";
 	File::Path::make_path( $p );
 
 	$@ and die "Couldn't create dir path: $@";
@@ -4256,7 +4283,7 @@ sub getStatSourceVerify
 # - findDuplicates();
 
 
-package FilesystemExplorer::FS;
+package FilesystemExplorer::FS;	
 
 use Time::HiRes qw( CLOCK_REALTIME gettimeofday tv_interval);
 use File::Basename;
@@ -4334,8 +4361,6 @@ sub getParentLFN
 	}
 
 	return main::rewriteLFNPathParent( $g->lfn() );
-	
-
 }
 
 
@@ -4477,6 +4502,31 @@ sub touchSmallfile
 	close FILE; 
 }
 
+
+sub readBytes
+{
+	my $self = shift;
+	my $ghost = shift;
+	my $start = shift;
+	my $count = shift;
+
+	$main::run_files_read++;
+	$main::run_bytes_read += $count;
+
+	print "*** READFILE start:[$start] count:[$count] bytes\n" if $ioDebug;
+
+	my $srcPath = $ghost->getPath();
+
+	open FILE, "<$srcPath" or die "Cannot open for read $srcPath: $!";
+	
+	my $buffer;
+	my $r = read FILE, $buffer, $count, $start; 
+	die if not defined $r ;
+	die if $r == 0; 
+	close FILE; 
+
+	return $buffer;
+}
 
 
 sub mkdir
@@ -7964,6 +8014,172 @@ sub getFullHash
 }
 
 
+sub learnFileType
+{
+	my $self = shift;
+	my $time = shift;
+	my $type = shift;
+
+	die if $self->isImmutable();
+
+	my $q = $self->quickDebugString();
+
+	if( $learnDebug )
+	{
+		my $__time = defined $time ? $time : "<undef>";
+		my $__type = defined $type ? $type : "<undef>";
+		debug "LEARN FILE TYPE time:[$__time] type:[$__type] for $q\n";
+		$self->printDebug();
+	}
+
+	die "learn file type passed an undefined time" unless defined $time;
+	die unless defined $type;
+
+	die "incoming information newer than current time ($time)" if $time > main::now();
+
+	$self->verifyGhostIsMutable();
+
+	if( defined $self->lastFileType() )
+	{
+		# Rule 2: New information with same date must be same information
+
+		if( $self->lastFileType() == $time )
+		{
+			if( $self->fileType() ne $type )
+			{
+				my $x = $self->fileType();
+				print "I was supposed to learn type:$type for time $time\n";
+				print "But I have hash $x at the same time\n";
+				die "Rule 2 violation";
+			}
+		}
+	}
+
+	# Avoid doing anything if the hash is older
+
+	if( (defined $self->lastFileType()) and ($time < $self->lastFileType() ))
+	{
+		CODEPATH( "Ignored older file type");
+		return; 
+	}	
+
+	# At this point, we're convinced the new data is valid, but the qeuestion
+	# is if its new enough to incorporate.
+
+	my $isAnythingChanged = 0; 
+
+	if( (defined $self->lastFileType()) and ($type ne $self->lastFileType() ))
+	{
+		CODEPATH( "Newer file type information accepted"); 
+
+		# my $lfn = $self->lfn();
+		# my $ch = $self->fullHash();
+		# print "************************************************ CHANGE!!!\n";
+		# print "  LFN: $lfn\n";
+		# print "  NEW: $hash\n";
+		# print "  OLD: $ch\n";
+
+		$isAnythingChanged = 1; 
+	}
+
+	if( (defined $type) and !(defined $self->fileType()))
+	{
+		CODEPATH( "First hash information accepted"); 
+		$isAnythingChanged = 1; 
+	}		
+
+	if( !defined $self->fileType() )
+	{
+		$isAnythingChanged = 1; 
+	}
+
+	elsif( $self->lastFileType() < $time )
+	{
+		CODEPATH( "Updated date of file type"); 
+		$isAnythingChanged = 1; 
+	}
+
+	$self->lastFileType( $time );
+	$self->fileType( $type );
+
+	debug "Accepted fileType:[$type]\n" if $learnDebug;
+
+	debug "Learn FILE_TYPE: isAnythingChanged? $isAnythingChanged" if $learnDebug; 	
+
+	$self->markDirty( $time, "fileType") if $isAnythingChanged;
+}
+
+sub getFileType
+{
+	my $self = shift;
+
+	if( $self->hasAcceptableFileType() )
+	{
+		return $self->fileType();
+	}
+	else
+	{	my $n = main::now();
+		my $ft = $self->internal_extractFileType($n);
+		$self->learnFileType( $n, $ft );
+		return $ft;
+	}
+}
+
+
+sub internal_extractFileType
+{
+	my $self = shift;
+	my $time = shift;
+
+
+	return "directory" if( $self->getType($time) eq 'd' );
+	return "other" if( $self->getType($time) ne 'f' );
+	return "file" if $self->getSize($time) < 10; 
+
+
+	my $buffer = $self->readBytesFromStart( $GFS_MAGIC_HEADER_SIZE );
+
+	print "Buffer: $buffer\n";
+
+	if( substr( $buffer, 0, $GFS_MAGIC_LENGTH ) eq $GFS_MAGIC )
+	{
+		my $code = substr( $buffer, $GFS_MAGIC_LENGTH, 4 );
+
+		if( $code eq 'DIRO' )
+		{
+			return "gfs/dir";
+		}
+
+		die "Unknown type code with GFS signature: [$code]";
+	}
+
+	
+	return "file";
+}
+
+
+sub createMagicHeader
+{
+	my $code = shift;
+	die if length $code != $GFS_MAGIC_TYPE_LEN;
+
+	my $b = $GFS_MAGIC . $code; 
+
+	return $b;
+}
+
+sub readBytesFromStart
+{
+	my $self = shift;
+	my $count = shift;
+
+	die "asked to read $count bytes but file is too small" if $self->getSize() < $count;
+
+	my $b = $self->getFSE()->readBytes($self,0,$count);
+
+	return $b; 
+}
+
 
 
 # The rule is that this is lockstep with Hash. So as long as the hash is good, we are good.
@@ -7991,10 +8207,6 @@ sub hasAcceptableFileType
 
 	return 1;
 }
-
-
-
-
 
 
 
@@ -8430,6 +8642,12 @@ sub learnFromGhost
 		$self->learnFullHash( $g->lastFullHash(), $hash );
 	}
 
+	if( defined $g->lastFileType() && defined $g->fileType() )
+	{
+		my $type = $g->fileType();
+		$self->learnFileType( $g->lastFileType(), $type );
+	}
+
 	# if after all of this stuff above we are still somehow not >= to the
 	# target's effective date, something could be wrong. But it could just be
 	# that a new ghost was created that never learned anything useful in its
@@ -8471,7 +8689,6 @@ sub learnFromGhost
 	{
 		$self->learnDeepScan( $g->lastDeepScan(), $g->deepSize(), $g->deepCount );
 	}
-
 
 	main::debugLevel(-1);
 
@@ -8656,6 +8873,9 @@ sub learnContentsChanged
 	my $q = $self->quickDebugString();
 
 	die unless defined $time; 
+
+	$self->fileType( undef );
+	$self->lastFileType( undef );
 
 	if( (not defined $self->lastChanged() ) or ($self->lastChanged() < $time ))
 	{
@@ -8847,8 +9067,6 @@ sub learnStat
 
 	if( (defined $self->lastStat()) and ($time == $self->lastStat() ))
 	{
-
-
 		if( defined $size  and defined $self->size()  and $self->size() != $size )
 		{
 			print "Fatal Error. Stat data received with same date and different contents\n";
@@ -8862,8 +9080,6 @@ sub learnStat
 			$self->printDebug();
 			die "Rule2: same date mismatch A: size"; 
 		}
-
-
 
 		die "Rule2: same date mismatch B: $mtime vs " . $self->mtime()
 			 if defined $mtime and defined $self->mtime() and $self->mtime() != $mtime;

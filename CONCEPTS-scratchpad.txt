@@ -213,6 +213,8 @@ So implications: Every checkpoint creates a commit object. YOu can checkpoint at
 
 
 
+
+
 # Reconstruction revisited
 
 Reconstruction is when I am given a set of sources and asked if that entire set of sources could reconstruct the target. 
