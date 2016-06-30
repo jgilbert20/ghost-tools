@@ -208,11 +208,186 @@ There apparently exist some great, lightning quick algorithims that git has used
 
 So implications: Every checkpoint creates a commit object. YOu can checkpoint at any level of the tree. And every volume has a separate checkpoint object created for it every time you do a major operation. 
 
+# Next level design
+
+So lets carefully walk through the backup case. SOURCE -> TARGET.
+
+	SOURCE
+		/                 [6]
+		dir-1/            [3]
+		dir-1/filea.txt - [1]
+		dir-1/fileb.txt - [2]
+
+	TARGET
+		/                  [7]
+		backups/           [4]
+		backups/file-a.txt [1]
+		backups/file-c.txt [5]
 
 
+First, we go through and checkpoint our source. We’ll get a top level directory object [6]. 
 
+Now, we ask if TARGET->crh(Source->toplevel). CRH looks inside target and says if the node and all of its components can be reconstructed. First, we’ll ask if Target [7] can reconstruct [6]. The answer is no. We don’t see [6] anywhere under the target. (The target has 1,4,5,7). So then we go an look for each of the parts of [6] and we’ll get [3]. This also is not under the target. We go down one level more and we have [1] and [2]. We find [1], but not [2]. So now we have a list of things to copy over: [6], [3], [2]. We copy over [2] as a file. 6,3 are metadata only. 
 
+The rule is if I have a metadata object X, Y->CRH(X) is true either if: 
+	
+	All of the leaves and subnodes of X can be found under Y
+	
+	OR
+	
+	X == Y and Y->lastVerifiedSuperParent() = current parent of Y and current parent of Y lastScan in acceptable range. 
+	
+	OR
+	
+	X == Y, and Y is a real checkpointed object
 
+Sort of a wierd structure, right?
+
+Maybe its cleaner if we use some reachability matrix?
+
+We need some concept of domain - a named place where things can be stored under. 
+
+So thats all really complex. Simpler might just be that you walk down the SOURCE tree. You either need TARGET with that hash for a node, or TARGET for that hash with a checkpoint date. If not, you need to copy over the node or copy over the metadata (like a directory as an object)
+
+# More killer use cases
+
+With this architecture, we could move to named snapshots:
+
+	gfs checkpoint . -n "bestpics"
+
+This becomes the new head of a “branch” called “bestpics”. 
+
+Now in my virtual filesystem, I have different access points, potentially FUSE accessible
+
+	gfs copy gfs:root:/checkpoints/head/bestpics foo/
+	
+	add files 1, 2, 3 to foo
+	
+	cd foo/
+	
+	gfs checkpoint . -n "bestpics"
+	bestpics name updated to [a73bfe3]
+
+This means there will need to be some logic that allows recovery of the previous commit object by path (or even by a dotfile?)
+
+Once I get this right, I actually think this could subsume the volume logic easily.
+
+I also would want an ingest feature that lets me checkout from the global tree, make changes, checkpoint, and then ingest everyting. 
+
+Ingest would mean that I check I have the right number of copies in other places (e.g. persistent place like dropbox) and then actually delete or unlink (unless I am already working in the persistent place, in which case I do nothing.)
+
+So lets say I identify a local store
+
+	/home/jgilbert/gfs
+	/home/jgilbert/gfs/objects
+	/home/jgilbert/gfs/archive
+	/home/jgilbert/gfs/archive/bestpics/file1
+	/home/jgilbert/gfs/archive/bestpics/file2
+	/home/jgilbert/gfs/archive/bestpics-older/20160405/file1
+
+If each gfs pocket like this had a unique UUID or name or something, than it would be possible to create a universal drive. And every branch name would have 1-2 places it expects to be for replication.
+
+	cd /home/jgilbert
+	gfs initvol gfs -n "homedir"
+	cd /Volumes/usb-stick 
+	gfs initvol my-archive-gfs -n "stick"
+	
+	cd /home/jgilbert/working-files
+	gfs checkpoint . -n "plm-working"
+	# creates a snapshot, but nothing is copied
+	
+	gfs assign-vol plm-working homedir
+	gfs update-vol plm-working
+	# now it makes a copy to the homedir space
+
+I can unassign a volume to a checkpoint/snapshot, which removes the pointers and makes them eligible for GC. 
+
+So to do all of this, I need the following features working
+
+1. [ ] I must be able to checkpoint an arbitrary tree causing the files to calculate a top level directory hash printed to the user
+2. [ ] along the way, directory objects need to be written out into the object store (for now thats where they will live)
+3. [ ] I must be able to provide checkout or clone (I dunno WTF to call this operation) a directory hash and get back a complete clone of the tree in question into any directory. Objects for now could just be pulled from the GFS object store or wherever they can be found
+4. [ ] I need GFS to be able to recover directory objects not by reading one of those complex snapshot things but instead just by checkpointing a tree that might have directory objects.
+5. [ ] Checkpointing should recognize the directory object code and slurp it in (slurpMOB needs to be implemented.)
+6. [ ] This means some magic string at the start of the directory object
+7. [ ] GFS needs to be able to “discover” this data on demand, so even if it doesn’t recognize a type, it can slurp it in because it sees the hash has something important
+8. [ ] All of the above does not need packfiles or anything exotic. I am now 100% convinced that once performance becomes an issue (if it ever does) there are really terrific optimizations that have already been worked out by others
+9. [ ] So if this is all working correctly, I should be able to reset GFS entirely, checkpoint an original directory containing stuff (even a former GFS working object store) and then checkout a cached folder
+10. [ ] All of the above is a great proof of concept but doesn’t actually create a backup. I need to be able to take a hash and a path and feed it to a command which then sets up a tree that can later fully reconstruct something. We can change the name later but maybe we just say “write-archive”.
+11. [ ] This tree needs to walk down a tree of directory objects and not just write the leaves out but also save off the directory objects somewhere.
+12. [ ] The dumbest way to do this is just to write those objects at the top level (obj-737abdf83a.gfs)
+13. [ ] But an equally good/dumb way is to do it is to create a .gfs-meta/obj-737abdf83a.gfs in each directory.
+14. [ ] If we want to be really pedantic, we could actually update the logic such that if a .gfs-meta directory is hashed during a subsequent checkpoint, we ensure that it does not contribute to the parent’s checksum, so that we’ll prevent the infinite cycle of each checkpoint recalculating every directory’s hash over and over again.
+15. [ ] We could think about sticking the commit objects into a .gfs-meta too!
+16. [ ] And then also maybe the pointer to “latest” (e.g.) latest-picks.ptr, which if it had the right timestamps and magic could be a recoverable way of getting pointers back
+
+Hold on a tick, why don’t we just combine ALL of the above into a checkpoint operation? Checkpoint goes though and populates all of those little .gfs-meta objects. And yes, that creates a massive proliferation of little files, but the truth is that once we do this in the general case, we can optimize it to use a packfile format. So this implies that after checkpointing the interior of a tree, we make a call to 
+
+	getMetadataDirectoryForPath(/x/y/z)
+
+Which returns us a ghost and we start writing these things into that directory object e.g. MDD->addAsObject(X). It also means we need a way of arbitrarily writing a pointer object too. The NAME of the file needs to be the pointer.PTR,
+
+	$dirObject->getPointer( "foo" );
+	"searches for foo.PTR" file anywhere under that tree
+	once found, checks the MOB signature date, returns the hash
+	does a LEARN operation on it
+	updates an AFN
+	ptr:root:foobar -> [hash of its latest thing], value:[X]
+
+Also implies that we have a way of writing
+
+	$dirObject->writeGhost( $ghost );
+
+which asks that directory for its metadata directory, and its ghoststore.gfs, and then appends the ghost onto it and writes it out. Probably have some sort of cache for now.
+
+And then finally,
+
+	$dirObject->writeMOB( $commit );
+
+Which finds the metadata store for the dirObject and sticks the commit object definiton in there.
+
+Now once this is done, every checkpointed directory becomes self describing. Easy to have future optimizations just write to a packfile for speed and awesomeness.
+
+Also means that the backup operation just technically is like this
+
+	$targetOfBackup = makeGhost(...)
+	$targetOfBackup->populateFromCommit( $commit )
+	# goes through and makes sure that the commit object
+	# itself is written as a MOB, and then walks down making sure there is a copy somewhere 
+
+Okay, so that means we need to be able to do this
+
+	$ gfs checkpoint . 
+	No previous commit object for . found, initializing a new one
+	Commit: [abc233]
+	
+	$ gfs verify .
+	Comparing current tree vs. its most recent commit object
+	Differences found:
+	-> file XXX now XXX, was YYY
+	->
+	
+	$ gfs backup-new abc233 /Volumes/foo
+	note: /Volumes/foo did not previously set up as a GFS target
+	note: created /Volumes/foo/.gfsmeta
+	commit abc233 now available inside /Volumes/foo
+
+I’m delighted to see that this fulfills most of the original design spec use cases, including backup, archival and zero internal metadata required to reconstruct
+
+So lets make pointers a ghost and then our generalization is more or less complete.
+
+# GFS vs. Git
+
+Git is awesome. Its such a perfect illustration of the principal of UNIX-like parisomy in software design. It keeps things simple and as a result of upholding this comittment, it remains uber-elegant even as its feature set explodes. Its tempting to just want todo this all in git, but my objectives are different:
+
+The major differences:
+
+- GFS doesn’t want to have any concept of repository: it wants to be flexible with a wide variety of use cases where there is no predefined location for things or objects
+- GFS wants to have highly resiliant metadata. Commits, blobs and directories all need to be reconstructable “on demand” from discovered information on disk
+- GFS wants to be completely location agnostic - if a verified peice of information is found in an unexpected place, we are OK to deal with it that way.
+- GFS wants to accomodate maintaing state where managed files are spread across time and space -- GIT assumes that everything it cares about can always be found united together in one directory. GFS is focused on knowing the multiple locations where something could be found and reconciling them
+- GIT is optimziing for source code and versioning tools; GFS is optimizing for a “swiss army knife” approach for backup, file management, volumes, and archival. 
+- 
 
 
 # Reconstruction revisited
