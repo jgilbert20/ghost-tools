@@ -81,9 +81,10 @@ my $DIRTYLOGFN                = '__gfslog';
 my $PATH_DEFAULT_DB_DIR       = "__gfs_dbd";
 my $DESCRIPTOR_FILENAME       = ".gfs_ip";
 my $GFS_MAGIC                 = "%%GfS_";
+my $GFS_MAGIC_EOL             = "%%\n";
 my $GFS_MAGIC_LENGTH          = length $GFS_MAGIC;
 my $GFS_MAGIC_TYPE_LEN	      = 4;
-my $GFS_MAGIC_HEADER_SIZE     = $GFS_MAGIC_LENGTH + $GFS_MAGIC_TYPE_LEN ;
+my $GFS_MAGIC_HEADER_SIZE     = $GFS_MAGIC_LENGTH + $GFS_MAGIC_TYPE_LEN + length $GFS_MAGIC_EOL;
 
 my $SERIALIZATION_VERSION_NUMBER = 5;
 my $GENERAL_DEBUG = 1;
@@ -2202,6 +2203,36 @@ sub statModeParse_isError
 
 
 
+sub createMagicHeader
+{
+	my $code = shift;
+	die if length $code != $GFS_MAGIC_TYPE_LEN;
+
+	my $b = $GFS_MAGIC . $code . $GFS_MAGIC_EOL; 
+
+	return $b;
+}
+
+sub getMOBtypeFromMagicHeader
+{
+	my $buffer = shift;
+
+	if( substr( $buffer, 0, $GFS_MAGIC_LENGTH ) eq $GFS_MAGIC )
+	{
+		my $code = substr( $buffer, $GFS_MAGIC_LENGTH, 4 );
+
+		if( $code eq 'DIRO' )
+		{
+			return "gfs/dir";
+		}
+
+		die "Unknown type code with GFS signature: [$code]";
+	}
+
+	return undef; 
+}
+
+
 # Hash parsing tools live here
 
 # Breaks apart a hash into its three components. 
@@ -2230,6 +2261,101 @@ sub globalMkPath
     die "Did not find new path" if not -d $p;
 
 }
+
+# Encapsulation around directory format
+
+package ManagedObject::Directory;
+
+sub debug($)
+{
+	my $a = shift;
+	main::debug( "DT: " . $a );
+}
+
+sub setDirectoryGhost
+{
+	my $self = shift;
+	my $g = shift;
+
+	die unless defined $g;
+	$self->{GHOST} = $g;
+}
+
+sub readDirectoryGhost
+{
+	my $self = shift;
+
+	die unless exists $self->{GHOST};
+	return $self->{GHOST};
+}
+
+sub getTypeMagicCode
+{
+	my $self = shift;
+
+	return 'DIRO';
+}
+
+
+sub new
+{
+	my $class = shift;
+	my $self = {};
+	bless $self, $class;
+	return $self; 
+}
+
+sub generateMagicHeader
+{
+	my $self = shift;
+	return main::createMagicHeader( $self->getTypeMagicCode() );
+}
+
+sub serialize
+{
+	my $self = shift;
+	my $dirGhost = $self->{GHOST};
+	die unless ref $dirGhost;
+
+	my $buffer;
+
+	$buffer .= $self->generateMagicHeader();
+
+	my $lfn = $dirGhost->lfn();
+
+	# print "createTreeSignatureBuffer: Calculating unforced signature: $lfn\n";
+
+	my $tk = TruthKeeper::get();
+
+	# TODO: Huh, breaks internal contracts; should refactor
+	my @c = map { $tk->obtainGhostForLFN( $_ ); } sort @{$dirGhost->{CHILDREN_LFNS}};
+
+	foreach my $g ( @c )
+	{
+		my $lfn = $g->lfn();
+		next if main::fileIsUsuallyIgnored( $lfn );
+
+		#print "Checking $lfn\n";
+
+		return undef if( !$g->isFullyCharacterized() );
+	
+		my $gSig = $g->cloneForSignature();
+		my $gBuf = $gSig->serialize(pathMode=>'strict-basename');
+		$buffer .= $gBuf . "\n";
+
+		print "SigBufferGen: $gBuf\n";
+	}
+
+	return $buffer;
+}
+
+
+
+sub absorbFromFile
+{
+
+}
+
 
 # Encapsulation around the snapshot format
 
@@ -4960,7 +5086,6 @@ sub shutdown
 }
 
 
-
 # This is the core function that dispatches out the FSE handler for the
 # particular path. All handlers are ultimately registered here.
 
@@ -5090,7 +5215,6 @@ sub makeGhostsFromCommandLine
 
 			$gs->addGhost( $g );
 			push @stash, [$lfn, $g->lfn(), $g ];
-
 		}
 		else
 		{
@@ -5189,12 +5313,9 @@ sub flush
 
 	$self->flushInternallyTracked();
 
-
 	# debug "---- Ghost Cache Writes ---\n" if $tkflushdebug;
 
 	# $self->flushGhostDescriptorCache();
-
-
 
 	debug "---- Verify ---\n" ;#if $tkflushdebug;
 
@@ -5443,6 +5564,7 @@ sub registerTruthyGhost
 	$ghostForLFN->{$lfn} = $g;
 }
 
+# TODO cleanup -lots of code duplicated with the next function ahead
 
 sub forDuplicatesMap
 {
@@ -5472,7 +5594,7 @@ sub forDuplicatesMap
 		if( $r )
 		{
 			my $x = $fitFunction->($g, $target);
-			push @result, $x unless $x == $CODE_SKIP_DUPLICATE;
+			push @result, $x unless ref $x and $x == $CODE_SKIP_DUPLICATE;
 		}
 		else
 		{
@@ -5512,7 +5634,7 @@ sub forGhostsWithHashMap
 		if( defined $r and $r eq $hash )
 		{
 			my $x = $fitFunction->($g, $hash);
-			push @result, $x unless $x == $CODE_SKIP_DUPLICATE;
+			push @result, $x unless ref $x && $x == $CODE_SKIP_DUPLICATE;
 		}
 		else
 		{
@@ -5642,6 +5764,9 @@ sub getTKchildrenLFNs
 	}
 }
 
+# This really needs to be refactored into a separate object. Really hackish.
+# brain too fried right now to really figure the right place for it to fit
+
 sub intakeTruthAndLFNsFromFile
 {
 	my $self = shift;
@@ -5655,6 +5780,17 @@ sub intakeTruthAndLFNsFromFile
 	debug "*** READFILE $path\n" if $ioDebug; 
 
 	open FILE, "<$path" or die "Could not open $path for reading..";
+
+	# DANGER DANGER - NO VALIDATION OF THIS HASH
+
+	my $firstLine = <FILE>;
+
+	print "firstline: [$firstLine]\n";
+
+	my $r = main::getMOBtypeFromMagicHeader( $firstLine );
+
+	die unless defined $r and $r eq 'gfs/dir';
+
 	while( <FILE> )
 	{
 		my $line = $_;
@@ -7215,7 +7351,7 @@ sub calculateDeepFields
 
 	my $earliestDateHash = main::now();
 	my $earliestDeepScan = main::now();
-	my $buffer = ""; 
+	# my $buffer = ""; 
 
 	my $tk = TruthKeeper::get();
 
@@ -7232,7 +7368,6 @@ sub calculateDeepFields
 		my $g = $tk->obtainGhostForLFN($lfn);
 		$g->calculateDeepFields( $time );
 
-
 		$g->forceCharacterization();
 
 		die if not defined $g->lastFullHash();
@@ -7243,15 +7378,18 @@ sub calculateDeepFields
 		$totSize += $g->getDeepSize(); 
 		$totCount += $g->getDeepCount(); 
 
-		my $gSig = $g->cloneForSignature();
-		my $gBuf = $gSig->serialize(pathMode=>'strict-basename');
-		$buffer .= $gBuf . "\n";
+		# my $gSig = $g->cloneForSignature();
+		# my $gBuf = $gSig->serialize(pathMode=>'strict-basename');
+		# $buffer .= $gBuf . "\n";
 
-		print "CSHOC: $gBuf\n";
+		# print "CSHOC: $gBuf\n";
 
 		$g->flush();
-
 	}
+
+
+
+	my $buffer = $self->generateTreeSignatureBuffer();
 
 	my $hexdigest = main::getSHAforBuffer( $buffer );
 
@@ -7296,6 +7434,16 @@ sub calculateUnforcedSignatureHashOverChildren
 sub generateTreeSignatureBuffer
 {
 	my $self = shift;
+
+	my $mob = ManagedObject::Directory->new();
+	$mob->setDirectoryGhost( $self );
+	my $buffer = $mob->serialize();
+	return $buffer;
+}
+
+sub generateTreeSignatureBuffer_OLD
+{
+	my $self = shift;
 	my $buffer = ""; 
 	
 	my $lfn = $self->lfn();
@@ -7314,7 +7462,6 @@ sub generateTreeSignatureBuffer
 
 		return undef if( !$g->isFullyCharacterized() );
 
-	
 		my $gSig = $g->cloneForSignature();
 		my $gBuf = $gSig->serialize(pathMode=>'strict-basename');
 		$buffer .= $gBuf . "\n";
@@ -8141,32 +8288,14 @@ sub internal_extractFileType
 
 	print "Buffer: $buffer\n";
 
-	if( substr( $buffer, 0, $GFS_MAGIC_LENGTH ) eq $GFS_MAGIC )
-	{
-		my $code = substr( $buffer, $GFS_MAGIC_LENGTH, 4 );
+	my $r = main::getMOBtypeFromMagicHeader( $buffer );
+	return $r if defined $r; 
 
-		if( $code eq 'DIRO' )
-		{
-			return "gfs/dir";
-		}
-
-		die "Unknown type code with GFS signature: [$code]";
-	}
-
-	
 	return "file";
 }
 
 
-sub createMagicHeader
-{
-	my $code = shift;
-	die if length $code != $GFS_MAGIC_TYPE_LEN;
 
-	my $b = $GFS_MAGIC . $code; 
-
-	return $b;
-}
 
 sub readBytesFromStart
 {
