@@ -107,6 +107,8 @@ local $main::run_files_copied = 0;
 local $main::run_bytes_copied = 0;
 local $main::run_files_written = 0;
 local $main::run_bytes_written = 0;
+local $main::run_files_read = 0;
+local $main::run_bytes_read = 0;
 local $main::run_files_moved = 0;
 local $main::run_db_puts = 0;
 local $main::run_db_gets = 0;
@@ -332,6 +334,8 @@ sub handleDebugDump
 		run_bytes_copied       =>        $main::run_bytes_copied,
 		run_files_written       =>        $main::run_files_written,
 		run_bytes_written       =>        $main::run_bytes_written,
+		run_files_read       =>        $main::run_files_read,
+		run_bytes_read       =>        $main::run_bytes_read,
 		run_files_moved        =>         $main::run_files_moved,
 		run_db_puts            =>             $main::run_db_puts,
 		run_db_gets            =>             $main::run_db_gets,
@@ -475,6 +479,9 @@ sub handleStats
 	print "Bytes copied    : $main::run_bytes_copied\n";
 	print "Files written   : $main::run_files_written\n";
 	print "Bytes written   : $main::run_bytes_written\n";
+
+	print "Files read      : $main::run_files_read\n";
+	print "Bytes read      : $main::run_bytes_read\n";
 
 	print "Files moved     : $main::run_files_moved\n";
 
@@ -4636,7 +4643,7 @@ sub readBytes
 	my $start = shift;
 	my $count = shift;
 
-	$main::run_files_read++;
+	$main::run_files_read ++;
 	$main::run_bytes_read += $count;
 
 	print "*** READFILE start:[$start] count:[$count] bytes\n" if $ioDebug;
