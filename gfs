@@ -1978,7 +1978,7 @@ sub assert_cpath($)
 	my $lfn = shift;
 	assert_regularpath($lfn);
 	my $clfn = File::Spec->canonpath( $lfn );
-	die "ASSERT CPATH FAILED: $lfn ne $clfn" if $lfn ne $clfn; 
+	die "ASSERT CPATH FAILED: provided:$lfn ne canonical:$clfn" if $lfn ne $clfn; 
 }
 
 # Sanity check that in places where an operation is to work
@@ -2359,7 +2359,7 @@ sub serialize
 
 	my $lfn = $dirGhost->lfn();
 
-	# print "createTreeSignatureBuffer: Calculating unforced signature: $lfn\n";
+	print "createTreeSignatureBuffer: Calculating unforced signature: $lfn\n";
 
 	my $tk = TruthKeeper::get();
 
@@ -2371,16 +2371,24 @@ sub serialize
 		my $lfn = $g->lfn();
 		next if main::fileIsUsuallyIgnored( $lfn );
 
-		#print "Checking $lfn\n";
+		print "Checking $lfn\n";
 
-		return undef if( !$g->isFullyCharacterized() );
-	
+		if( !$g->isFullyCharacterized() )
+		{
+			warn "WARNING: asked to get hash of parent but a child is not charactertized: $lfn\n";
+
+			return undef ;
+		}
+
 		my $gSig = $g->cloneForSignature();
 		my $gBuf = $gSig->serialize(pathMode=>'strict-basename');
 		$buffer .= $gBuf . "\n";
 
 		print "SigBufferGen: $gBuf\n";
 	}
+
+		print "createTreeSignatureBuffer: Final buffer: $buffer\n";
+
 
 	return $buffer;
 }
@@ -2986,11 +2994,12 @@ sub saveGhostToStore()
 		{
 			# Strange case, lets report it
 			$g->printDebug();
-			die "Attempted to serialize [$g] and got something undefined - checkpoint issue?";
+			warn "Attempted to serialize [$g] and got something undefined - checkpoint issue?";
 		}
-
-		$ojx->absorbScalar($buffer);
-
+		else
+		{
+			$ojx->absorbScalar($buffer);
+		}
 		#print "+++_+_+_+ ** TO implement: storage of the dirfile -- GOOD TO GO!\n";
 	}
 	else
@@ -5185,6 +5194,7 @@ package TruthKeeper;
 use Data::Dumper;
 use File::Basename;
 use base qw(Class::Accessor);
+use Carp qw(cluck longmess shortmess);
 
 my $global_tk;
 
@@ -5651,6 +5661,9 @@ sub forGhostsWithHashMap
 	my $self = shift;
 	my $hash = shift;
 	my $fitFunction = shift;
+	my $excludeDirectories = shift; 
+
+	$excludeDirectories = 0 if not defined $excludeDirectories;
 
 	my $gdb = GhostDatabase->getCore();
 
@@ -5662,6 +5675,7 @@ sub forGhostsWithHashMap
 
 	foreach my $g (@g)
 	{
+		next if $excludeDirectories && $g->canHaveChildren(); 
 		my $r = $g->getFullHash();
 
 		my $dstr = $g->quickDebugString();
@@ -5688,20 +5702,29 @@ sub forGhostsWithHashMap
 }
 
 
+
+
+
 # universal way to get all known ghosts with a given hash. 
+
+# possible infinite loop: obtain will check for the hash again, and doing that
+# may intiaite a scan for children which could come back here to get the directory hash. 
 
 sub obtainGhostsForHash
 {
 	my $self = shift;
 	my $searchHash = shift;
+	my $excludeDirectories = shift; 
 
-	print "obtainGhostForHash($searchHash)\n";
+	$excludeDirectories = 0 if not defined $excludeDirectories;
+
+	print "obtainGhostForHash($searchHash) dirExcludeMode=$excludeDirectories\n";
 
 	die "hash not defined in call" unless defined $searchHash; 
 
 	my $func = sub { my( $candidate, $hash ) = @_; return $candidate; };
 
-	return $self->forGhostsWithHashMap($searchHash, $func);
+	return $self->forGhostsWithHashMap($searchHash, $func, $excludeDirectories);
 }
 
 # returns a managed object backing file (the sort usually passed to a manage
@@ -5721,7 +5744,7 @@ sub obtainManagedObjectBackingFileByHash
 	debug "Looking for managed object with hash: $hash" if $managedObjectDebug;
 
 	# First strategy, find it directly by hash->AFN cache
-	my @ghostsWithHash = $self->obtainGhostsForHash( $hash );
+	my @ghostsWithHash = $self->obtainGhostsForHash( $hash, 1 );
 
 	print Data::Dumper::Dumper( @ghostsWithHash );
 
@@ -8200,7 +8223,7 @@ sub getFullHash
 		# Addendum: This appears to get tripped up in cases where the file does
 		# change. For instacne, the first getStatSourceVerify or the Hash could
 		# force a write to other files, changing the hash. 
-		# I'm weaking this check now.
+		# I'm weakening this check now.
 
 		my $t = main::now();
 

@@ -12,6 +12,23 @@ gfs reconstruct foo.snap
 
 
 
+obtainGhostsForHash delegates to forGhostsWithHashMap, which gets the hash, which forces a list of children, which looks for the directory object, which looks to see if a hash exists, etc
+
+	Ghost::getChildrenLFNs('Ghost=HASH(0x7f82b3c9f278)', 1467396726.33628) called at /Users/jgilbert/Dropbox/Bin/gfs line 7430
+	Ghost::calculateDeepFields('Ghost=HASH(0x7f82b3c9f278)', 1467396726.33628) called at /Users/jgilbert/Dropbox/Bin/gfs line 9635
+	Ghost::getFullHashSourceVerify('Ghost=HASH(0x7f82b3c9f278)', 1467396726.33628) called at /Users/jgilbert/Dropbox/Bin/gfs line 8214
+	Ghost::getFullHash('Ghost=HASH(0x7f82b3c9f278)') called at /Users/jgilbert/Dropbox/Bin/gfs line 5666
+	TruthKeeper::forGhostsWithHashMap('TruthKeeper=HASH(0x7f82b41d6810)', 'SHA1/FULL/56418c2cce9e309cf5177a0fafeca0d6816b3fca', 'CODE(0x7f82b3c1d6a0)') called at /Users/jgilbert/Dropbox/Bin/gfs line 5708
+	TruthKeeper::obtainGhostsForHash('TruthKeeper=HASH(0x7f82b41d6810)', 'SHA1/FULL/56418c2cce9e309cf5177a0fafeca0d6816b3fca') called at /Users/jgilbert/Dropbox/Bin/gfs line 5728
+	TruthKeeper::obtainManagedObjectBackingFileByHash('TruthKeeper=HASH(0x7f82b41d6810)', 'SHA1/FULL/56418c2cce9e309cf5177a0fafeca0d6816b3fca') called at /Users/jgilbert/Dropbox/Bin/gfs line 5797
+	TruthKeeper::getTKchildrenLFNs('TruthKeeper=HASH(0x7f82b41d6810)', 'Ghost=HASH(0x7f82b3c9f278)') called at /Users/jgilbert/Dropbox/Bin/gfs line 5768
+	TruthKeeper::populateChildrenLFNs('TruthKeeper=HASH(0x7f82b41d6810)', 'Ghost=HASH(0x7f82b3c9f278)') called at /Users/jgilbert/Dropbox/Bin/gfs line 7147
+
+
+
+++++++++++++++
+
+
 - [ ] actually test the new learnAFNlist() functionality with a few different cases to convince myself its stable
 - [ ] finish backup action - should write out a deep hash object
 - [ ] wire in a reconstruct verb that uses recursion. And we should be able to test it works by clearing the caches, recheckpointing, etc
