@@ -730,9 +730,9 @@ sub doverb_debug()
 		$m->addToplevelGhost( $targetGhost );
 		$m->writeToFile( "foo.newsnap" );
 	}
+
 	elsif( $command eq 'newsnapread')
 	{	
-
 		my $name = shift @ARGV;
 
 		my $m = ManagedObject::DeepTree::Snapshot->new();
@@ -755,6 +755,29 @@ sub doverb_debug()
 		$targetGhost->write( $contents );
 	}
 
+	elsif( $command eq 'stalecheck' )
+	{
+		my $name = shift @ARGV;
+		die "usage: readfiletype [path]" unless defined $name;
+		my $tk = TruthKeeper::get();
+		my ($targetGS, $targetStash) = $tk->makeGhostsFromCommandLine( $name );
+		my( $targetUserFN, $targetFqlfn, $targetGhost ) = @{$targetStash->[0]};
+
+		$targetGhost->printDebug();
+
+		my $iDeepScan =  $targetGhost->hasAcceptableDeepScan();
+		my $iEnum =      $targetGhost->hasAcceptableEnumeration();
+		my $iFullHash =  $targetGhost->hasAcceptableFullhash();
+		my $iStat =      $targetGhost->hasAcceptableStat();
+		my $iFileType =  $targetGhost->hasAcceptableFileType();
+
+		print "iDeepScan = $iDeepScan\n"; 
+		print "iEnum     = $iEnum\n";    
+		print "iFullHash = $iFullHash\n"; 
+		print "iStat     = $iStat\n";    
+		print "iFileType = $iFileType\n"; 
+
+	}
 
 	# Takes the pattern provided and reconstructs it into the target
 
@@ -1418,12 +1441,18 @@ sub doverb_checkpoint()
 
 			print "$fqlfn: $deepSize   $deepCount   $fullHash\n";
 
+			$debugDump{run}->{checkpoint}->{$userFN}->{fullHash} = $fullHash;
+			$debugDump{run}->{checkpoint}->{$userFN}->{deepSize} = $deepSize;
+			$debugDump{run}->{checkpoint}->{$userFN}->{deepCount} = $deepCount;
+
 		}
 		else
 		{
 			print "$fqlfn: file not found\n";
 		}
 		$g->flush();
+
+
 	}
 }
 
@@ -5641,7 +5670,10 @@ sub forGhostsWithHashMap
 		if( defined $r and $r eq $hash )
 		{
 			my $x = $fitFunction->($g, $hash);
-			push @result, $x unless ref $x && $x == $CODE_SKIP_DUPLICATE;
+			# die unless ref $CODE_SKIP_DUPLICATE;
+			print " I have x=$x\n";
+			print "X is " .(ref $x ? "A ref" : "not a ref" ) . "\n";
+			push @result, $x unless ref($x) && ($x == $CODE_SKIP_DUPLICATE);
 		}
 		else
 		{
@@ -5663,6 +5695,8 @@ sub obtainGhostsForHash
 	my $self = shift;
 	my $searchHash = shift;
 
+	print "obtainGhostForHash($searchHash)\n";
+
 	die "hash not defined in call" unless defined $searchHash; 
 
 	my $func = sub { my( $candidate, $hash ) = @_; return $candidate; };
@@ -5672,6 +5706,7 @@ sub obtainGhostsForHash
 
 # returns a managed object backing file (the sort usually passed to a manage
 # object constructor) with a given hash
+use Data::Dumper;
 
 
 sub obtainManagedObjectBackingFileByHash
@@ -5687,6 +5722,10 @@ sub obtainManagedObjectBackingFileByHash
 
 	# First strategy, find it directly by hash->AFN cache
 	my @ghostsWithHash = $self->obtainGhostsForHash( $hash );
+
+	print Data::Dumper::Dumper( @ghostsWithHash );
+
+
 	my @moWithHash = grep { $_->isSingleFile() && $_->exists() } @ghostsWithHash;
 
 	# v1, just assume any managed object is some sort of directory. In the
@@ -5709,6 +5748,7 @@ sub obtainManagedObjectBackingFileByHash
 	return undef; 
 }
 
+# Popualtes the children LFNs with a managed object at location $ghost, if one exists
 
 sub populateChildrenLFNs
 {
@@ -5721,9 +5761,13 @@ sub populateChildrenLFNs
 
 	if( defined $existingFullHash )
 	{
-		my @lfns = $self->getTKchildrenLFNs( $ghost );
-		my $infoAsOfDate = $ghost->lastFullHash();
-		$ghost->learnChildrenByLFN( $infoAsOfDate, \@lfns );
+		my $lfns = $self->getTKchildrenLFNs( $ghost );
+
+		if( defined $lfns )
+		{
+			my $infoAsOfDate = $ghost->lastFullHash();
+			$ghost->learnChildrenByLFN( $infoAsOfDate, $lfns );
+		}
 	}	
 
 
@@ -5760,6 +5804,7 @@ sub getTKchildrenLFNs
 		else
 		{
 			debug "TK--getChildrenLFNs: No managed object with directory contents found" if $childTruthDebug;
+			return undef; 
 		}
 	}
 	else
@@ -5769,6 +5814,8 @@ sub getTKchildrenLFNs
 		debug "TK--getChildrenLFNs: No hash, no way to recover children from managed obj" if $childTruthDebug;
 		return undef; 
 	}
+
+	return undef; 
 }
 
 # This really needs to be refactored into a separate object. Really hackish.
@@ -5814,7 +5861,9 @@ sub intakeTruthAndLFNsFromFile
 	}
 	close FILE;
 
-	return @lfns; 
+	print "LFNS-via-intake: @lfns\n";
+
+	return \@lfns; 
 }
 
 
@@ -6784,10 +6833,10 @@ sub new
 
 
 # bit of magic that makes (some) debug messages look better by overloading
-# stringification
+# stringification (Watch out -- this is dangerous - causes comparisons to act funny)
 
-use overload fallback => 1,
-        '""' => sub { my $self = shift; return $self->quickDebugString() }; 
+#use overload fallback => 1,
+#        '""' => sub { my $self = shift; return $self->quickDebugString() }; 
 
 
 
@@ -7194,13 +7243,13 @@ sub hasAcceptableEnumeration
 
 	if( !defined $self->lastEnumerated() )
 	{
-		debug( "gChild: hasAcceptableEnumeration - no previous enum, forcing scan") if $gChildDebug;
+		debug( "gChild: hasAcceptableEnumeration - no previous enum, accepEnum = 0") if $gChildDebug;
 		return 0;
 	}
 
 	if( !defined $self->{CHILDREN_LFNS} )
 	{
-		debug( "gChild: hasAcceptableEnumeration - not loaded, forcing scan") if $gChildDebug;
+		debug( "gChild: hasAcceptableEnumeration - not loaded, accepEnum = 0") if $gChildDebug;
 		return 0;
 	}
 
@@ -7266,6 +7315,8 @@ sub learnChildrenByLFN()
 	my $time = shift;
 	my $lfns = shift; 
 
+	print Data::Dumper::Dumper( $lfns );
+
 
 	if( defined $self->lastEnumerated() )
 	{
@@ -7274,7 +7325,7 @@ sub learnChildrenByLFN()
 
 	# TODO shouldn't i reject incomijng data if the lastEnumerated isn't one I like? 
 
-	my @lfns = @$lfns;
+	my @lfns = @{$lfns};
 
 	my $tk = TruthKeeper::get();
 
@@ -7298,6 +7349,9 @@ sub learnChildrenByLFN()
 	foreach my $lfn ( @lfns )
 	{
 		debug "G: Learning child: lfn:[$lfn]\n" if $gChildDebug;
+
+		die "diagnostic case - how did lfn get to be 1?" if( defined $lfn and $lfn eq "1" );
+
 		if( exists $seenLFN{$lfn} )
 		{
 			debug "G:   Child already registered: $lfn\n" if $gChildDebug;
@@ -7377,8 +7431,8 @@ sub calculateDeepFields
 
 		$g->forceCharacterization();
 
-		die if not defined $g->lastFullHash();
-		die if not defined $g->lastDeepScan();
+		die "Prior call to calcDeepFields and forceCharacterization left hash undefined " if not defined $g->lastFullHash();
+		die "Prior call to calcDeepFields and forceCharacterization left lastDeepScan undefined" if not defined $g->lastDeepScan();
 
 		$earliestDateHash = $g->lastFullHash() if ( $g->lastFullHash() < $earliestDateHash );
 		$earliestDeepScan = $g->lastDeepScan() if ( $g->lastDeepScan() < $earliestDeepScan );
@@ -9715,27 +9769,51 @@ sub go
 {
 	my $class = shift;
 
-	my $te = TestEnvironment->new("hashrevoke");
-	$te->clear();
-	$te->mkdirs( "/tmp/gfstest" );
-	$te->mkdirs( "/tmp/gfstest/dir-a/" );
+	{
+		my $te = TestEnvironment->new("hashrevoke");
+		$te->clear();
+		$te->mkdirs( "/tmp/gfstest" );
+		$te->mkdirs( "/tmp/gfstest/dir-a/" );
 
-	$te->mkfile( "/tmp/gfstest/dir-a/file1", 12 );	
-	$te->mkfile( "/tmp/gfstest/dir-a/file2", 14);	
-	system( "cp -rv /tmp/gfstest/dir-a /tmp/gfstest/dir-b");
+		$te->mkfile( "/tmp/gfstest/dir-a/file1", 12 );	
+		$te->mkfile( "/tmp/gfstest/dir-a/file2", 14);	
+		system( "cp -rv /tmp/gfstest/dir-a /tmp/gfstest/dir-b");
 
-	$te->gfsrun( '--chdir /tmp/gfstest checkpoint . -G 0 ');
-	my $r1 = $te->gfsrun( '--chdir /tmp/gfstest --debug-dump checksum-single dir-a/file1 ');
-	my $r2 = $te->gfsrun( '--chdir /tmp/gfstest --debug-dump checksum-single dir-b/file1 ');
-	$te->assert( $r1->{run}->{getFullHash} eq $r2->{run}->{getFullHash} );
-	$te->waitForRollover();
+		$te->gfsrun( '--chdir /tmp/gfstest checkpoint . -G 0 ');
+		my $r1 = $te->gfsrun( '--chdir /tmp/gfstest --debug-dump checksum-single dir-a/file1 ');
+		my $r2 = $te->gfsrun( '--chdir /tmp/gfstest --debug-dump checksum-single dir-b/file1 ');
+		$te->assert( $r1->{run}->{getFullHash} eq $r2->{run}->{getFullHash} );
+		$te->waitForRollover();
 
-	$te->mv( "/tmp/gfstest/dir-b/file1", "/tmp/gfstest/dir-b/file1-renamed" );
-	$te->mv( "/tmp/gfstest/dir-b/file1", "/tmp/gfstest/dir-b/file2-renamed" );
+		$te->mv( "/tmp/gfstest/dir-b/file1", "/tmp/gfstest/dir-b/file1-renamed" );
+		$te->mv( "/tmp/gfstest/dir-b/file1", "/tmp/gfstest/dir-b/file2-renamed" );
 
-	$te->gfsrun( '--chdir /tmp/gfstest checkpoint . -G 0');
+		$te->gfsrun( '--chdir /tmp/gfstest checkpoint . -G 0');
 
-	$te->gfsrun( '--chdir /tmp/gfstest debug dbtest');
+		$te->gfsrun( '--chdir /tmp/gfstest debug dbtest');
+	}	
+
+	if(0)
+	{
+		my $te = TestEnvironment->new("hashrevoke");
+		$te->clear();
+		$te->mkdirs( "/tmp/gfstest" );
+		$te->mkdirs( "/tmp/gfstest/dir-a/" );
+
+		$te->mkfile( "/tmp/gfstest/dir-a/file1", 12 );	
+		$te->mkfile( "/tmp/gfstest/dir-a/file2", 14);
+
+		system( "cp -rv /tmp/gfstest/dir-a /tmp/gfstest/dir-b");
+
+		my $r1 = $te->gfsrun( '--chdir /tmp/gfstest checkpoint dir-a -G 0 ');
+		my $r2 = $te->gfsrun( '--chdir /tmp/gfstest checkpoint dir-b -G 0 ');
+
+		$te->assert( $r1->{run}->{getFullHash} eq $r2->{run}->{getFullHash} );
+
+	}
+
+
+
 
 	exit(0);
 
