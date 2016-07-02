@@ -12,6 +12,18 @@ gfs reconstruct foo.snap
 
 
 
+
+somehow i got too clever
+a gost ist trying to learn from itself
+bad stuff
+must be happening becuase the absolute ghosts are getting statted and recursed for revocation of paths, etc. 
+we need some kind of guard to ensure that absolutely ghosts don't ever hit the disk
+and then we need to figure out how/where our learning rules ended up making disk hits because that is really a no-no.
+again, suspect that disk hits happening b/c of our recursive walk up to clear checksums.
+
+
+
+
 obtainGhostsForHash delegates to forGhostsWithHashMap, which gets the hash, which forces a list of children, which looks for the directory object, which looks to see if a hash exists, etc
 
 	Ghost::getChildrenLFNs('Ghost=HASH(0x7f82b3c9f278)', 1467396726.33628) called at /Users/jgilbert/Dropbox/Bin/gfs line 7430
