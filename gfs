@@ -64,7 +64,7 @@ my $fseDebug              = 0;
 my $fseOjxDebug           = 0;
 my $fseSnapshotDebug      = 0;
 my $learnDebug            = 0;
-my $learnDebugExpress     = 1;
+my $learnDebugExpress     = 0;
 my $upNavDebug			  = 0;   # debugging on getParent() and getParentLFN()
 my $revokeDebug           = 0;   # Special case of learn that just looks at hash revocation
 my $staleInfoDebug        = 0;   # Decisionmaking on if data is current enough
@@ -609,8 +609,6 @@ sub handleVerb
 		return;
 	}
 
-
-
 	if( $verb eq "stat")
 	{
 		doverb_stat();
@@ -799,6 +797,25 @@ sub doverb_debug()
 	}
 
 
+
+	elsif( $command eq 'new-backup')
+	{	
+		my $pattern = shift @ARGV;
+		my $target = shift @ARGV;
+
+		die "usage: new-backup [source] [target]" unless defined $pattern and defined $target;
+
+		my $tk = TruthKeeper::get();
+		my ($patternGS, $patternStash) = $tk->makeGhostsFromCommandLine( $pattern );
+		my( $patternUserFN, $patternFqlfn, $patternGhost ) = @{$patternStash->[0]};
+		my ($targetGS, $targetStash) = $tk->makeGhostsFromCommandLine( $target );
+		my( $targetUserFN, $targetFqlfn, $targetGhost ) = @{$targetStash->[0]};
+
+		backupHelper( $patternGhost, $targetGhost, $targetGhost );
+	}
+
+
+
 	# Makes a directory at the pointed location - automatically moves 
 	# existing things if needed. Tested and works.
 	#
@@ -921,14 +938,22 @@ sub doverb_debug()
 		my $sourceArg = shift @ARGV;
 		my $targetArg = shift @ARGV;
 		
-
 		my $tk = TruthKeeper::get();
 		my ($targetGS, $targetStash) = $tk->makeGhostsFromCommandLine( $targetArg );
 		my ($sourceGS, $sourceStash) = $tk->makeGhostsFromCommandLine( $sourceArg );
 		my ( $targetUserFN, $targetFqlfn, $targetGhost ) = @{$targetStash->[0]};
 		my ( $sourceUserFN, $sourceFqlfn, $sourceGhost ) = @{$sourceStash->[0]};
 		
-		$targetGhost->findDuplicateGhostsUnderTreeFullScan($sourceGhost);
+		my $r = $targetGhost->findDuplicateGhostsUnderTreeFullScan($sourceGhost);
+
+		print "======\n";
+		print "Can reconstruct hash test results:\n";
+		foreach my $t (@$r)
+		{
+			my $x = $t->quickDebugString();
+			print "   FOUND: $x\n";
+		}
+
 	}
 	elsif( $command eq 'crh-fast')
 	{
@@ -1528,6 +1553,152 @@ sub reconstructHelper
 
 	main::debugLevel(-1);
 }
+
+
+
+
+sub backupHelper
+{
+	my $source = shift;
+	my $targetRoot = shift;
+	my $target = shift;
+
+	my $sx = $source->quickDebugString();
+	my $trx = $targetRoot->quickDebugString();
+	
+	debug "Entering backup traverser for:";
+	debug "     Source: $sx";
+	debug "    Target: $trx";
+
+	main::debugLevel(1);
+
+	debug "Checking if source can be reconstructed under root";
+
+	my $matches = $targetRoot->findDuplicateGhostsUnderTreeFullScan($source);
+
+	debug "======\n";
+	debug "Can reconstruct hash test results for [$sx]:\n";
+	foreach my $t (@$matches)
+	{
+		my $x = $t->quickDebugString();
+		debug "   FOUND: $x\n";
+	}
+
+	# Generate path for this item
+
+	my $subThing = $target->createGhostAsSubpath( $source->getPathBasename() );
+
+	# Branch based on if the thing we are backing up is a directory
+
+	if( $source->canHaveChildren() )
+	{
+		# We need to create a directory at $subThing -- check for collisions and handle
+
+		if( $subThing->exists() && !$subThing->canHaveChildren() )
+		{
+			$subThing->clearToNewPath();
+		}
+
+		$subThing->mkdir();
+
+		# Recurse, backing up things underneath this
+
+		foreach my $c ( $source->getChildren() )
+		{
+			backupHelper( $c, $targetRoot, $subThing ); 
+		}
+
+		# Now we have to make sure the definition of $target itself is saved
+		# somewhere.
+
+
+		my $hash = $source->getFullHash();
+		my $digestOnly = main::extractHashComponents( $hash )->[2];
+		my $mobFile = $target->createGhostAsSubpath( "mobFile-$digestOnly" );
+		die "You are backing up something that has not been checkpointed recently enough"
+			 unless $source->hasAcceptableDeepScan();
+		my $content = $source->generateTreeSignatureBuffer();
+		die "assert- tree sig buffer wrong size" unless defined $content;
+		die "assert- tree sig buffer wrong size" unless 12 < length $content;
+		$mobFile->write( $content );
+	}
+	else
+	{
+		# Case where $subThing is an actual file
+		# We need to be sure any object there is not a directory
+
+		if( $subThing->exists() && $subThing->canHaveChildren() )
+		{
+			$subThing->clearToNewPath();
+		}
+
+		# Store() will handle nearly everything for us (finding a thing
+		# with that hash and putting it at the new location.)
+
+		$subThing->store( $source );
+	}
+
+	$subThing->flush();
+
+
+	main::debugLevel(-1);
+
+
+	# my $r = $t->findDuplicateGhostsUnderTreeFullScan($sourceGhost);
+
+
+	# return;
+
+	# # Simplest case, we just construct a subpath and call store
+	# my $subThing = $t->createGhostAsSubpath( $p->getPathBasename() );
+
+	# my $sx = $subThing->quickDebugString();
+	# #print "Made $sx";
+
+	# # technicaly, should see if this new ghost exists, and could avoid the
+	# # descent if it exists and has the same hash
+
+	# # If the node is a directory, we'll decend into it working recursively
+
+	# if( $p->canHaveChildren() )
+	# {
+	# 	# We need to be sure this object is actually a directory, if not, clearance move
+
+	# 	if( $subThing->exists() && !$subThing->canHaveChildren() )
+	# 	{
+	# 		$subThing->clearToNewPath();
+	# 	}
+
+	# 	$subThing->mkdir();
+
+	# 	foreach my $c ( $p->getChildren() )
+	# 	{
+	# 		reconstructHelper( $c, $subThing ); 
+	# 	}
+
+	# 	# At this point we should look for LFNs in the target that aren't
+	# 	# in the pattern and remove or orphan them 
+
+	# }
+	# # else
+	# {
+	# 	# We need to be sure this object is not a directory
+
+	# 	if( $subThing->exists() && $subThing->canHaveChildren() )
+	# 	{
+	# 		$subThing->clearToNewPath();
+	# 	}
+
+	# 	# I think store will handle nearly everything for us (finding a thing
+	# 	# with that hash and putting it at the new location.)
+
+	# 	$subThing->store( $p );
+	# }
+
+	# $subThing->flush();
+}
+
+
 
 
 
@@ -2338,10 +2509,15 @@ sub generateMagicHeader
 	return main::createMagicHeader( $self->getTypeMagicCode() );
 }
 
+my $sigDebug = 0;
+
 sub serialize
 {
 	my $self = shift;
+	my %options = @_;
+
 	my $dirGhost = $self->{GHOST};
+
 	die unless ref $dirGhost;
 
 	my $buffer;
@@ -2350,23 +2526,48 @@ sub serialize
 
 	my $lfn = $dirGhost->lfn();
 
-	print "createTreeSignatureBuffer: Calculating unforced signature: $lfn\n";
+	print "createTreeSignatureBuffer: Calculating signature: $lfn\n" if $sigDebug;
 
 	my $tk = TruthKeeper::get();
 
-	# TODO: Huh, breaks internal contracts; should refactor
-	my @c = map { $tk->obtainGhostForLFN( $_ ); } sort @{$dirGhost->{CHILDREN_LFNS}};
+	# bypass mode is used to generate contents by reaching directly into the
+	# object. This allows the managed object's ability to serialize a
+	# directory into a hash to serve the need of checkpointing and other
+	# assertion operations that are loading the children and haven't set up
+	# the hashes properly yet.
+
+	my $bypassMode = defined $options{bypassMode} ? $options{bypassMode} : 0;
+
+	my @c; # to contain the list of children to serialize
+
+	if( $bypassMode )
+	{
+		die "Cannot generate signature unless children are populated" unless exists $dirGhost->{CHILDREN_LFNS};
+		die "Cannot generate signature unless children are defined" unless defined $dirGhost->{CHILDREN_LFNS};
+		@c = map { $tk->obtainGhostForLFN( $_ ); } sort @{$dirGhost->{CHILDREN_LFNS}};
+	}
+	else
+	{
+		if(  !$dirGhost->hasAcceptableDeepScan() )
+		{
+			my $dx = $dirGhost->quickDebugString();
+			die "Directory ghost $dx does not have acceptable deep scan, cannot serialize.";
+		}
+		@c = $dirGhost->getChildren();
+	}
+
+	warn "Directory is strangely empty - is that intention?" if @c < 1; 
 
 	foreach my $g ( @c )
 	{
 		my $lfn = $g->lfn();
 		next if main::fileIsUsuallyIgnored( $lfn );
 
-		print "Checking $lfn\n";
+		print "Create signature for: $lfn\n";
 
 		if( !$g->isFullyCharacterized() )
 		{
-			warn "WARNING: asked to get hash of parent but a child is not charactertized: $lfn\n";
+			die "WARNING: asked to get hash of parent but a child is not charactertized: $lfn\n";
 
 			return undef ;
 		}
@@ -2375,10 +2576,10 @@ sub serialize
 		my $gBuf = $gSig->serialize(pathMode=>'strict-basename');
 		$buffer .= $gBuf . "\n";
 
-		print "SigBufferGen: $gBuf\n";
+		print "SigBufferGen: $gBuf\n"  if $sigDebug;
 	}
 
-		print "createTreeSignatureBuffer: Final buffer: $buffer\n";
+	print "createTreeSignatureBuffer: Final buffer: $buffer\n"  if $sigDebug;
 
 
 	return $buffer;
@@ -2553,7 +2754,11 @@ sub debug($)
 }
 
 
-
+sub CODEPATH($)
+{	
+	my $p = shift; 
+	main::CODEPATH( "GDB: $p" );
+}
 
 sub getCore
 {
@@ -2984,7 +3189,7 @@ sub saveGhostToStore()
 	{
 		if( (defined $originalAbsFH) && $newAbsFH ne $originalAbsFH )
 		{
-			CODEPATH( "Revoke AFN/Hash, new hash");
+			CODEPATH( "Revoke AFN/Hash, new hash" );
 			debug "   HashChange: Revoked old hash, new has registered" if $saveGhostDebug;
 			$self->revokeAFNforHash( $originalAbsFH, $afn );
 		}
@@ -5708,8 +5913,8 @@ sub forGhostsWithHashMap
 		{
 			my $x = $fitFunction->($g, $hash);
 			# die unless ref $CODE_SKIP_DUPLICATE;
-			print " I have x=$x\n";
-			print "X is " .(ref $x ? "A ref" : "not a ref" ) . "\n";
+			#print " I have x=$x\n";
+			#print "X is " .(ref $x ? "A ref" : "not a ref" ) . "\n";
 			push @result, $x unless ref($x) && ($x == $CODE_SKIP_DUPLICATE);
 		}
 		else
@@ -5803,7 +6008,7 @@ sub populateChildrenLFNs
 
 	my $existingFullHash = $ghost->fullHash();
 
-	die unless $ghost->canHaveChildren();
+	die "asked to populate children on ghost that is not a directory" unless $ghost->canHaveChildren();
 
 	if( defined $existingFullHash )
 	{
@@ -5877,7 +6082,7 @@ sub intakeTruthAndLFNsFromFile
 
 	my @lfns;
 
-	debug "*** READFILE $path\n" if $ioDebug; 
+	print "*** READFILE $path\n" if $ioDebug; 
 
 	open FILE, "<$path" or die "Could not open $path for reading..";
 
@@ -5885,7 +6090,7 @@ sub intakeTruthAndLFNsFromFile
 
 	my $firstLine = <FILE>;
 
-	print "firstline: [$firstLine]\n";
+	#print "firstline: [$firstLine]\n";
 
 	my $r = main::getMOBtypeFromMagicHeader( $firstLine );
 
@@ -7073,7 +7278,8 @@ sub newFromSerialized($)
 
 		my $original = $serialLFN;
 		$serialLFN = main::assembleLFN( $handler, $root, $newPath );
-		debug( "Inbound LFN:[$original] handler:[$handler] root:[$root] newPath:[$path] --> $serialLFN");
+		debug( "Inbound LFN:[$original] handler:[$handler] root:[$root] newPath:[$path] --> $serialLFN") 
+			if $granularSerialDebug;
 
 	}
 
@@ -7320,7 +7526,7 @@ sub hasAcceptableEnumeration
 		if( $age > $main::GUARD_TIME_SECONDS_ENUMERATION )
 		{
 			CODEPATH( "lastEnumerated too old, recheck forced" );
-			debug ( join '', "Forcing enumeration recalculation (", main::expressRelativeTime( $age ), ")\n");
+			debug ( join '', "Forcing enumeration recalculation (", main::expressRelativeTime( $age ), ")\n") if $staleInfoDebug;
 			return 0; 
 		}
 	}
@@ -7369,6 +7575,12 @@ sub learnChildrenByLFN()
 
 	# print Data::Dumper::Dumper( $lfns );
 
+	if( $learnDebugExpress )
+	{
+		my $x = $self->quickDebugString();
+		debug "LEARN CHILDREN: ($x) @$lfns\n";
+
+	}
 
 	if( defined $self->lastEnumerated() )
 	{
@@ -7500,9 +7712,7 @@ sub calculateDeepFields
 		$g->flush();
 	}
 
-
-
-	my $buffer = $self->generateTreeSignatureBuffer();
+	my $buffer = $self->generateTreeSignatureBuffer( bypassMode => 1 );
 
 	my $hexdigest = main::getSHAforBuffer( $buffer );
 
@@ -7530,7 +7740,7 @@ sub calculateUnforcedSignatureHashOverChildren
 {
 	my $self = shift;
 
-	my $buffer = $self->generateTreeSignatureBuffer();
+	my $buffer = $self->generateTreeSignatureBuffer( bypassMode => 1 );
 	return undef if not defined $buffer;
 
 	my $hexdigest = main::getSHAforBuffer( $buffer );
@@ -7547,10 +7757,11 @@ sub calculateUnforcedSignatureHashOverChildren
 sub generateTreeSignatureBuffer
 {
 	my $self = shift;
+	my %opt = @_;
 
 	my $mob = ManagedObject::Directory->new();
 	$mob->setDirectoryGhost( $self );
-	my $buffer = $mob->serialize();
+	my $buffer = $mob->serialize( %opt );
 	return $buffer;
 }
 
@@ -7791,7 +8002,7 @@ sub learnEnumerated
 
 	$self->lastEnumerated( $time );
 	$self->markDirty($time, "enum");
-	debug "Learned: Fully enumed" if $learnDebug;
+	debug "LEARN: Fully enumed at $time" if $learnDebugExpress;
 }
 
 # indicates that a LFN is thought to be a child of this ghost.  We only
@@ -9820,13 +10031,17 @@ sub createGhostAsSubpath()
 	my $self = shift;
 	my $str = shift; 
 
+	die "undefined child name" if not defined $str; 
+	die "Attempted to create a subpath with a directory delimiter in the name!" if $str =~ /\/+/;
+
 	my $parentPath = $self->getPath(); 
 	my $childPath = File::Spec->catfile( $parentPath, $str );
 	my $parentHandler = $self->getHandler();
 	my $parentRoot = $self->getRoot();
 	my $destLFN = main::assembleLFN( $parentHandler, $parentRoot, $childPath );
 
-	debug "createGhostAsSubpath: parent:[$parentPath] + str:[$str] -> [$childPath] ($destLFN)\n";
+
+	debug "createGhostAsSubpath: parent:[$parentPath] + str:[$str] -> [$childPath] ($destLFN)\n" if $gChildDebug;
 
 	my $tk = TruthKeeper::get();
 	my $newChild = $tk->obtainGhostForLFN( $destLFN );

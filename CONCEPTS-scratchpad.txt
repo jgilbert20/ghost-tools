@@ -12,8 +12,14 @@ gfs reconstruct foo.snap
 
 # Current target
 
-Minimal Viable Product: Backup which given a path pushes anything "new" in that location including directory definitions. Gives you back a hash of the thing saved. Should be possible to reconstruct from that hash. 
+Minimal Viable Product: Backup which given a path pushes anything "new" in that location including directory definitions. Gives you back a hash of the thing saved. Should be possible to reconstruct from that hash even if database is wiped. 
 
+To do this, we need to be sure that we have a rapid way of finding if a hash is under a directory.  
+
+
+# Immutable directories and enumeration
+
+Issue: there appears to not be any way for a directory's enumeration state to be refereshed. Its not learned and put into the database as far as I can tell. So at a certain point, directory listing is always forced. To reproduce, checkpoint a directory and then lschildren on it after the expiry date and you'll see it force a reload every time from the backing directory. Somehow the directory's hash has to take over from the enumeration date. EG. as an optimziation, discovery that a directory scan has not contributed any new information should bump up the lastEnumerated date. I'm worried this will have downstream implications if the directory cannot be statted (e.g. immutable.)
  
 
 
