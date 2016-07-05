@@ -14,7 +14,16 @@ gfs reconstruct foo.snap
 
 Minimal Viable Product: Backup which given a path pushes anything "new" in that location including directory definitions. Gives you back a hash of the thing saved. Should be possible to reconstruct from that hash even if database is wiped. 
 
-To do this, we need to be sure that we have a rapid way of finding if a hash is under a directory.  
+Current test mode:
+
+
+gfs debug cleargfs ; rm -rf bak ; mkdir bak
+gfs checkpoint dir-a
+gfs debug new-backup dir-a bak
+
+
+To do this, we need to be sure that we have a rapid way of finding if a hash is under a directory. 
+
 
 
 # Immutable directories and enumeration

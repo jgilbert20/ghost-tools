@@ -7491,6 +7491,16 @@ sub findDuplicateGhostsUnderTreeFullScan
 # we've summed up the signatures of our kids and they match. Once this step is
 # done once per ghost, a flag is set and it doesn't need to be done again
 
+
+
+# Thoughts on July 5: Also, we need more testing -- hasAcceptableEnum() seems
+# broken. What happens if you call it on a virgin ghost where the dir object
+# hasn't been read. Shouldn't it make an attempt to load children first or
+# take other steps? It seems to return information more like "are my children
+# populated in memory right now?" rather than "do I have an acceptable
+# enumeration in a global way?"
+
+
 # Tells us if the object's children list is up to date
 
 sub hasAcceptableEnumeration
@@ -7813,6 +7823,7 @@ sub getDeepSize
 			my $t = main::now();
 			$self->calculateDeepFields( $t );
 		}
+		die "Something wrong - I have acceptable deep fields by my size is not defined" if not defined $self->deepSize();
 		return $self->deepSize();
 	}
 
@@ -7831,6 +7842,7 @@ sub getDeepCount
 			my $t = main::now();
 			$self->calculateDeepFields( $t );
 		}
+		die "Something wrong - I have acceptable deep fields by my count is not defined" if not defined $self->deepSize();
 		return $self->deepCount();
 	}
 
@@ -9380,6 +9392,7 @@ sub learnContentsChanged
 		{
 			$self->deepSize( undef );
 			$self->deepCount( undef );
+			$self->lastDeepScan( undef );
 			debug " XX Revoking deep fields due to learnContentsChanged($q)" if $revokeDebug || $learnDebug;
 			$self->markDirty( $time, "cc/deep");
 		}
