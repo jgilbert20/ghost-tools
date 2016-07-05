@@ -46,34 +46,30 @@ local $main::GUARD_TIME_SECONDS_DEEPSCAN = undef;
 
 # Debug control
 
-my $ioDebug             = 1;   # Print stats, reads, readdirs, etc. 
-my $icDebug             = 0;   # TK incorporation
-my $tkdebug             = 0;   # TK general
-my $tkflushdebug        = 0;   # End of script TK flushes
-my $gsDebug             = 0;   # Ghost store debug
-my $gdbDebug            = 0;   # GhostDirectory (mainly reads)
-
-my $saveGhostDebug = 0 ;   # GhostDirectory writes
-my $saveGhostDebugExpress =1; 
-my $duplicateDebug      = 0;   # Duplicate checking debugging
-my $granularSerialDebug = 0;   # Instruments the escape/unescape mechanism
-my $serializeDebug      = 0;   # Instruments the load/save at ghost level
-my $gChildDebug         = 0;   # instrument learnChildAfns
-my $childTruthDebug     = 0;   # Code that pulls LFNs of children from repositories 
-my $managedObjectDebug  = 1;   # Code for extracting and creating managed objects
-my $fseDebug            = 0;
-my $fseOjxDebug         = 0;
-my $fseSnapshotDebug    = 0;
-my $learnDebug          = 0;
-my $learnDebugExpress   = 1;
-my $upNavDebug			= 0;   # debugging on getParent() and getParentLFN()
-my $revokeDebug         = 0;   # Special case of learn that just looks at hash revocation
-my $staleInfoDebug      = 0;   # Decisionmaking on if data is current enough
-my $statStructDebug     = 0;
-
-
-
-my $provenanceDebug     = 1;   # Tracks a history for each ghost, no extra output but ~costly
+my $ioDebug               = 1;   # Print stats, reads, readdirs, etc. 
+my $icDebug               = 0;   # TK incorporation
+my $tkdebug               = 0;   # TK general
+my $tkflushdebug          = 0;   # End of script TK flushes
+my $gsDebug               = 0;   # Ghost store debug
+my $gdbDebug              = 0;   # GhostDirectory (mainly reads)
+my $saveGhostDebug        = 0;   # GhostDirectory writes
+my $saveGhostDebugExpress = 0;   # Just single output on ghost store operation
+my $duplicateDebug        = 0;   # Duplicate checking debugging
+my $granularSerialDebug   = 0;   # Instruments the escape/unescape mechanism
+my $serializeDebug        = 0;   # Instruments the load/save at ghost level
+my $gChildDebug           = 0;   # instrument learnChildAfns
+my $childTruthDebug       = 0;   # Code that pulls LFNs of children from repositories 
+my $managedObjectDebug    = 0;   # Code for extracting and creating managed objects
+my $fseDebug              = 0;
+my $fseOjxDebug           = 0;
+my $fseSnapshotDebug      = 0;
+my $learnDebug            = 0;
+my $learnDebugExpress     = 1;
+my $upNavDebug			  = 0;   # debugging on getParent() and getParentLFN()
+my $revokeDebug           = 0;   # Special case of learn that just looks at hash revocation
+my $staleInfoDebug        = 0;   # Decisionmaking on if data is current enough
+my $statStructDebug       = 0;
+my $provenanceDebug       = 1;   # Tracks a history for each ghost, no extra output but ~costly
 
 # Constant Symbols 
 
@@ -2285,7 +2281,7 @@ sub globalMkPath
 {
 	my $p = shift; 
 
-	print "*** Mkpath: $p" if $ioDebug;
+	print "*** Mkpath: $p\n" if $ioDebug;
 	File::Path::make_path( $p );
 
 	$@ and die "Couldn't create dir path: $@";
@@ -3001,33 +2997,35 @@ sub saveGhostToStore()
 	debug "   Commited ghost to DB store" if $saveGhostDebug;
 
 	#if( $g->hasAcceptableEnumeration() )
-	if( $g->hasAcceptableDeepScan() && $g->hasAcceptableEnumeration() )
+	if( $g->canHaveChildren() )
 	{
-		# this should delegate to a managed object
-		my $buffer = $g->generateTreeSignatureBuffer();
-		my $ojx = $main::coreOjxFSE;
-
-		if( not defined $buffer )
+		if( $g->hasAcceptableDeepScan() && $g->hasAcceptableEnumeration() )
 		{
-			# Strange case, lets report it
-			$g->printDebug();
-			warn "Attempted to serialize [$g] and got something undefined - checkpoint issue?";
+			# this should delegate to a managed object
+			my $buffer = $g->generateTreeSignatureBuffer();
+			my $ojx = $main::coreOjxFSE;
+
+			if( not defined $buffer )
+			{
+				# Strange case, lets report it
+				$g->printDebug();
+				warn "Attempted to serialize [$g] and got something undefined - checkpoint issue?";
+			}
+			else
+			{
+				$ojx->absorbScalar($buffer);
+			}
+			#print "+++_+_+_+ ** TO implement: storage of the dirfile -- GOOD TO GO!\n";
 		}
 		else
 		{
-			$ojx->absorbScalar($buffer);
-		}
-		#print "+++_+_+_+ ** TO implement: storage of the dirfile -- GOOD TO GO!\n";
-	}
-	else
-	{
-		if( $g->exists() )
-		{
-			my $x = $g->quickDebugString();
-				warn "I am not writing $x into directory object b/c it has no recent deepscan i trust";
+			if( $g->exists() )
+			{
+				my $x = $g->quickDebugString();
+				# warn "I am not writing $x into directory object b/c it has no recent deepscan i trust";
+			}
 		}
 	}
-
 
 
 
@@ -4789,7 +4787,6 @@ sub store
 	my $srcPath = $sourceFileGhost->getPath();
 	my $destPath = $target->getPath();
 	my $dirname = File::Basename::dirname( $destPath );
-
 
 	print "store() - COPY - [$srcPath]->[$destPath]\n" if $ghostStoreOpDebug;
 
