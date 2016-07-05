@@ -2556,7 +2556,7 @@ sub serialize
 		@c = $dirGhost->getChildren();
 	}
 
-	warn "Directory is strangely empty - is that intention?" if @c < 1; 
+	warn "Directory is strangely empty - is that intentional?" if @c < 1; 
 
 	foreach my $g ( @c )
 	{
@@ -2581,7 +2581,6 @@ sub serialize
 
 	print "createTreeSignatureBuffer: Final buffer: $buffer\n"  if $sigDebug;
 
-
 	return $buffer;
 }
 
@@ -2589,7 +2588,7 @@ sub serialize
 
 sub absorbFromFile
 {
-
+	die "not implemented yet";
 }
 
 
