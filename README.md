@@ -193,11 +193,11 @@ You can also move files. Like store, this fully uses the content aware layer.
 
 ## Plumbing operations
 
-There are a few great little tools that show the content engine at work. These are also all working:
+There are a few great little tools that show the content engine at work. These are also all working as well as many others in the debug section:
 
     gfs debug hashinfo <hash>
 
-    gfs debug write-afn "text to write" file.txt
+    gfs debug write-aln "text to write" file.txt
 
     gfs debug mkdir directory
 

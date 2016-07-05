@@ -33,11 +33,11 @@ sub debug($);
 local $main::SCRIPT_START = Time::HiRes::time();
 local $main::SCRIPT_START_GTOD = [gettimeofday];
 
-# These parameters control our acceptable "out of dateness". If undefined,
-# than any available cached data is used. These variables alone do not fully
-# influence how changes are directed. For instance, a changed size() ALWAYS
-# revokes the hash. But a changed modification date does not trigger a re-
-# hash.
+# These parameters control our acceptable "out of dateness" in seconds. If
+# undefined, than any available cached data is used. These variables alone do
+# not fully influence how changes are directed. For instance, a changed size()
+# ALWAYS revokes the hash. But a changed modification date does not trigger a
+# re-hash by default. (TODO- it probably should.)
 
 local $main::GUARD_TIME_SECONDS_STAT = 10; 
 local $main::GUARD_TIME_SECONDS_ENUMERATION = 10; 
