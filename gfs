@@ -51,23 +51,26 @@ my $icDebug             = 0;   # TK incorporation
 my $tkdebug             = 0;   # TK general
 my $tkflushdebug        = 0;   # End of script TK flushes
 my $gsDebug             = 0;   # Ghost store debug
-my $gdbDebug            = 1;   # GhostDirectory
+my $gdbDebug            = 0;   # GhostDirectory (mainly reads)
+
+my $saveGhostDebug = 0 ;   # GhostDirectory writes
+my $saveGhostDebugExpress =1; 
 my $duplicateDebug      = 0;   # Duplicate checking debugging
 my $granularSerialDebug = 0;   # Instruments the escape/unescape mechanism
 my $serializeDebug      = 0;   # Instruments the load/save at ghost level
-my $gChildDebug         = 1;   # instrument learnChildAfns
-my $childTruthDebug     = 1;   # Code that pulls LFNs of children from repositories 
+my $gChildDebug         = 0;   # instrument learnChildAfns
+my $childTruthDebug     = 0;   # Code that pulls LFNs of children from repositories 
 my $managedObjectDebug  = 1;   # Code for extracting and creating managed objects
 my $fseDebug            = 0;
 my $fseOjxDebug         = 0;
 my $fseSnapshotDebug    = 0;
-my $learnDebug          = 1;
+my $learnDebug          = 0;
+my $learnDebugExpress   = 1;
 my $upNavDebug			= 0;   # debugging on getParent() and getParentLFN()
-my $revokeDebug         = 1;   # Special case of learn that just looks at hash revocation
-my $staleInfoDebug      = 1;   # Decisionmaking on if data is current enough
+my $revokeDebug         = 0;   # Special case of learn that just looks at hash revocation
+my $staleInfoDebug      = 0;   # Decisionmaking on if data is current enough
 my $statStructDebug     = 0;
 
-my $saveGhostDebug =1; 
 
 
 my $provenanceDebug     = 1;   # Tracks a history for each ghost, no extra output but ~costly
@@ -779,7 +782,6 @@ sub doverb_debug()
 		print "iFullHash = $iFullHash\n"; 
 		print "iStat     = $iStat\n";    
 		print "iFileType = $iFileType\n"; 
-
 	}
 
 	# Takes the pattern provided and reconstructs it into the target
@@ -950,11 +952,6 @@ sub doverb_debug()
 	{
 		die "Unrecognized debug command: [$command].";
 	}
-
-
-
-
-
 }
 
 
@@ -962,10 +959,7 @@ sub doverb_debug()
 sub doverb_test
 {
 	TestEnvironment->go();
-
-
 }
-
 
 
 # doverb_store
@@ -1165,8 +1159,6 @@ sub doverb_backup_run()
 
 }
 
-
-
 sub doverb_voladd()
 {
 	my $origArg = @ARGV;
@@ -1180,8 +1172,6 @@ sub doverb_voladd()
 
 	die "not implemented."
 }
-
-
 
 sub doverb_move()
 {
@@ -1202,8 +1192,6 @@ sub doverb_move()
 
 	$sourceGhost->moveGhost( $targetGhost );
 }
-
-
 
 # doverb_pointer
 #
@@ -1478,27 +1466,10 @@ sub doverb_checkpoint()
 	}
 }
 
-
-# brain dead on airplane. trying my best. 
-
-sub newReconstruct
-{
-	my $pattern = shift; # the thing we want to reconstruct
-	my $target = shift; # place to reconstruct it under
-
-
-
-
-
-
-}
-
-
 sub reconstructHelper
 {
 	my $p = shift;
 	my $t = shift;
-
 
 	my $px = $p->quickDebugString();
 	my $tx = $t->quickDebugString();
@@ -1515,7 +1486,7 @@ sub reconstructHelper
 	my $subThing = $t->createGhostAsSubpath( $p->getPathBasename() );
 
 	my $sx = $subThing->quickDebugString();
-	print "Made $sx";
+	#print "Made $sx";
 
 	# technicaly, should see if this new ghost exists, and could avoid the
 	# descent if it exists and has the same hash
@@ -1567,6 +1538,8 @@ sub reconstructHelper
 
 sub reconstructTestAction
 {
+	die "I think this is the old routine.";
+
 #	my $self = shift;
 	my $ghost = shift;
 
@@ -2312,7 +2285,7 @@ sub globalMkPath
 {
 	my $p = shift; 
 
-	debug "**** Mkpath: $p";
+	print "*** Mkpath: $p" if $ioDebug;
 	File::Path::make_path( $p );
 
 	$@ and die "Couldn't create dir path: $@";
@@ -2766,6 +2739,7 @@ sub findGhostByAFN
 	# i'm not sure I want these things in the TK cache. 
 
 	my $gAFN = Ghost->make_private( $afn );
+	$gAFN->isTKversion(0);
 	$gAFN->addDebugProvenance( "fbAFN($afn)" );
 
 	$self->{AFN_TO_GHOST_CACHE}->{$afn} = $gAFN;
@@ -2960,9 +2934,18 @@ sub saveGhostToStore()
 	my $gx = $g->quickDebugString();
 	my $ax = defined $absGhost ? $absGhost->quickDebugString() : "none";
 
-	print "++ SaveGhostToStore\n";
-	print "   Asked to save $gx\n";
-	print "   Existing ghost in DB: $ax\n";
+	if( $saveGhostDebug )
+	{
+		debug "++ SaveGhostToStore\n";
+		debug "   Asked to save $gx\n";
+		debug "   Existing ghost in DB: $ax\n";
+	}
+
+	if( $saveGhostDebugExpress )
+	{
+		debug( "Save Ghost: $gx\n");
+	}
+
 
 	if( ! defined $absGhost )
 	{
@@ -2979,9 +2962,12 @@ sub saveGhostToStore()
 
 	my $newAbsFH = $absGhost->fullHash();
 
-	print "Reporting on hash details. The ghost i'm trying to save ($gx) started with hash: $originalGhostFH\n";
-	print "Prior to learning, the absolute ghost from db ($ax) had hash: $originalAbsFH\n";
-	print "Now that learning done, absolute ghost from DB has hahs: $newAbsFH\n";
+	if( $saveGhostDebug )
+	{
+		debug "Reporting on hash details. The ghost i'm trying to save ($gx) started with hash: $originalGhostFH\n";
+		debug "Prior to learning, the absolute ghost from db ($ax) had hash: $originalAbsFH\n";
+		debug "Now that learning done, absolute ghost from DB has hahs: $newAbsFH\n";
+	}
 
 	if( $absGhost->dirty() == 0 )
 	{
@@ -3036,10 +3022,10 @@ sub saveGhostToStore()
 	else
 	{
 		if( $g->exists() )
-{
-	my $x = $g->quickDebugString();
-		warn "I am not writing $x into directory object b/c it has no recent deepscan i trust";
-}
+		{
+			my $x = $g->quickDebugString();
+				warn "I am not writing $x into directory object b/c it has no recent deepscan i trust";
+		}
 	}
 
 
@@ -4347,6 +4333,10 @@ sub absorb
 	# this is definitely a truthy thing
 	# TODO boundary issue, what if user's new name for the snapshot overwrites an existing 
 	# snapshot name??? what is "correct"
+
+	warn "not tested code - unclear if registerTruthyGhost still appropriete" .
+		"now that TK ghosts have extra revocation rules";
+
 	TruthKeeper::get()->registerTruthyGhost( $copy );
 
 	$self->rootGhostStore()->addGhost( $copy );
@@ -4765,6 +4755,7 @@ sub mkdir
 
 }
 
+my $ghostStoreOpDebug = 0;
 
 # 
 #
@@ -4800,7 +4791,7 @@ sub store
 	my $dirname = File::Basename::dirname( $destPath );
 
 
-	print "store() - COPY - [$srcPath]->[$destPath]\n";
+	print "store() - COPY - [$srcPath]->[$destPath]\n" if $ghostStoreOpDebug;
 
 	main::globalMkPath( $dirname );
 
@@ -4810,13 +4801,13 @@ sub store
 	{
 		if( $target->isDuplicateOf($sourceGhost) )
 		{
-			print "store(): Source and destination are identical, no action.\n";
+			debug "store(): Source and destination are identical, no action.\n" if $ghostStoreOpDebug;
 			CODEPATH( "store.identical");
 			return $target; 
 		}
 		else
 		{
-			print "store(): destination exists, generating new location.\n";
+			debug "store(): destination exists, generating new location.\n" if $ghostStoreOpDebug;
 			my $newLocation = $target->generateAlternativeLocation( 'storeOperation' );
 			CODEPATH( "store.relocate");
 
@@ -5602,7 +5593,7 @@ sub incorporateGhostData
 		if( $base == $g )
 		{
 			debug "  Incorporate: Asked to incorporate a ghost that is already truthy";
-			die unless $base->isTKVersion() > 0;
+			die unless $base->isTKversion() > 0;
 			return;
 		}
 
@@ -5641,6 +5632,7 @@ sub registerTruthyGhost
 
 	my $ghostForLFN = $self->ghostForLFN();
 	die "Collision [$lfn]" if exists $ghostForLFN->{$lfn};
+
 	$ghostForLFN->{$lfn} = $g;
 }
 
@@ -5780,7 +5772,7 @@ sub obtainManagedObjectBackingFileByHash
 	# First strategy, find it directly by hash->AFN cache
 	my @ghostsWithHash = $self->obtainGhostsForHash( $hash, 1 );
 
-	print Data::Dumper::Dumper( @ghostsWithHash );
+	# print Data::Dumper::Dumper( @ghostsWithHash );
 
 
 	my @moWithHash = grep { $_->isSingleFile() && $_->exists() } @ghostsWithHash;
@@ -5925,7 +5917,12 @@ sub intakeTruthAndLFNsFromFile
 
 
 # Normal logic to get a ghost. Nearly all ghost construction should come
-# through this routine.
+# through this routine. The exception will be other truth sources which may
+# make their own ghosts either by cloning or deserialization, etc.
+#
+# The isTKVersion() flag on a ghost tells it that the ghost is the "primary"
+# ghost that is considered truthy. All other ghosts may represent truth state,
+# but are not guarenteed to be up to date.
 
 sub obtainGhostForLFN
 {
@@ -5954,6 +5951,7 @@ sub obtainGhostForLFN
 	$g->addDebugProvenance( "obtain/base($lfn)" ) if $provenanceDebug;
 	# registers into our singleton cache
 	
+	$g->isTKversion(1);
 	$self->registerTruthyGhost( $g );
 	
 	my $DID = $g->debugID();
@@ -7372,7 +7370,7 @@ sub learnChildrenByLFN()
 	my $time = shift;
 	my $lfns = shift; 
 
-	print Data::Dumper::Dumper( $lfns );
+	# print Data::Dumper::Dumper( $lfns );
 
 
 	if( defined $self->lastEnumerated() )
@@ -7644,13 +7642,13 @@ sub learnDeepScan
 	my $q = $self->quickDebugString();
 	my $hasSigChanged = 0;
 
-	if( $learnDebug )
+	if( $learnDebug || $learnDebugExpress )
 	{
 		my $__time = defined $time ? $time : "<undef>";
 		my $__deepSize = defined $deepSize ? $deepSize : "<undef>";
 		my $__deepCount = defined $deepCount ? $deepCount : "<undef>";
 		debug "LEARN DEEP time:[$__time] size:[$__deepSize] cound:[$__deepCount] for $q\n";
-		$self->printDebug();
+		# $self->printDebug();
 	}
 
 	die unless defined $time;
@@ -8289,7 +8287,7 @@ sub learnFileType
 
 	my $q = $self->quickDebugString();
 
-	if( $learnDebug )
+	if( $learnDebug || $learnDebugExpress )
 	{
 		my $__time = defined $time ? $time : "<undef>";
 		my $__type = defined $type ? $type : "<undef>";
@@ -8772,6 +8770,7 @@ sub getStatPresence
 #
 use Data::Dumper;
 
+
 sub learnFromGhost
 {
 	my $self = shift; 
@@ -8793,6 +8792,15 @@ sub learnFromGhost
 	}
 
 	CODEPATH( "ghost merging" );
+
+	if( $learnDebugExpress )
+	{
+		my $mx = $self->quickDebugString();
+		my $ox = $g->quickDebugString();
+
+		debug ("LEARN FROM GHOST base:($mx) <--- ($ox)\n");
+	}
+
 
 	if( $learnDebug )
 	{
@@ -9102,14 +9110,23 @@ sub learnIsACopyOfGhost
 # This tells the ghost that the file contents are presumed to have changed. In
 # fact, the file may not exist anymore. For consistency, we basically pretend
 # that the file doesn't exist anymore, thus forcing recalculations.
-# hasAcceptableXXX() will always return false in these cases.
-
+# hasAcceptableXXX() must always return false in these cases. (TODO clear
+# test)
+#
 # TODO: is a cleaner way to do this to have some sort of "knownUpdate" field
-# that is triggered on it which automatically fails out the next hasAcceptable() 
+# that is triggered on it which automatically fails out the next
+# hasAcceptable()
+#
+# This function is ALWAYS be called if the signature of the file has changed,
+# so that it can propgate that information up the tree. We delegate this
+# propogation to the truth keeper since we'll probably have ghosts from a few
+# differnet sources and we only want this action taken for primary ghosts. (Do
+# NOT want recursive updates occuring for ghosts that are backed by database,
+# etc. )
 
-# This function should ALWAYS be called if the signature of the file has
-# changed, so that it can propgate that information up the tree.
 
+# TODO: test case, MOB with hash changed, does LCC take care of it? (Manually
+# tested, but not procedurally tested)
 
 sub learnContentsChanged
 {
@@ -9122,6 +9139,12 @@ sub learnContentsChanged
 
 	$self->fileType( undef );
 	$self->lastFileType( undef );
+
+	if( $learnDebugExpress )
+	{
+		my $x = $self->quickDebugString();
+		debug "LEARN CHANGE:` $x\n";
+	}
 
 	if( (not defined $self->lastChanged() ) or ($self->lastChanged() < $time ))
 	{
@@ -9166,7 +9189,7 @@ sub learnContentsChanged
 		
 		debug " XX learnContentsChanged($q) - scanning parents" if $revokeDebug || $learnDebug;
 
-		if( $self->exists() )
+		if( $self->exists() && $self->wantsHierarchialRevokes() )
 		{
 			$self->flush();
 
@@ -9175,17 +9198,25 @@ sub learnContentsChanged
 
 			if( ! defined $plfn )
 			{
-				debug " learnContentsChangedI am the root, LCC over.";
+				debug " learnContentsChangedI am the root, learn contents changed is over.";
 				return;
 			}
 
 			my $tk = TruthKeeper::get();
 			my $parent = $tk->obtainGhostForLFN($plfn);
 
-			if( $parent->exists() )
+			# If our parent thinks it has a good enumeration or deep scan,
+			# correct it. If it doesn't, we can presume that its parent
+			# doesn't either.
+
+			if( $parent->exists() && ($parent->hasAcceptableEnumeration() || $parent->hasAcceptableDeepScan() ))
 			{	
 				$parent->learnContentsChanged( $time );
 				$parent->flush();
+			}
+			else
+			{
+				warn "Strange, parent doesn't exist -- not sure if this should cause die()";
 			}
 		}
 		else
@@ -9201,6 +9232,19 @@ sub learnContentsChanged
 	}
 }
 
+
+
+# This is called when the connents have changed to see if the ghost wants its
+# parent's notified of changed. Should only be called for TK versions.
+
+sub wantsHierarchialRevokes
+{
+
+
+}
+
+
+# Returns the parent LFN, currentl calculated using FSE tools (typically rel2abs and the like)
 
 sub getParentLFN
 {
@@ -9271,14 +9315,14 @@ sub learnStat
 
 	my $q = $self->quickDebugString();
 
-	if( $learnDebug )
+	if( $learnDebug || $learnDebugExpress )
 	{
 		my $__size = defined $size ? $size : "<undef>";
 		my $__mtime = defined $mtime ? $mtime : "<undef>";
 		my $__mode = defined $mode ? $mode : "<undef>";
 		my $__statStruct = defined $statStruct ? $statStruct : "<undef>";
-		debug "LEARN STAT [$__size], [$__mtime], [$__mode] [$__statStruct] for $q time:[$time]\n" if $learnDebug;
-		$self->printDebug();
+		debug "LEARN STAT sz[$__size], mtme[$__mtime], mode[$__mode] for---> [$q]   t:[$time]\n";
+		# $self->printDebug();
 	}
 
 
@@ -9370,7 +9414,11 @@ sub learnStat
 	# hash is newer than the incoming stat, but older than the existing stat, we
 	# have a logical violation of RULE #1)
 
-	if( (defined $self->size()) && ((not defined $size) or ($self->size() != $size)))
+	my $isAdirectory = 0;
+
+	$isAdirectory = 1 if $self->extractTypeFromMode( $mode ) eq 'd';
+
+	if( (!$isAdirectory) and (defined $self->size()) && ((not defined $size) or ($self->size() != $size)))
 	{
 		$sigHasBeenChanged = 1;
 
@@ -9487,12 +9535,12 @@ sub learnFullHash
 
 	my $hasSigChanged = 0;
 
-	if( $learnDebug )
+	if( $learnDebug || $learnDebugExpress )
 	{
 		my $__time = defined $time ? $time : "<undef>";
 		my $__hash = defined $hash ? $hash : "<undef>";
 		debug "LEARN HASH time:[$__time] hash:[$__hash] for $q\n";
-		$self->printDebug();
+		# $self->printDebug();
 	}
 
 	die "learn full hash passed an undefined time" unless defined $time;
@@ -9624,7 +9672,7 @@ sub learnDeleted
 		return; 
 	}
 
-	debug "LEARN: Deleted object\n";
+	debug "LEARN: Deleted object\n" if $learnDebug || $learnDebugExpress;
 
 	$self->verifyGhostIsMutable();
 

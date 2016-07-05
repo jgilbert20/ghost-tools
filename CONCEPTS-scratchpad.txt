@@ -10,16 +10,16 @@ gfs debug newsnapwrite dir-a
 gfs debug newsnapread dir-a
 gfs reconstruct foo.snap
 
+# Current target
+
+Minimal Viable Product: Backup which given a path pushes anything "new" in that location including directory definitions. Gives you back a hash of the thing saved. Should be possible to reconstruct from that hash. 
+
+ 
 
 
+# Ghost learning from itself problem
 
-somehow i got too clever
-a gost ist trying to learn from itself
-bad stuff
-must be happening becuase the absolute ghosts are getting statted and recursed for revocation of paths, etc. 
-we need some kind of guard to ensure that absolutely ghosts don't ever hit the disk
-and then we need to figure out how/where our learning rules ended up making disk hits because that is really a no-no.
-again, suspect that disk hits happening b/c of our recursive walk up to clear checksums.
+Somehow i got too clever. A ghost ist trying to learn from itself. Bad stuff must be happening becuase the absolute ghosts are getting statted and recursed for revocation of paths, etc.  We need some kind of guard to ensure that absolutely ghosts don't ever hit the disk and then we need to figure out how/where our learning rules ended up making disk hits because that is really a no-no. again, suspect that disk hits happening b/c of our recursive walk up to clear checksums.
 
 
 
