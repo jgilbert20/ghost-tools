@@ -7805,8 +7805,6 @@ sub generateTreeSignatureBuffer_OLD
 	return $buffer;
 }
 
-
-
 # Returns the current deep size of the object. The time parameter is passed to
 # "hasAcceptableDeepScan". If defined, it acts as the time guard for the information
 # returned;
@@ -7925,13 +7923,12 @@ sub learnDeepScan
 		$isAnythingChanged = 1; 
 	}
 
-
-	if( 1 )
+	if( $learnDebug )
 	{	
 		my $id = $self->debugID();
 		my $deepSizeX = defined $deepSize ? $deepSize : "_UNDEF__";
 		my $deepCountX = defined $deepCount ? $deepCount : "_UNDEF__";
-		debug "Learn DEEP Decision: $id lastDeepScan:[$time] deepSize:[$deepSizeX] deepCount:[$deepCountX]" if $learnDebug;
+		debug "Learn DEEP Decision: $id lastDeepScan:[$time] deepSize:[$deepSizeX] deepCount:[$deepCountX]";
 	}
 
 
