@@ -24,12 +24,26 @@ gfs debug new-backup dir-a bak
 
 To do this, we need to be sure that we have a rapid way of finding if a hash is under a directory. 
 
+Issue with 
+
+apollo:~/src/ghost-tools/cleantest $ diff ./__gfs_ojx/test/obj/9462f32fda2e2d7a87b5ca10589e5ebf0ff269db/9462f32fda2e2d7a87b5ca10589e5ebf0ff269db ./__gfs_ojx/test/obj/ec53549ec2fc8b0fa5db807a405da27298382658/ec53549ec2fc8b0fa5db807a405da27298382658
+4c4
+< jarbinks:_:_:_:_:_:29:33188:1467755997:SHA1/FULL/00fb4cd724728171d30ca66404f474ccb6abeb8e:_:_:_:_:_:_:_:_:_:_:_:_
+---
+> jarbinks:_:_:_:_:_:29:33188:1467757031:SHA1/FULL/00fb4cd724728171d30ca66404f474ccb6abeb8e:_:_:_:_:_:_:_:_:_:_:_:_
+
+
+I think issue is the fact i did a "touch" operation. Some of the serializations are getting old data, others getting new data.
+
+1467755997  OLD  in 9462f32fda2e2d7
+1467757031	NEW  in ec53549ec2fc8b0f
 
 
 # Immutable directories and enumeration
 
 Issue: there appears to not be any way for a directory's enumeration state to be refereshed. Its not learned and put into the database as far as I can tell. So at a certain point, directory listing is always forced. To reproduce, checkpoint a directory and then lschildren on it after the expiry date and you'll see it force a reload every time from the backing directory. Somehow the directory's hash has to take over from the enumeration date. EG. as an optimziation, discovery that a directory scan has not contributed any new information should bump up the lastEnumerated date. I'm worried this will have downstream implications if the directory cannot be statted (e.g. immutable.)
  
+Also, we need more testing -- hasAcceptableEnum() seems broken. What happens if you call it on a virgin ghost where the dir object hasn't been read. Shouldn't it make an attempt to load children first or take other steps? It seems to return information more like "are my children populated in memory right now?" rather than "do I have an acceptable enumeration in a global way?"
 
 
 # Ghost learning from itself problem

@@ -42,11 +42,11 @@ local $main::SCRIPT_START_GTOD = [gettimeofday];
 local $main::GUARD_TIME_SECONDS_STAT = 10; 
 local $main::GUARD_TIME_SECONDS_ENUMERATION = 10; 
 local $main::GUARD_TIME_SECONDS_FULLHASH = undef; 
-local $main::GUARD_TIME_SECONDS_DEEPSCAN = undef; 
+local $main::GUARD_TIME_SECONDS_DEEPSCAN = 20; 
 
 # Debug control
 
-my $ioDebug               = 1;   # Print stats, reads, readdirs, etc. 
+my $ioDebug               = 0;   # Print stats, reads, readdirs, etc. 
 my $icDebug               = 0;   # TK incorporation
 my $tkdebug               = 0;   # TK general
 my $tkflushdebug          = 0;   # End of script TK flushes
@@ -69,7 +69,7 @@ my $upNavDebug			  = 0;   # debugging on getParent() and getParentLFN()
 my $revokeDebug           = 0;   # Special case of learn that just looks at hash revocation
 my $staleInfoDebug        = 0;   # Decisionmaking on if data is current enough
 my $statStructDebug       = 0;
-my $provenanceDebug       = 1;   # Tracks a history for each ghost, no extra output but ~costly
+my $provenanceDebug       = 0;   # Tracks a history for each ghost, no extra output but ~costly
 
 # Constant Symbols 
 
@@ -2509,7 +2509,7 @@ sub generateMagicHeader
 	return main::createMagicHeader( $self->getTypeMagicCode() );
 }
 
-my $sigDebug = 0;
+my $sigDebug = 1;
 
 sub serialize
 {
@@ -2526,7 +2526,7 @@ sub serialize
 
 	my $lfn = $dirGhost->lfn();
 
-	print "createTreeSignatureBuffer: Calculating signature: $lfn\n" if $sigDebug;
+	debug "createTreeSignatureBuffer: Calculating signature: $lfn\n" if $sigDebug;
 
 	my $tk = TruthKeeper::get();
 
@@ -2576,7 +2576,7 @@ sub serialize
 		my $gBuf = $gSig->serialize(pathMode=>'strict-basename');
 		$buffer .= $gBuf . "\n";
 
-		print "SigBufferGen: $gBuf\n"  if $sigDebug;
+		debug "SigBufferGen: $gBuf\n"  if $sigDebug;
 	}
 
 	print "createTreeSignatureBuffer: Final buffer: $buffer\n"  if $sigDebug;
@@ -3145,6 +3145,16 @@ sub saveGhostToStore()
 	{
 		debug( "Save Ghost: $gx\n");
 	}
+
+	if( $saveGhostDebugExpress )
+	{
+		#my $p = $self->getProvenanceStr();
+		#debug( "Save Ghost (provenance): $p\n");
+		print "+++++\n";
+		$g->printDebug();
+		print "+++++\n"
+	}
+
 
 
 	if( ! defined $absGhost )
@@ -5551,14 +5561,34 @@ sub flushInternallyTracked
 	my $self = shift;
 	my $ghostForLFN = $self->ghostForLFN();
 	my $gdb = GhostDatabase->getCore();
+
+	my $hasLegacyProblem = 0;
+
 	foreach my $g (values %$ghostForLFN )
 	{
 		next unless $g->dirty(); 
 
 		my $gd = $g->quickDebugString();
-		debug "WARNING: flushed $gd\n";
+
+		# in the new design, all verbs are responsible for flushing semantics
+		# and should not rely on this catch to flush their state
+
+	my $debugWarnLegacyUnflushedDetails = 0;
+
+		if( $debugWarnLegacyUnflushedDetails )
+		{
+			debug "WARNING: flushed $gd\n";
+			debug "+++++++\n";
+			$g->printDebug();
+			debug "+++++++\n";
+		}
+
+			$hasLegacyProblem++;
 		$g->flush();
  	}
+
+ 	print "****** WARNING WARNING: There were $hasLegacyProblem ghosts flushed by legacy detector - FIXME\n";
+
 }
 
 
@@ -5831,8 +5861,23 @@ sub registerTruthyGhost
 	my $DID = $g->debugID();
 	debug "Register Truthy Thing: [$lfn] -> $DID\n" if $tkdebug;
 
+
 	my $ghostForLFN = $self->ghostForLFN();
 	die "Collision [$lfn]" if exists $ghostForLFN->{$lfn};
+
+	# Special debug checker to trap any inadvertant entry of absolute duplicates
+	if( 1 )
+	{
+		my $afn = $g->absoluteLFN();
+
+		print "Assert/Sanity Check: Attempted to add: [$lfn] -> $DID\n";
+		die "A truthy object of both a local and absolute has been registered (potential consistency issue)" 
+			if exists $self->{AFN_ASSERT_CACHE}->{$afn};
+
+		$self->{AFN_ASSERT_CACHE}->{$afn}++;
+	}
+
+
 
 	$ghostForLFN->{$lfn} = $g;
 }
@@ -6007,6 +6052,9 @@ sub populateChildrenLFNs
 
 	my $existingFullHash = $ghost->fullHash();
 
+	my $gx = $ghost->quickDebugString();
+	debug "Populating internal children from [$existingFullHash] onto $gx";
+
 	die "asked to populate children on ghost that is not a directory" unless $ghost->canHaveChildren();
 
 	if( defined $existingFullHash )
@@ -6019,6 +6067,8 @@ sub populateChildrenLFNs
 			$ghost->learnChildrenByLFN( $infoAsOfDate, $lfns );
 		}
 	}	
+
+	debug "Population complete (from [$existingFullHash] onto $gx)";
 
 
 }
@@ -6104,7 +6154,7 @@ sub intakeTruthAndLFNsFromFile
 		$tkGhost->learnFromGhost( $readGhost );
 		#my $gx = $tkGhost->makeDebugString();
 		my $gx = $tkGhost->quickDebugString();
-		debug "Generated new ghost $gx\n" if $childTruthDebug;
+		debug "Intake ++ ghost $gx\n" if $childTruthDebug;
 		$tkGhost->flush();
 		push @lfns, $readLFN;
 
@@ -7931,13 +7981,11 @@ sub learnDeepScan
 		debug "Learn DEEP Decision: $id lastDeepScan:[$time] deepSize:[$deepSizeX] deepCount:[$deepCountX]";
 	}
 
-
 	$self->lastDeepScan( $time );
 	$self->deepSize( $deepSize );
 	$self->deepCount( $deepCount );
 
 	debug "Accepted deep size / deep count\n" if $learnDebug;;
-
 	debug "Learn DEEP: isAnythingChanged? $isAnythingChanged" if $learnDebug; 	
 
 	$self->markDirty( $time, "deep") if $isAnythingChanged;
@@ -7982,7 +8030,7 @@ sub hasAcceptableDeepScan
 
 	if( defined $main::GUARD_TIME_SECONDS_DEEPSCAN )
 	{
-		my $age = $main::SCRIPT_START - $self->lastStat();
+		my $age = $main::SCRIPT_START - $self->lastDeepScan();
 
 		if( $age > $main::GUARD_TIME_SECONDS_DEEPSCAN )
 		{
@@ -8682,7 +8730,7 @@ sub hasAcceptableStat
 	{
 		my $q = $self->quickDebugString();
 		my $x = defined $timeguard ? $timeguard : "undef";
-		debug "hasAcceptableStat:($x) $q\n" 
+		debug "hasAcceptableStat:($x) $q\n" if $staleInfoDebug; 
 	}
 
 	return 1 if $self->isImmutable();
