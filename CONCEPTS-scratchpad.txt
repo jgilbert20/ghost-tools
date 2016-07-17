@@ -38,6 +38,44 @@ I think issue is the fact i did a "touch" operation. Some of the serializations 
 1467755997  OLD  in 9462f32fda2e2d7
 1467757031	NEW  in ec53549ec2fc8b0f
 
+THE REASON: (and it has to be fixed) is that calls to find sometimes return absolute paths and thus grab different versions of ghosts. This means that ghosts are not effectively serving as "singletons".
+
+# use cases:
+
+wish i could hash things up on talia and use that on mac, would reduce waiting quite a bit some kind of progress indicator of size caching. 
+
+use case exactly: a ton of stuff on a slow fileserver mounted on /Volumes/Drobo03. I think some of the files in my dropbox are complete duplicates of those, trying to decide if I can delete them.  The dropbo files are local to my computer. But I am in the car, can't get fast access to that disk (because i am on wifi outside), and it takes forever to get the size cache loaded. Checkpointing is copletely impossible. Would love some way for talia to generate or do something that would make my invokes of GFS faster.
+
+Observations:
+	- Lots of powerpoints have identical sizes even with different dates, few are exact hash matches (must be something in the way microsoft file format works)
+	- frustrating to have to SCANDIR into a large file tree over and over again but without a checkpoint easily available, that is what i have to do.
+
+If both GFS systems thought that VAULT was a volume, they could both contribute to some sort of shared cache.
+
+But you'd want not just the fullhashes. YOu'd want some way to get the stat information too. 
+
+
+
+# Notes on the deep scan speed problem 
+
+First we need to agree that it is an important design criteria that gfs should be able to do simple duplicate detection without forcing a deep scan. This situation is quite common that suddenly you realize you might have two copies of something in two different places. There are several things you'd want. First you want to know for each file in a target if there are duplicates in the source. Secondly you'd want to know which trees and full of entirely duplicates vs a mix vs entirely fresh material. This use case is not the same as a backup operation. 
+
+To implement we need an efficient implementation of findSamefilesizeunder for a ghost. The contract is that if a deep enumeration is recent enough, we can grab the file names of the children from the ghost database being accurate. The same contract applies to hashes -- if the deep scan is new enough for a particular ghost it means we accept the hash cache is up to date. This should drastically speed up the building of a size cache. The learning rule is tied to domain. 
+
+This implies that there is some way the child lfn can get serialized which I think is a pretty fair optimization. Other parts of the design I think call for something like this where a ghost can have a value. Call it a payload or something? Of ghosts have a value it means you can use the ghost namespaces as a way of storing other things. 
+
+Next question: how can something on the remote server help fill in these details?
+
+If on flush we had some good way to test the various ghost databases that applied we could push writes to more than one place. 
+
+This would mean we'd have a Translator b tween an lfn and one or more potential upstream ghost directory objects that can provide the ghost database interfaces. 
+
+Each ghost database has the option to write their own afn. 
+
+
+
+
+
 
 # Immutable directories and enumeration
 

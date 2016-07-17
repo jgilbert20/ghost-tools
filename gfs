@@ -39,14 +39,14 @@ local $main::SCRIPT_START_GTOD = [gettimeofday];
 # ALWAYS revokes the hash. But a changed modification date does not trigger a
 # re-hash by default. (TODO- it probably should.)
 
-local $main::GUARD_TIME_SECONDS_STAT = 10; 
-local $main::GUARD_TIME_SECONDS_ENUMERATION = 10; 
+local $main::GUARD_TIME_SECONDS_STAT = 10000; 
+local $main::GUARD_TIME_SECONDS_ENUMERATION = 10000; 
 local $main::GUARD_TIME_SECONDS_FULLHASH = undef; 
-local $main::GUARD_TIME_SECONDS_DEEPSCAN = 20; 
+local $main::GUARD_TIME_SECONDS_DEEPSCAN = 20000; 
 
 # Debug control
 
-my $ioDebug               = 0;   # Print stats, reads, readdirs, etc. 
+my $ioDebug               = 1;   # Print stats, reads, readdirs, etc. 
 my $icDebug               = 0;   # TK incorporation
 my $tkdebug               = 0;   # TK general
 my $tkflushdebug          = 0;   # End of script TK flushes
@@ -512,6 +512,11 @@ sub handleVerb
 	if( $verb eq "lsdup")
 	{
 		doverb_lsdup();
+		return;
+	}
+		if( $verb eq "dupchart")
+	{
+		doverb_dupchart();
 		return;
 	}
 	if( $verb eq "help")
@@ -1948,6 +1953,50 @@ sub doverb_rsync
 	# at this point, we wantt the GST to generate all ghosts (in present locations)
 	# currently under the tree
 	# iterate over all current ghosts
+
+}
+
+
+sub doverb_dupchart
+{
+	my $target = pop @ARGV;
+	my @source = @ARGV;
+
+	my $tk = TruthKeeper::get();
+	my ($targetGS, $targetStash) = $tk->makeGhostsFromCommandLine( $target );
+	my ($sourceGS, $sourceStash) = $tk->makeGhostsFromCommandLine( @source );
+	my $i = $targetGS->getIterator();
+
+	my @sourceGhosts;
+
+
+	foreach my $entry ( @$sourceStash )
+	{
+		my ( $sourceUserFN, $sourceFqlfn, $sourceGhost ) = @$entry;
+		push @sourceGhosts, $sourceGhost;
+		print "Position: $sourceUserFN\n";
+	}
+
+
+
+
+	while( my $g = $i->next() )
+	{
+		print $g->lfn();
+		print "\n";
+
+		foreach my $sg ( @sourceGhosts )
+		{
+			my $dups = $sg->findDuplicateUnderTree( $g );
+			foreach my $dup (@$dups )
+			{
+				my $x = $dup->lfn();
+				print "    -> $x\n";
+			}
+		}
+	}
+
+
 
 }
 
@@ -4795,7 +4844,7 @@ sub getFullHashSourceVerify
 
 	my $path = $g->getPath();
 
-	print "*** FULLHASH: $path\n" if $ioDebug;
+	print "*** FULLHASH:              : $path\n" if $ioDebug;
 
 	# TODO: examine use of stat
 	$main::run_bytes_fullread += -s $path;
@@ -4823,7 +4872,6 @@ sub getStatSourceVerify
 
 	my $path = $g->getPath();
 
-	print "*** STAT: $path\n"  if $ioDebug;
 	#cluck "Stat snoop";
 
 	$main::run_files_stat++;
@@ -4834,6 +4882,9 @@ sub getStatSourceVerify
 	{
 		my $errcode = $! + 0;
 		print "   stat-error - $! = $errcode\n" if $ioDebug;
+		my $ans = " FNF ";
+			print "*** STAT    : $ans : $path\n"  if $ioDebug;
+
 		return (undef, undef, main::statModeGen_error($errcode));
 	}
 
@@ -4842,6 +4893,10 @@ sub getStatSourceVerify
 	
 	my $statStruct = new StatStruct;
 	$statStruct->loadFromPOSIXstat( \@statfields );
+
+		my $ans = sprintf "%12d", $size;
+			print "*** STAT    : $ans : $path\n"  if $ioDebug;
+
 
 	return ($size, $mtime, $mode, $statStruct );
 }
@@ -4858,7 +4913,7 @@ sub getImmediateChildren
 
 	my $dir = $parent->getPath();
 
-	print "*** Scandir [$dir]\n" if $ioDebug; 
+	print "*** SCANDIR :              : $dir\n" if $ioDebug; 
 
 	print "FSE:ScanDIR into dir:[$dir]\n" if $fseDebug;
 
@@ -5870,7 +5925,7 @@ sub registerTruthyGhost
 	{
 		my $afn = $g->absoluteLFN();
 
-		print "Assert/Sanity Check: Attempted to add: [$lfn] -> $DID\n";
+		#print "Assert/Sanity Check: Attempted to add: [$lfn] -> $DID\n";
 		die "A truthy object of both a local and absolute has been registered (potential consistency issue)" 
 			if exists $self->{AFN_ASSERT_CACHE}->{$afn};
 
@@ -6549,6 +6604,12 @@ sub getIterator
 	return $r;
 }
 
+sub getGSTops
+{
+	my $self = shift;
+	return keys %{$self->lfnToGhost()};
+}
+
 sub countDirty
 {
 	my $self = shift;
@@ -6879,9 +6940,11 @@ sub loadSizeCache
 
 	my $iterator = $self->getIterator();
 
+	my $topLFSn = join ',', $self->getGSTops();
+
 	CODEPATH( "Gen size cache");
 
-	debug "GS-Generating size cache\n";
+	debug "GS-Generating size cache: $topLFSn\n";
 
 	while( my $g = $iterator->next() )
 	{
@@ -6899,6 +6962,8 @@ sub loadSizeCache
 		}
 
 		push @{$h->{$size}}, $g;
+
+		$g->flush();
 	}
 
 	$self->sizeToFNs($h);
@@ -6998,6 +7063,9 @@ sub findAllDuplicates
 			$hit = 1;
 			push @matches, $gc;
 		}
+
+		# TODO... should this be here..?
+		$gc->flush();
 
 
 		if( $duplicateDebug )
@@ -8225,7 +8293,7 @@ sub isSameFilename
 	my $r = $a eq $b;
 
 
-	debug "isSameFilename a:[$a] b:[$b] result:[$r]";
+	#debug "isSameFilename a:[$a] b:[$b] result:[$r]";
 
 	return 1 if $r;
 	return 0;
