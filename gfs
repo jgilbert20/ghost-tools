@@ -2024,6 +2024,9 @@ sub doverb_lsdup()
 	my $target = pop @ARGV;
 	my @source = @ARGV;
 
+	print "LS Dup -tp of loop\n";
+
+
 	my $tk = TruthKeeper::get();
 	my ($targetGS, $targetStash) = $tk->makeGhostsFromCommandLine( $target );
 	my ($sourceGS, $sourceStash) = $tk->makeGhostsFromCommandLine( @source );
@@ -2037,6 +2040,9 @@ sub doverb_lsdup()
 	my @report; 
 	my $asWeGoPrint = 1;
 
+	print "LS Dup -tp of loop\n";
+    #die;
+
 	while( my $g = $i->next() )
 	{
 		my $lfn = $g->lfn();
@@ -2046,7 +2052,7 @@ sub doverb_lsdup()
 
 		$total_files++;
 
-	#	print "LS Dup -handling LFN:[$lfn]\n";
+		print "LS Dup -handling LFN:[$lfn]\n";
 
 		my @tdups = $targetGS->findOtherDuplicates( $g );
 		my @sdups = $sourceGS->findOtherDuplicates( $g );
@@ -2095,6 +2101,9 @@ sub doverb_lsdup()
 		}
 
 		push @report, [$g, \@tdups, \@sdups];
+
+		$g->flush();
+		#die;
 	}
 
 	print "Duplicate report: size X (target dups / source dups ) filename\n";
@@ -2754,7 +2763,7 @@ sub slurpChildren
 		{
 			debug "DeepTreeRead: END"; 
 			die unless defined $parent; 
-			$parent->learnChildrenByLFN( main::now(), \@childrenLFN );
+			$parent->learnChildrenByLFN( main::now(), \@childrenLFN, 0 );
 			main::debugLevel(-1);
 			return $parent;
 			next;
@@ -5628,14 +5637,14 @@ sub flushInternallyTracked
 		# in the new design, all verbs are responsible for flushing semantics
 		# and should not rely on this catch to flush their state
 
-	my $debugWarnLegacyUnflushedDetails = 0;
+	my $debugWarnLegacyUnflushedDetails = 1;
 
 		if( $debugWarnLegacyUnflushedDetails )
 		{
 			debug "WARNING: flushed $gd\n";
-			debug "+++++++\n";
-			$g->printDebug();
-			debug "+++++++\n";
+			# debug "+++++++\n";
+			# $g->printDebug();
+			# debug "+++++++\n";
 		}
 
 			$hasLegacyProblem++;
@@ -6119,7 +6128,7 @@ sub populateChildrenLFNs
 		if( defined $lfns )
 		{
 			my $infoAsOfDate = $ghost->lastFullHash();
-			$ghost->learnChildrenByLFN( $infoAsOfDate, $lfns );
+			$ghost->learnChildrenByLFN( $infoAsOfDate, $lfns, 0 );
 		}
 	}	
 
@@ -6483,9 +6492,11 @@ sub scanDir
 	# if not call up to TK and try to get from GCIP
 	# if not FSM->getImmediateChildren;
 
-	my $lfns = $g->getFSE()->getImmediateChildren( $g );
+	# my $lfns = $g->getFSE()->getImmediateChildren( $g );
 
-	$g->learnChildrenByLFN( main::now(), $lfns );
+	# $g->learnChildrenByLFN( main::now(), $lfns );
+
+	my $lfns = $g->getChildrenLFNs();
 
 #	my @children = $g->getChildren();
 
@@ -6844,9 +6855,6 @@ sub slurpSerializedStore
 }
 
 
-
-
-
 sub writeAsDescriptor($)
 {
 	my $self = shift;
@@ -6974,7 +6982,7 @@ sub findFilesWithSize
 	my $self = shift;
 	my $s = shift;
 
-	#debug "findFilesWithSize($s)";
+	debug "findFilesWithSize($s)";
 
 	return undef if( $s <= 0 );
 
@@ -7458,6 +7466,12 @@ sub newFromSerialized($)
 	}
 
 
+	if( defined $self->attributes() and defined $self->lastEnumerated() )
+	{
+		my @c = split /\|/, $self->attributes();
+		$self->{CHILDREN_LFNS} = \@c;
+	}
+
 	$self->dirty( 0 );
 	$self->isTKversion( 0 );
 
@@ -7506,6 +7520,10 @@ sub getChildren()
 }
 
 # Caller wants the complete set of LFNs of our immediate children. (May force a scan.)
+# LFNS can come from three sources:
+# 1- Serialzed in the database
+# 2- From some managed object
+# 3- from the disk
 
 sub getChildrenLFNs
 {
@@ -7528,16 +7546,12 @@ sub getChildrenLFNs
 
 		# The key thing is that this batch of data is as current as the hash
 		# is. So i'm going to bascially go with that. Hack, right?
-
-
-
-
 	}
 
 	# check our recency times. if we like them, return 
 	# TODO
 
-	if( $self->hasAcceptableEnumeration($time) )
+	if( $self->hasAcceptableEnumeration($time) && ref $self->{CHILDREN_LFNS} )
 	{
 		debug( "gChild: getChildrenLFNS - hitting cache") if $gChildDebug;
 		return $self->{CHILDREN_LFNS};
@@ -7562,7 +7576,7 @@ sub getChildrenLFNsSourceVerify
 
 	# $self->{CHILDREN_LFNS} = $lfns;
 
-	$self->learnChildrenByLFN( main::now(), $lfns );
+	$self->learnChildrenByLFN( main::now(), $lfns, 1 );
 
 
 }
@@ -7628,19 +7642,21 @@ sub hasAcceptableEnumeration
 
 	if( !defined $self->lastEnumerated() )
 	{
-		debug( "gChild: hasAcceptableEnumeration - no previous enum, accepEnum = 0") if $gChildDebug;
+		debug( "gChild: hasAcceptableEnumeration - no previous enum, accepEnum = 0") if $gChildDebug || $staleInfoDebug;
 		return 0;
 	}
 
 	if( !defined $self->{CHILDREN_LFNS} )
 	{
-		debug( "gChild: hasAcceptableEnumeration - not loaded, accepEnum = 0") if $gChildDebug;
+		debug( "gChild: hasAcceptableEnumeration - not loaded, accepEnum = 0") if $gChildDebug || $staleInfoDebug;
 		return 0;
 	}
 
 	if( defined $timeguard && $self->lastEnumerated() < $timeguard )
 	{
 		CODEPATH( "invalidating lastEnumerated due to timeguard" );
+		debug( "gChild: hasAcceptableEnumeration - not loaded, failed provided timeguard") if $gChildDebug || $staleInfoDebug;
+
 		return 0;
 	}
 	
@@ -7653,15 +7669,13 @@ sub hasAcceptableEnumeration
 		if( $age > $main::GUARD_TIME_SECONDS_ENUMERATION )
 		{
 			CODEPATH( "lastEnumerated too old, recheck forced" );
-			debug ( join '', "Forcing enumeration recalculation (", main::expressRelativeTime( $age ), ")\n") if $staleInfoDebug;
+			debug ( join '', "hasAcceptableEnumeration: Forcing enumeration recalculation (", main::expressRelativeTime( $age ), ")\n") if $staleInfoDebug;
 			return 0; 
 		}
 	}
 
+	# an expensive double check!!! TODO revisit this. 
 
-	# and expensive double check!!! TODO revisit this. 
-
-	my $Vhash = $self->calculateUnforcedSignatureHashOverChildren();
 
 	#print "Final check on hash...";
 
@@ -7671,6 +7685,9 @@ sub hasAcceptableEnumeration
 
 	if( defined $fh )
 	{
+
+		my $Vhash = $self->calculateUnforcedSignatureHashOverChildren();
+
 		if( defined $Vhash )
 		{	
 			if( $Vhash ne $fh )
@@ -7687,18 +7704,23 @@ sub hasAcceptableEnumeration
 		}
 	}
 
+
+	debug( "gChild: hasAcceptableEnumeration - yes") if $gChildDebug || $staleInfoDebug;
+
 	return 1;
 }
 
 
-# Caller is giving us a complete list of our children from primary source
-# Mark the deleted ones and perform other flags
+# Caller is giving us a complete list of our children. This may either be from
+# a cached list or possibly from a primary source. If from primary source, mark the
+# deleted ones and perform other flags such as dirScan. If not, the data is just loaded. 
 
 sub learnChildrenByLFN()
 {
 	my $self = shift;
 	my $time = shift;
 	my $lfns = shift; 
+	my $isPrimarySource = shift;
 
 	# print Data::Dumper::Dumper( $lfns );
 
@@ -7706,7 +7728,6 @@ sub learnChildrenByLFN()
 	{
 		my $x = $self->quickDebugString();
 		debug "LEARN CHILDREN: ($x) @$lfns\n";
-
 	}
 
 	if( defined $self->lastEnumerated() )
@@ -7714,73 +7735,86 @@ sub learnChildrenByLFN()
 		die if $time < $self->lastEnumerated();
 	}
 
-	# TODO shouldn't i reject incomijng data if the lastEnumerated isn't one I like? 
-
 	my @lfns = @{$lfns};
 
 	my $tk = TruthKeeper::get();
 
-	# Ideally, we call getChildren and do some sort of "merge"
+	# in the case we already have children, we need to check if we are getting new information
 
-	my @existingGhosts =  ref $self->{CHILDREN_LFNS} ?  @{$self->{CHILDREN_LFNS}} : (); # 0 ? @{$self->children()} : ();
-
-	debug "Existing ghosts @existingGhosts\n" if $gChildDebug;
-
-	my %seenLFN;
-	my @newKids;
-
-	my $hadExistingGhosts = @existingGhosts > 0 ? 1 :0;  
-	my $hasContentsChanged = 0; 
-
-	foreach my $e (@existingGhosts)
+	if( 1 ) #ref $self->{CHILDREN_LFNS} )
 	{
-		 $seenLFN{ $e } = 0;
-	}
 
-	foreach my $lfn ( @lfns )
-	{
-		debug "G: Learning child: lfn:[$lfn]\n" if $gChildDebug;
+		# Ideally, we call getChildren and do some sort of "merge"
 
-		die "diagnostic case - how did lfn get to be 1?" if( defined $lfn and $lfn eq "1" );
+		my @existingGhosts =  ref $self->{CHILDREN_LFNS} ?  @{$self->{CHILDREN_LFNS}} : (); # 0 ? @{$self->children()} : ();
 
-		if( exists $seenLFN{$lfn} )
+		debug "Existing ghosts @existingGhosts\n" if $gChildDebug;
+
+		my %seenLFN;
+		#my @newKids;
+
+		my $hadExistingGhosts = @existingGhosts > 0 ? 1 :0;  
+		my $hasContentsChanged = 0; 
+
+		foreach my $e (@existingGhosts)
 		{
-			debug "G:   Child already registered: $lfn\n" if $gChildDebug;
-		}
-		else
-		{
-			debug "G:   Child not registered: $lfn, must be new\n" if $gChildDebug;
-			$hasContentsChanged = 1;
+			 $seenLFN{ $e } = 0;
 		}
 
-		$seenLFN{$lfn}++;
-
-		my $g = $tk->obtainGhostForLFN( $lfn );
-	
-		# inform ghost that it has been seen in a directory scan
-		# this also undeletes it
-		$g->learnDirscan($time);
-		push @newKids, $g;
-	}
-
-	foreach my $lfn ( keys %seenLFN )
-	{
-		if( $seenLFN{$lfn} < 1 )
+		foreach my $lfn ( @lfns )
 		{
-			debug "G:   Child has disapeared\n" if $gChildDebug;
-			my $g = $self->tk()->obtainGhostForLFN( $lfn );
-			$g->learnDeleted($time);
-			$hasContentsChanged = 1; 
+			debug "G: Learning child: lfn:[$lfn]\n" if $gChildDebug;
+
+			die "diagnostic case - how did lfn get to be 1?" if( defined $lfn and $lfn eq "1" );
+
+			if( exists $seenLFN{$lfn} )
+			{
+				debug "G:   Child already registered: $lfn\n" if $gChildDebug;
+			}
+			else
+			{
+				debug "G:   Child not registered: $lfn, must be new\n" if $gChildDebug;
+				$hasContentsChanged = 1;
+			}
+
+			$seenLFN{$lfn}++;
+
+			if( $isPrimarySource )
+			{
+				my $g = $tk->obtainGhostForLFN( $lfn );
+				# inform ghost that it has been seen in a directory scan
+				# this also undeletes it
+				$g->learnDirscan($time);
+			}		
+			#push @newKids, $g;
+		}
+
+		foreach my $lfn ( keys %seenLFN )
+		{
+			if( $seenLFN{$lfn} < 1 )
+			{
+				debug "G:   Child has disapeared\n" if $gChildDebug;
+				my $g = $self->tk()->obtainGhostForLFN( $lfn );
+				$g->learnDeleted($time);
+				$hasContentsChanged = 1; 
+			}
+		}
+
+		$self->{CHILDREN_LFNS} = $lfns;
+
+		$self->learnEnumerated($time);
+
+		if( $hasContentsChanged and $hadExistingGhosts )
+		{
+			$self->learnContentsChanged( $time );
 		}
 	}
-
-	$self->{CHILDREN_LFNS} = $lfns;
-
-	$self->learnEnumerated($time);
-
-	if( $hasContentsChanged and $hadExistingGhosts )
+	else
 	{
-		$self->learnContentsChanged( $time );
+		$self->{CHILDREN_LFNS} = $lfns;
+		$self->lastEnumerated( $time );
+
+
 	}
 
 }
@@ -8383,6 +8417,20 @@ sub serialize()
 	{
 		$statStructSerialized = $self->statStruct()->serialize();
 	}
+
+
+	if( defined $self->{CHILDREN_LFNS} )
+	{
+		my $c = join '|', @{$self->{CHILDREN_LFNS}};
+
+		foreach my $e (@{$self->{CHILDREN_LFNS}})
+		{
+			die if $e =~ /\|/;
+		}
+
+		$self->attributes( $c );
+	}
+
 
 	# GHOST_NEW_FIELD: Place 3/4 where you add new fields to ghosts
 
@@ -9210,6 +9258,12 @@ sub learnFromGhost
 	# }
 
 	#print Dumper( $self );
+
+
+	if( defined $g->lastEnumerated() and defined $g->{CHILDREN_LFNS} )
+	{
+		$self->learnChildrenByLFN( $g->lastEnumerated(), $g->{CHILDREN_LFNS}, 0  );
+	}
 
 
 	if( defined $g->lastStat() )
