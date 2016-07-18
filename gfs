@@ -39,7 +39,7 @@ local $main::SCRIPT_START_GTOD = [gettimeofday];
 # ALWAYS revokes the hash. But a changed modification date does not trigger a
 # re-hash by default. (TODO- it probably should.)
 
-local $main::GUARD_TIME_SECONDS_STAT = 10000; 
+local $main::GUARD_TIME_SECONDS_STAT = 100000; 
 local $main::GUARD_TIME_SECONDS_ENUMERATION = 10000; 
 local $main::GUARD_TIME_SECONDS_FULLHASH = undef; 
 local $main::GUARD_TIME_SECONDS_DEEPSCAN = 20000; 
@@ -69,7 +69,8 @@ my $upNavDebug			  = 0;   # debugging on getParent() and getParentLFN()
 my $revokeDebug           = 0;   # Special case of learn that just looks at hash revocation
 my $staleInfoDebug        = 0;   # Decisionmaking on if data is current enough
 my $statStructDebug       = 0;
-my $provenanceDebug       = 0;   # Tracks a history for each ghost, no extra output but ~costly
+my $provenanceDebug       = 1;   # Tracks a history for each ghost, no extra output but ~costly
+	my $debugWarnLegacyUnflushedDetails = 0;
 
 # Constant Symbols 
 
@@ -142,13 +143,15 @@ my $OPT_STATS = 0;
 my $OPT_CP = 0;
 my $OPT_DEBUG_DUMP = 0;
 my $OPT_CHDIR = undef;
+my $OPT_REPORTDEPTH = undef;
 my $OPT_GUARDTIME = undef;
 
 &GetOptions( 'all' => \$OPT_ALL,
 			 'G|guard=s' => \$OPT_GUARDTIME,
 			 'C|cp' => \$OPT_CP,
 			 'chdir=s' => \$OPT_CHDIR,
-			 'debug-dump' => \$OPT_DEBUG_DUMP,q
+			 'report-depth=s' => \$OPT_REPORTDEPTH,
+			 'debug-dump' => \$OPT_DEBUG_DUMP,
 			 'stats' => \$OPT_STATS );
 
 
@@ -514,9 +517,14 @@ sub handleVerb
 		doverb_lsdup();
 		return;
 	}
-		if( $verb eq "dupchart")
+	if( $verb eq "dupchart")
 	{
 		doverb_dupchart();
+		return;
+	}
+	if( $verb eq "duptree")
+	{
+		doverb_duptree();
 		return;
 	}
 	if( $verb eq "help")
@@ -673,10 +681,18 @@ gfs snapshot file1 [... filen]
 gfs lsdup [source1 .. source-n] target [--all]
 
     For every file in target tree, reports which is duplicated
-    in the target or source trees.
+    in the target OR source trees.
 
     --all forces a report for every file, not just duplicates (not yet
       implemented)
+
+gfs duptree [source1 .. source-n] target [--report-depth=3]
+
+	Prints a hierarchial report showing % of bytes and files in target 
+	that are duplicated somewhere in source. Does NOT count duplicates
+	within the target tree.
+
+	Report depth is useful to limit the printout to a certain depth in the tree.
 
 HERE
 
@@ -1369,15 +1385,7 @@ sub doverb_compare()
 
 		print "$lfn -> $status\n";
 	});
-
-
 }
-
-
-
-
-
-
 
 
 # doverb_ls - handle the LS command
@@ -1995,7 +2003,90 @@ sub doverb_dupchart
 			}
 		}
 	}
+}
 
+
+
+sub doverb_duptree
+{
+	my $target = pop @ARGV;
+	my @source = @ARGV;
+
+	my $tk = TruthKeeper::get();
+	my ($targetGS, $targetStash) = $tk->makeGhostsFromCommandLine( $target );
+	my ($sourceGS, $sourceStash) = $tk->makeGhostsFromCommandLine( @source );
+
+
+	my( $targetUserFN, $targetFqlfn, $targetGhost ) = @{$targetStash->[0]};
+
+
+	my $recursiveDupTree;
+
+	$recursiveDupTree = sub
+	{
+		my $target = shift;
+		my $depth = shift;
+
+		if( $target->canHaveChildren() )
+		{	
+			my( $totFiles, $totDupedFiles, $totBytes, $totDupedBytes ) = (0,0,0,0);
+
+			my @c = $target->getChildren();
+			foreach my $c ( @c )
+			{
+				next if $c->fileIsUsuallyIgnored();
+				my( $files, $dupedFiles, $bytes, $dupedBytes) = $recursiveDupTree->($c, $depth+1);
+				$totFiles      += $files;
+				$totDupedFiles += $dupedFiles;
+				$totBytes      += $bytes;
+				$totDupedBytes += $dupedBytes; 
+			}
+
+
+			if( not defined $OPT_REPORTDEPTH or $depth <= $OPT_REPORTDEPTH )
+			{
+				print sprintf "%3d%% files %3d%% bytes %s\n", 
+					$totFiles      != 0 ? $totDupedFiles/$totFiles      * 100 : 0, 
+					$totDupedBytes != 0 ? $totDupedBytes/$totDupedBytes * 100 : 0,
+					$target->lfn();; 
+			}
+
+			return( $totFiles, $totDupedFiles, $totBytes, $totDupedBytes );
+
+		}
+		else
+		{
+
+			my @sDups = $sourceGS->findOtherDuplicates( $target );
+
+			foreach my $dg ( @sDups )
+			{
+				#print "         Dupe: " . $dg->lfn() . "\n";
+			}
+
+
+			my $size = $target->getSize();
+			if( @sDups > 0 )
+			{
+				if( not defined $OPT_REPORTDEPTH or $depth <= $OPT_REPORTDEPTH )
+				{
+					print "        Y " . $target->lfn() . "\n";
+				}
+				return ( 1,1,$size, $size );
+			}
+			else
+			{
+				if( not defined $OPT_REPORTDEPTH or $depth <= $OPT_REPORTDEPTH )
+				{
+					print "        N " . $target->lfn() . "\n";
+				}
+				return ( 1,0,$size, 0);
+			}
+		}
+	};
+
+
+	$recursiveDupTree->($targetGhost,0);
 
 
 }
@@ -5637,14 +5728,13 @@ sub flushInternallyTracked
 		# in the new design, all verbs are responsible for flushing semantics
 		# and should not rely on this catch to flush their state
 
-	my $debugWarnLegacyUnflushedDetails = 1;
 
 		if( $debugWarnLegacyUnflushedDetails )
 		{
 			debug "WARNING: flushed $gd\n";
-			# debug "+++++++\n";
-			# $g->printDebug();
-			# debug "+++++++\n";
+			debug "+++++++\n";
+			$g->printDebug();
+			debug "+++++++\n";
 		}
 
 			$hasLegacyProblem++;
@@ -6982,7 +7072,7 @@ sub findFilesWithSize
 	my $self = shift;
 	my $s = shift;
 
-	debug "findFilesWithSize($s)";
+	# debug "findFilesWithSize($s)";
 
 	return undef if( $s <= 0 );
 
@@ -7465,6 +7555,7 @@ sub newFromSerialized($)
 		$self->statStruct( undef );
 	}
 
+	## TODO TODO TODO -> used attributes as a hack - should be a new field called payload
 
 	if( defined $self->attributes() and defined $self->lastEnumerated() )
 	{
@@ -8790,6 +8881,12 @@ sub internal_extractFileType
 	return "file";
 }
 
+
+sub fileIsUsuallyIgnored
+{
+	my $self = shift;
+	return main::fileIsUsuallyIgnored( $self->lfn() );
+}
 
 
 

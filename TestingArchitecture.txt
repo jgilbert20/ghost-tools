@@ -9,6 +9,15 @@ generate a unique name for that invocation
 and compare what it got this time to last time
 \
 
++++
+
+great corner case - not sure if this is implemented really:
+you cahced some stats that a file is not found
+and then more recently you learn that the file was in a dirscan
+this should invalidate the stat
+
+
+
 
 +++
 
